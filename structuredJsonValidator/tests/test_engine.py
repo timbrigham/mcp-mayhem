@@ -190,8 +190,19 @@ def test_import_baseline_ingests_a_file_path(tmp_path):
 
     inline_doc = reg_inline.load()
     path_doc = reg_path.load()
-    assert path_doc["entries"] == inline_doc["entries"]
+
+    # Ids are minted surrogates (Decision A) so they differ between imports, but
+    # the natural content (everything except id) must be identical.
+    def _no_id(doc):
+        return [{k: v for k, v in e.items() if k != "id"} for e in doc["entries"]]
+    assert _no_id(path_doc) == _no_id(inline_doc)
     assert path_doc["counts"] == {"files": 2, "declarations": 2}  # derived, not 0
+
+    # Every id is an opaque surrogate, not the old file::qualified::Lline key.
+    import uuid
+    for e in path_doc["entries"]:
+        assert uuid.UUID(e["id"])  # parses as a UUID
+        assert "::" not in e["id"]
 
     # The audit record keeps the path, not the inflated inline list.
     rec = audit.read_records(reg_path.audit_path)[-1]
@@ -342,3 +353,121 @@ def test_write_receipt_is_terse_for_bulk_but_echoes_small(tmp_path):
     small = reg.apply("annotate", {"id": eid, "role": "core"})
     assert small["touched_count"] == 1
     assert small["entries_touched"] == [eid]
+
+
+# -- reconcile / surrogate ids (interop issue #5, Decisions A & B) -------------
+
+_ANCHOR = {"branch": "origin/main", "commit": None, "tree": None}
+
+
+def _found(reg, scan):
+    reg.apply("import_baseline", {"scanner_output": scan, "anchor": _ANCHOR})
+
+
+def _by_q(reg, qualified):
+    """Fetch the single entry whose effective-current name is `qualified`."""
+    for e in reg.find():
+        eff = e["new"]["qualified"] if e["disposition"] in ("renamed", "new") else e["old"]["qualified"]
+        if eff == qualified:
+            return e
+    return None
+
+
+def test_reconcile_updates_location_and_preserves_curation(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.b", "short": "b", "kind": "def",
+                  "file": "old.lean", "line": 10, "prefix": "A"}])
+    eid = reg.find()[0]["id"]
+    reg.apply("annotate", {"id": eid, "role": "core", "domain": "number"})
+
+    # Same decl, moved to a new file/line — must be a location UPDATE, not add.
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "A.b", "short": "b", "kind": "def", "file": "new.lean", "line": 42, "prefix": "A"}]})
+
+    entry = reg.get(eid)  # SAME surrogate id survived
+    assert entry is not None
+    assert entry["old"]["file"] == "new.lean" and entry["old"]["line"] == 42  # relocated
+    assert entry["disposition"] == "pending"
+    assert entry["ontology"]["role"] == "core" and entry["ontology"]["domain"] == "number"  # curation kept
+    assert res["drift"]["location_updated"] == 1
+    assert res["drift"]["vanished"] == [] and res["drift"]["phantom"] == []
+    assert len(reg.find()) == 1  # no drop+add
+
+
+def test_reconcile_flags_vanished_without_dropping(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.keep", "short": "keep", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"},
+                 {"qualified": "A.gone", "short": "gone", "kind": "def", "file": "f.lean", "line": 2, "prefix": "A"}])
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "A.keep", "short": "keep", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}]})
+    flagged = res["drift"]["vanished"]
+    assert [f["qualified"] for f in flagged] == ["A.gone"]
+    assert _by_q(reg, "A.gone") is not None  # still present, only flagged
+    assert len(reg.find()) == 2
+
+
+def test_reconcile_adds_phantom_as_pending_and_flags(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.x", "short": "x", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}])
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "A.x", "short": "x", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"},
+        {"qualified": "A.new", "short": "new", "kind": "def", "file": "f.lean", "line": 9, "prefix": "A"}]})
+    assert [p["qualified"] for p in res["drift"]["phantom"]] == ["A.new"]
+    added = _by_q(reg, "A.new")
+    assert added is not None and added["disposition"] == "pending"
+
+
+def test_reconcile_flags_resurrection_of_dropped(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.z", "short": "z", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}])
+    reg.apply("drop", {"id": reg.find()[0]["id"], "reason": "gone for now"})
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "A.z", "short": "z", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}]})
+    assert [r["qualified"] for r in res["drift"]["resurrection"]] == ["A.z"]
+
+
+def test_reconcile_does_not_guess_rename(tmp_path):
+    # A qualified-name change with no recorded rename is indistinguishable from
+    # delete+add: flag the vanished name AND the phantom, never silent-match.
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.oldname", "short": "oldname", "kind": "def",
+                  "file": "f.lean", "line": 1, "prefix": "A"}])
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "A.newname", "short": "newname", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}]})
+    assert [v["qualified"] for v in res["drift"]["vanished"]] == ["A.oldname"]
+    assert [p["qualified"] for p in res["drift"]["phantom"]] == ["A.newname"]
+
+
+def test_reconcile_matches_renamed_entry_on_new_qualified(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.orig", "short": "orig", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}])
+    eid = reg.find()[0]["id"]
+    reg.apply("rename", {"id": eid, "new_qualified": "B.renamed", "new_file": "g.lean",
+                         "namespace": "B", "reason": "restructure"})
+    # A fresh scan sees the post-rename name; it must match, not phantom.
+    res = reg.apply("reconcile", {"scanner_output": [
+        {"qualified": "B.renamed", "short": "renamed", "kind": "def", "file": "g2.lean", "line": 5, "prefix": "B"}]})
+    assert res["drift"]["phantom"] == [] and res["drift"]["vanished"] == []
+    assert reg.get(eid)["new"]["file"] == "g2.lean"  # location updated on new.*
+
+
+def test_reconcile_is_idempotent(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    scan = [{"qualified": "A.a", "short": "a", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"},
+            {"qualified": "A.b", "short": "b", "kind": "def", "file": "f.lean", "line": 2, "prefix": "A"}]
+    _found(reg, scan)
+    reg.apply("reconcile", {"scanner_output": scan})
+    res = reg.apply("reconcile", {"scanner_output": scan})
+    d = res["drift"]
+    assert d["vanished"] == [] and d["phantom"] == [] and d["resurrection"] == []
+    assert d["location_updated"] == 0
+    assert len(reg.find()) == 2
+
+
+def test_reconcile_rejects_duplicate_qualified_in_scan(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found(reg, [{"qualified": "A.a", "short": "a", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}])
+    with pytest.raises(OperationError):
+        reg.apply("reconcile", {"scanner_output": [
+            {"qualified": "A.a", "short": "a", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"},
+            {"qualified": "A.a", "short": "a", "kind": "def", "file": "g.lean", "line": 2, "prefix": "A"}]})

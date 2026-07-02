@@ -56,6 +56,14 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
   refuses a non-empty registry unless `force=true` (guards against a re-scan
   reflex wiping all curation). Returns a terse receipt (`touched_count`, not a
   full id echo) for bulk writes; the full list stays in the audit log
+- `reconcile(scanner_output, anchor?)` — the safe sibling of `import_baseline`
+  for "the source changed": matches scan decls to entries by fully-qualified
+  name (identity), updates locations, ADDs new decls as `pending`, and FLAGS
+  vanished / phantom / resurrected names — never silently drops or guesses a
+  rename. Returns a terse `{ok, ..., drift}` summary
+- `id` is a sjv-minted opaque surrogate (UUID), not a natural key. `file`,
+  `qualified`, `line` are plain mutable fields; grep on `qualified`, not `id`.
+  Scanner facts carry `qualified` (the match key), never a client `id`
 - `export_full(dest)` — publish the complete validated, deterministic registry
   to `dest` for a consuming repo to commit
 - `apply(op, params)` — generic escape hatch for any registered operation

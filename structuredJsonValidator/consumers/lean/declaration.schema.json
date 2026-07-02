@@ -36,7 +36,10 @@
       "additionalProperties": false,
       "required": ["id", "old", "new", "disposition", "reason", "ontology", "claims", "verify"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string", "minLength": 1,
+          "$comment": "Opaque sjv-minted surrogate (UUID), not a natural key; permanent, never recomputed. file/qualified/line are plain fields, not identity. Match on qualified, never on id."
+        },
         "old": {
           "type": "object",
           "additionalProperties": false,

@@ -9,12 +9,25 @@ the engine does that after the result passes full validation.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Optional, Union
 
 from core.errors import OperationError
 
 
 # -- structure helpers --------------------------------------------------------
+
+def _mint_id() -> str:
+    """Mint an opaque, permanent surrogate id (interop issue #5, Decision A).
+
+    ``id`` is a system-generated handle, NOT a natural key derived from
+    ``file``/``qualified``/``line`` — those are mutable fields, not identity, so
+    an entry's id never has to change (and never gets recomputed) when a
+    declaration moves or is renamed. Humans grep on ``qualified`` (a field); the
+    id is only a stable handle reconcile resolves matches to.
+    """
+    return str(uuid.uuid4())
+
 
 def _empty_old() -> dict:
     return {"qualified": None, "short": None, "kind": None, "file": None, "line": None, "prefix": None}
@@ -105,13 +118,44 @@ def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
     return scanner_output
 
 
+def _pending_entry_from_scan(item: dict) -> dict:
+    """Build one fresh ``pending`` entry (surrogate id) from a scanner fact.
+
+    Scanner facts carry natural attributes (``qualified``, ``file``, ``line`` …)
+    but NO client id — sjv mints the surrogate here (interop issue #5, Decision
+    A). Shared by ``import_baseline`` (founding) and ``reconcile`` (phantoms).
+    """
+    old = _empty_old()
+    for leaf in old:
+        if leaf in item:
+            old[leaf] = item[leaf]
+    return {
+        "id": _mint_id(),
+        "old": old,
+        "new": _empty_new(),
+        "disposition": "pending",
+        "reason": None,
+        "ontology": {"object": None, "domain": None, "role": None},
+        "claims": {
+            "witness_of": list(item.get("witness_of", [])),
+            "citations": list(item.get("citations", [])),
+        },
+        "verify": {
+            "sorry_free": bool(item.get("sorry_free", True)),
+            "axioms": item.get("axioms"),
+        },
+    }
+
+
 def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor: dict,
                     files: Optional[int] = None, force: bool = False) -> tuple[dict, list[str]]:
     """Freeze the initial entries (all ``pending``) from a scanner dump.
 
     ``scanner_output`` may be an inline list of declaration dicts or a path
     string to a JSON file containing that list (the practical form for the
-    one-time bulk init, where the list is too large to author inline).
+    one-time bulk init, where the list is too large to author inline). Each fact
+    carries natural attributes (``qualified`` is the key); it does NOT carry an
+    ``id`` — sjv mints an opaque surrogate per entry (interop issue #5, A).
 
     FOUNDING-ONCE (interop issue #5): this is REPLACE semantics — it discards the
     current registry and writes a fresh all-``pending`` set, bypassing every
@@ -119,10 +163,7 @@ def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor:
     re-run over curated work (a re-scan reflex would annihilate dispositions,
     reasons, ontology, claims). So it REFUSES a non-empty registry unless
     ``force=True``. To fold a re-scan into an existing registry while preserving
-    curation, use a reconcile op, not a forced re-import.
-
-    Idempotent: rebuilt deterministically from the same input yields the same
-    document. ``scanner_output`` items carry the old-decl fields; new.* is null.
+    curation, use ``reconcile``, not a forced re-import.
     """
     existing = document.get("entries") if isinstance(document, dict) else None
     if existing and not force:
@@ -133,31 +174,8 @@ def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor:
             f"overwrite deliberately, or reconcile a re-scan into the existing set."
         )
     scanner_output = _resolve_scanner_output(scanner_output)
-    entries: list[dict] = []
-    touched: list[str] = []
-    for item in scanner_output:
-        old = _empty_old()
-        for leaf in old:
-            if leaf in item:
-                old[leaf] = item[leaf]
-        eid = f"{old['file']}::{old['qualified']}::L{old['line']}"
-        entries.append({
-            "id": eid,
-            "old": old,
-            "new": _empty_new(),
-            "disposition": "pending",
-            "reason": None,
-            "ontology": {"object": None, "domain": None, "role": None},
-            "claims": {
-                "witness_of": list(item.get("witness_of", [])),
-                "citations": list(item.get("citations", [])),
-            },
-            "verify": {
-                "sorry_free": bool(item.get("sorry_free", True)),
-                "axioms": item.get("axioms"),
-            },
-        })
-        touched.append(eid)
+    entries = [_pending_entry_from_scan(item) for item in scanner_output]
+    touched = [e["id"] for e in entries]
 
     document = {
         "schema_version": "1",
@@ -173,6 +191,155 @@ def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor:
         "entries": entries,
     }
     return document, touched
+
+
+# -- reconcile (interop issue #5, Decision B) ---------------------------------
+#
+# The MATCH RULE, shared verbatim with the ZP loss-checker. Identity is the
+# fully-qualified name; file and line are LOCATION, not identity. The surrogate
+# id is the stable handle a match resolves TO; ``qualified`` is what we match ON.
+
+# disposition -> (group holding the effective-current name, is the decl expected
+# to still be PRESENT in a fresh scan?). None => not matchable.
+_RECONCILE_CLASS: dict[str, tuple[str, bool]] = {
+    "pending": ("old", True),
+    "present": ("old", True),
+    "moved": ("old", True),   # a move changed the file, not the name
+    "renamed": ("new", True),  # the name changed to new.qualified
+    "new": ("new", True),      # add_new / merge-target / split-target
+    "dropped": ("old", False),   # source name expected GONE
+    "merged": ("old", False),    # merged-source name expected GONE
+    "split": ("old", False),     # split-source name expected GONE
+}
+
+
+def _effective_qualified(entry: dict) -> tuple[Optional[str], Optional[str], Optional[bool]]:
+    """Return ``(group, qualified, expected_present)`` for the match rule.
+
+    ``group`` is ``"old"`` or ``"new"`` — which side holds the effective-current
+    name (and thus the location fields reconcile updates on a match).
+    """
+    cls = _RECONCILE_CLASS.get(entry.get("disposition"))
+    if cls is None:
+        return None, None, None
+    group, present = cls
+    return group, entry.get(group, {}).get("qualified"), present
+
+
+def reconcile(document, *, scanner_output: Union[str, list[dict]],
+              anchor: Optional[dict] = None) -> tuple[dict, list[str], dict]:
+    """Fold a fresh scan into the existing registry, PRESERVING curation.
+
+    The safe, non-destructive sibling of ``import_baseline`` (interop issue #5).
+    Match rule (Decision B), identical to the ZP loss-checker:
+
+      * identity is the fully-qualified name; ``file``/``line`` are location.
+      * a scan decl whose qualified matches an entry's effective-current name is
+        the SAME decl: resolve to that entry's existing surrogate id, UPDATE its
+        location (``file``/``line``), and PRESERVE disposition + all curation.
+        (This is the "moved / line drifted" case — an update, never drop+add.)
+      * an entry whose expected-present name is ABSENT from the scan → VANISHED,
+        FLAGGED (never silently dropped).
+      * a scan decl matching NO entry → PHANTOM: mint a surrogate, add as
+        ``pending``, FLAG.
+      * a ``dropped``/``merged``/``split`` source name that REAPPEARS in the scan
+        → resurrection, FLAG.
+
+    The irreducibly ambiguous case — a qualified-name change with no recorded
+    ``rename`` — is mechanically identical to delete+add. Reconcile MUST NOT
+    guess: it flags the vanished name and the phantom name separately for a human
+    to adjudicate (record a ``rename``, or confirm delete+add).
+
+    Returns ``(document, touched_ids, drift_summary)``; the drift summary is
+    terse (counts + the flagged lists, per issue #6), not a full dump.
+    """
+    doc = _require_doc(document)
+    scan = _resolve_scanner_output(scanner_output)
+
+    scan_by_q: dict[str, dict] = {}
+    skipped_no_qualified = 0
+    for item in scan:
+        q = item.get("qualified")
+        if not q:
+            skipped_no_qualified += 1
+            continue
+        if q in scan_by_q:
+            raise OperationError(
+                f"scanner_output has a duplicate qualified name {q!r}; qualified "
+                f"must be a unique key for reconcile to match on it"
+            )
+        scan_by_q[q] = item
+
+    entries = doc.get("entries", [])
+    present_index: dict[str, dict] = {}   # qualified -> entry expected present
+    gone_index: dict[str, dict] = {}      # qualified -> terminal source entry
+    for entry in entries:
+        group, q, present = _effective_qualified(entry)
+        if not q:
+            continue
+        (present_index if present else gone_index)[q] = entry
+
+    touched: list[str] = []
+    updated: list[str] = []
+    vanished: list[dict] = []
+    phantom: list[dict] = []
+    resurrection: list[dict] = []
+
+    # (1) survivors + vanished: walk expected-present entries against the scan.
+    for q, entry in present_index.items():
+        item = scan_by_q.get(q)
+        if item is None:
+            vanished.append({"id": entry["id"], "qualified": q,
+                             "disposition": entry["disposition"]})
+            continue
+        group, _, _ = _effective_qualified(entry)
+        loc = entry[group]
+        changed = False
+        if "file" in item and loc.get("file") != item.get("file"):
+            loc["file"] = item.get("file")
+            changed = True
+        # ``new`` groups carry no line; only ``old`` tracks it.
+        if "line" in loc and "line" in item and loc.get("line") != item.get("line"):
+            loc["line"] = item.get("line")
+            changed = True
+        if changed:
+            touched.append(entry["id"])
+            updated.append(entry["id"])
+
+    # (2) resurrection: a terminal source name reappears in the scan.
+    for q, entry in gone_index.items():
+        if q in scan_by_q:
+            resurrection.append({"id": entry["id"], "qualified": q,
+                                 "disposition": entry["disposition"]})
+
+    # (3) phantom / new: scan decls matching no entry at all → add as pending.
+    known = set(present_index) | set(gone_index)
+    for q, item in scan_by_q.items():
+        if q in known:
+            continue
+        new_entry = _pending_entry_from_scan(item)
+        entries.append(new_entry)
+        touched.append(new_entry["id"])
+        phantom.append({"id": new_entry["id"], "qualified": q})
+
+    if anchor is not None:
+        doc["anchor"] = {"branch": anchor.get("branch"), "commit": anchor.get("commit"),
+                         "tree": anchor.get("tree")}
+    _sync_counts(doc)
+
+    drift = {
+        "drift": {
+            "scanned": len(scan_by_q),
+            "registry_entries": len(entries),
+            "matched": len(present_index) - len(vanished),
+            "location_updated": len(updated),
+            "vanished": vanished,
+            "phantom": phantom,
+            "resurrection": resurrection,
+            "skipped_no_qualified": skipped_no_qualified,
+        }
+    }
+    return doc, touched, drift
 
 
 # -- disposition transitions --------------------------------------------------
@@ -330,7 +497,7 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
         "file": new.get("file"),
         "namespace": new.get("namespace") if new.get("namespace") is not None else namespace_of(nq),
     }
-    eid = id or f"{new_group['file']}::{nq}::Lnew"
+    eid = id or _mint_id()  # sjv mints the surrogate (interop issue #5, A)
     entry = {
         "id": eid,
         "old": _empty_old(),
@@ -381,6 +548,7 @@ def add_citation(document, *, id: str, target: str) -> tuple[dict, list[str]]:
 
 OPERATIONS = {
     "import_baseline": import_baseline,
+    "reconcile": reconcile,
     "mark_present": mark_present,
     "move": move,
     "rename": rename,

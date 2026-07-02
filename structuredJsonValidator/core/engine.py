@@ -124,12 +124,19 @@ class Registry:
             self.verify_integrity()
         current: Optional[dict] = self.load() if self.exists() else None
 
-        # (2) run the operation on an isolated deep copy.
+        # (2) run the operation on an isolated deep copy. An op returns either
+        # (doc, touched) or (doc, touched, extra) — extra is merged into the
+        # receipt (e.g. reconcile's drift summary).
         working = copy.deepcopy(current)
         try:
-            result_doc, touched = op(working, **params)
+            op_result = op(working, **params)
         except TypeError as exc:
             raise OperationError(f"Bad parameters for {op_name!r}: {exc}") from exc
+        if len(op_result) == 3:
+            result_doc, touched, extra = op_result
+        else:
+            result_doc, touched = op_result
+            extra = None
 
         # (3) postcondition: the result must fully conform.
         violations = self.all_violations(result_doc)
@@ -152,6 +159,8 @@ class Registry:
         result = {"op": op_name, "touched_count": len(touched), "resulting_sha256": sha}
         if len(touched) <= _MAX_TOUCHED_ECHO:
             result["entries_touched"] = touched
+        if extra:
+            result.update(extra)
         return result
 
     def export_full(self, dest_path: str | os.PathLike, *, actor: Optional[str] = None) -> dict:

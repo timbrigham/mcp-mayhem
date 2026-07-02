@@ -8,7 +8,7 @@ Run:
 Read tools:  get, find, history, view, validate, verify_integrity
 Write tools: seal, and the §9 verbs (rename, move, drop, mark_present, merge,
              split, reopen, add_new, annotate, link_claim, add_citation,
-             import_baseline) plus a generic `apply` escape hatch.
+             import_baseline, reconcile) plus a generic `apply` escape hatch.
 
 Every write returns {ok, ...}. Enforcement failures (schema, §7 rules, drift,
 bad params) come back as {ok: false, error_type, error} — the library raised,
@@ -228,6 +228,22 @@ def link_claim(id: str, claim: str) -> dict:
 def add_citation(id: str, target: str) -> dict:
     """Add a citation to an entry (claims.citations)."""
     return _write("add_citation", {"id": id, "target": target})
+
+
+@mcp.tool()
+def reconcile(scanner_output, anchor: Optional[dict] = None) -> dict:
+    """Fold a fresh scan into the existing registry, preserving curation.
+
+    The safe sibling of import_baseline: matches scan decls to entries by
+    fully-qualified name (identity), updates locations, ADDS new decls as
+    pending, and FLAGS vanished / phantom / resurrected names for human
+    adjudication — never silently drops or guesses a rename. `scanner_output`
+    is an inline list or a path string. Returns a terse `{ok, ..., drift}`
+    summary (counts + flagged lists)."""
+    params: dict[str, Any] = {"scanner_output": scanner_output}
+    if anchor is not None:
+        params["anchor"] = anchor
+    return _write("reconcile", params)
 
 
 @mcp.tool()
