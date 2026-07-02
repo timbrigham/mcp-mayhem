@@ -8,7 +8,8 @@ the engine does that after the result passes full validation.
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import Optional, Union
 
 from core.errors import OperationError
 
@@ -57,13 +58,42 @@ def _sync_counts(document: dict) -> None:
 
 # -- bootstrapping ------------------------------------------------------------
 
-def import_baseline(document, *, scanner_output: list[dict], anchor: dict,
+def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
+    """Accept the scanner dump as an inline list or a path string to read.
+
+    Reading a caller-specified *input* file does not breach the operations
+    contract (which protects the registry/audit *output* files). Resolving the
+    path here rather than at the caller keeps the founding import a tiny call and
+    keeps the audit record's ``params`` to the path, not a 1k-element inline list.
+    """
+    if isinstance(scanner_output, str):
+        try:
+            with open(scanner_output, encoding="utf-8") as f:
+                scanner_output = json.load(f)
+        except FileNotFoundError as exc:
+            raise OperationError(f"scanner_output file not found: {scanner_output}") from exc
+        except json.JSONDecodeError as exc:
+            raise OperationError(f"scanner_output is not valid JSON ({scanner_output}): {exc}") from exc
+    if not isinstance(scanner_output, list):
+        raise OperationError(
+            f"scanner_output must be a list of declaration dicts or a path to one, "
+            f"got {type(scanner_output).__name__}"
+        )
+    return scanner_output
+
+
+def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor: dict,
                     files: Optional[int] = None) -> tuple[dict, list[str]]:
     """Freeze the initial entries (all ``pending``) from a scanner dump.
+
+    ``scanner_output`` may be an inline list of declaration dicts or a path
+    string to a JSON file containing that list (the practical form for the
+    one-time bulk init, where the list is too large to author inline).
 
     Idempotent: rebuilt deterministically from the same input yields the same
     document. ``scanner_output`` items carry the old-decl fields; new.* is null.
     """
+    scanner_output = _resolve_scanner_output(scanner_output)
     entries: list[dict] = []
     touched: list[str] = []
     for item in scanner_output:

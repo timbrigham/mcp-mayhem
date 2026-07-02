@@ -167,3 +167,42 @@ def test_import_baseline_builds_conforming_document(tmp_path):
     entries = reg.find(disposition="pending")
     assert len(entries) == 2
     assert reg.verify_integrity()  # first write established the baseline hash
+
+
+def test_import_baseline_ingests_a_file_path(tmp_path):
+    # The bulk-init form: scanner_output given as a path the op reads itself.
+    scanner = [
+        {"qualified": "A.b.c", "short": "c", "kind": "theorem",
+         "file": "A/b.lean", "line": 10, "prefix": "b", "sorry_free": True},
+        {"qualified": "A.d.e", "short": "e", "kind": "lemma",
+         "file": "A/d.lean", "line": 20, "prefix": "d", "sorry_free": True},
+    ]
+    scan_path = tmp_path / "scanner_output.json"
+    scan_path.write_text(json.dumps(scanner, ensure_ascii=False), encoding="utf-8")
+
+    anchor = {"branch": "origin/main", "commit": None, "tree": None}
+
+    # Inline and path forms must yield the same conforming document.
+    reg_inline = _reg(tmp_path / "inline.json")
+    reg_inline.apply("import_baseline", {"scanner_output": scanner, "anchor": anchor})
+    reg_path = _reg(tmp_path / "frompath.json")
+    reg_path.apply("import_baseline", {"scanner_output": str(scan_path), "anchor": anchor})
+
+    inline_doc = reg_inline.load()
+    path_doc = reg_path.load()
+    assert path_doc["entries"] == inline_doc["entries"]
+    assert path_doc["counts"] == {"files": 2, "declarations": 2}  # derived, not 0
+
+    # The audit record keeps the path, not the inflated inline list.
+    rec = audit.read_records(reg_path.audit_path)[-1]
+    assert rec["params"]["scanner_output"] == str(scan_path)
+
+
+def test_import_baseline_missing_file_is_operation_error(tmp_path):
+    reg = _reg(tmp_path / "fresh.json")
+    with pytest.raises(OperationError):
+        reg.apply("import_baseline", {
+            "scanner_output": str(tmp_path / "does_not_exist.json"),
+            "anchor": {"branch": "origin/main", "commit": None, "tree": None},
+        })
+    assert not (tmp_path / "fresh.json").exists()  # nothing written on failure
