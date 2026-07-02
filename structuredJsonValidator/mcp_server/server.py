@@ -8,7 +8,8 @@ Run:
 Read tools:  get, find, history, view, validate, verify_integrity
 Write tools: seal, and the §9 verbs (rename, move, drop, mark_present, merge,
              split, reopen, add_new, annotate, link_claim, add_citation,
-             import_baseline, reconcile) plus a generic `apply` escape hatch.
+             set_vocab, import_baseline, reconcile) plus a generic `apply`
+             escape hatch.
 
 Every write returns {ok, ...}. Enforcement failures (schema, §7 rules, drift,
 bad params) come back as {ok: false, error_type, error} — the library raised,
@@ -216,6 +217,17 @@ def annotate(id: str, object: Optional[str] = None, domain: Optional[str] = None
     if role is not None:
         params["role"] = role
     return _write("annotate", params)
+
+
+@mcp.tool()
+def set_vocab(vocab) -> dict:
+    """Adopt the controlled ontology vocabulary from a caller-owned config
+    (inline object or a path to a JSON file) mapping each ontology field to its
+    allowed values. Once set, `validate` REJECTS ontology values outside their
+    field's list and fields not in the vocab; `cardinality` stays a soft
+    expectation surfaced by `view('anomalies')`. The field set is data — sjv does
+    not hardcode object/domain/role."""
+    return _write("set_vocab", {"vocab": vocab})
 
 
 @mcp.tool()

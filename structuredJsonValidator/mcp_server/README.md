@@ -41,7 +41,10 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
   `count_only=true` → just `{count}`; `limit`/`offset` page (`count` is always
   the full match total); `fields=[...]` projects only those dotted paths
 - `history(id?)` — append-only audit log, optionally per-entry
-- `view(kind)` — render a projection (`status`, `domains`, …)
+- `view(kind)` — render a projection (`status`, `domains`, `anomalies`).
+  `anomalies` surfaces entries missing a vocab-required ontology axis (soft
+  cardinality — never blocks; the framework must be able to represent the
+  impossible)
 - `validate()` — full-file conformance → `{valid, violations}`
 - `verify_integrity()` — file hash vs last audit hash → `{ok, hash|error}`
 
@@ -64,6 +67,12 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 - `id` is a sjv-minted opaque surrogate (UUID), not a natural key. `file`,
   `qualified`, `line` are plain mutable fields; grep on `qualified`, not `id`.
   Scanner facts carry `qualified` (the match key), never a client `id`
+- `set_vocab(vocab)` — adopt the controlled ontology vocabulary from a
+  caller-owned config (inline object or path) mapping each ontology field to its
+  allowed `values` (+ optional soft `cardinality`). Once set, `validate` REJECTS
+  ontology values outside their field's list and fields not in the vocab. The
+  field set is data — sjv does not hardcode object/domain/role. Enforcement is
+  opt-in (no vocab → unconstrained), so ratify values before adopting
 - `export_full(dest)` — publish the complete validated, deterministic registry
   to `dest` for a consuming repo to commit
 - `apply(op, params)` — generic escape hatch for any registered operation

@@ -471,3 +471,75 @@ def test_reconcile_rejects_duplicate_qualified_in_scan(tmp_path):
         reg.apply("reconcile", {"scanner_output": [
             {"qualified": "A.a", "short": "a", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"},
             {"qualified": "A.a", "short": "a", "kind": "def", "file": "g.lean", "line": 2, "prefix": "A"}]})
+
+
+# -- controlled ontology vocabulary (interop tag-vocab work item) --------------
+
+def _found1(reg):
+    _found(reg, [{"qualified": "A.a", "short": "a", "kind": "def", "file": "f.lean", "line": 1, "prefix": "A"}])
+    return reg.find()[0]["id"]
+
+
+def test_set_vocab_enforces_hard_enum(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {
+        "domain": {"values": ["number", "order"], "cardinality": "0..1"},
+        "role": ["core", "face"]}})
+    # A value in the vocab is accepted...
+    reg.apply("annotate", {"id": eid, "domain": "number", "role": "core"})
+    assert reg.validate() == []
+    # ...one outside it is rejected (postcondition fails, nothing written).
+    with pytest.raises(ValidationError):
+        reg.apply("annotate", {"id": eid, "domain": "not-a-domain"})
+    assert reg.get(eid)["ontology"]["domain"] == "number"  # unchanged
+
+
+def test_set_vocab_rejects_unknown_field(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {"domain": ["number"]}})  # no 'role' field
+    with pytest.raises(ValidationError):
+        reg.apply("annotate", {"id": eid, "role": "core"})  # 'role' not in vocab
+
+
+def test_set_vocab_null_axes_are_allowed(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found1(reg)
+    reg.apply("set_vocab", {"vocab": {"domain": ["number"], "role": ["core"]}})
+    assert reg.validate() == []  # all axes null on the pending entry → fine
+
+
+def test_set_vocab_refuses_adoption_conflicting_with_existing_curation(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("annotate", {"id": eid, "domain": "number"})
+    # Adopting a vocab that omits 'number' must be refused (whole-registry postcond).
+    with pytest.raises(ValidationError):
+        reg.apply("set_vocab", {"vocab": {"domain": ["order", "logic"]}})
+    assert reg.get(eid)["ontology"]["domain"] == "number"  # data intact
+
+
+def test_set_vocab_from_file_and_normalizes_values(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found1(reg)
+    cfg = tmp_path / "tag_vocab.json"
+    cfg.write_text(json.dumps({"domain": {"values": ["order", "number", "number"]}}),
+                   encoding="utf-8")
+    reg.apply("set_vocab", {"vocab": str(cfg)})
+    stored = reg.load()["vocab"]["domain"]["values"]
+    assert stored == ["number", "order"]  # de-duped + alphabetized
+
+
+def test_cardinality_is_soft_and_surfaced_by_anomaly_view(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    # role required (min 1), but the entry has no role → must still VALIDATE...
+    reg.apply("set_vocab", {"vocab": {"role": {"values": ["core"], "cardinality": "1"}}})
+    assert reg.validate() == []  # cardinality never blocks
+    # ...and be surfaced by the anomalies view.
+    anomalies = reg.export_view("anomalies")
+    assert eid in anomalies and "role" in anomalies
+    # Once the required axis is set, the anomaly clears.
+    reg.apply("annotate", {"id": eid, "role": "core"})
+    assert "_(none)_" in reg.export_view("anomalies")

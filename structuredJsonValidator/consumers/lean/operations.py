@@ -94,22 +94,28 @@ def _guard_not_terminal(entry: dict, *, force: bool) -> None:
 
 # -- bootstrapping ------------------------------------------------------------
 
-def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
-    """Accept the scanner dump as an inline list or a path string to read.
+def _load_json_input(value, *, label: str):
+    """Accept a caller-provided INPUT as an inline object or a path to read.
 
     Reading a caller-specified *input* file does not breach the operations
     contract (which protects the registry/audit *output* files). Resolving the
-    path here rather than at the caller keeps the founding import a tiny call and
-    keeps the audit record's ``params`` to the path, not a 1k-element inline list.
+    path here (rather than at the caller) keeps the call tiny and keeps the audit
+    record's ``params`` to the path, not the inflated inline payload.
     """
-    if isinstance(scanner_output, str):
+    if isinstance(value, str):
         try:
-            with open(scanner_output, encoding="utf-8") as f:
-                scanner_output = json.load(f)
+            with open(value, encoding="utf-8") as f:
+                return json.load(f)
         except FileNotFoundError as exc:
-            raise OperationError(f"scanner_output file not found: {scanner_output}") from exc
+            raise OperationError(f"{label} file not found: {value}") from exc
         except json.JSONDecodeError as exc:
-            raise OperationError(f"scanner_output is not valid JSON ({scanner_output}): {exc}") from exc
+            raise OperationError(f"{label} is not valid JSON ({value}): {exc}") from exc
+    return value
+
+
+def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
+    """Scanner dump as an inline list or a path string to read."""
+    scanner_output = _load_json_input(scanner_output, label="scanner_output")
     if not isinstance(scanner_output, list):
         raise OperationError(
             f"scanner_output must be a list of declaration dicts or a path to one, "
@@ -546,6 +552,52 @@ def add_citation(document, *, id: str, target: str) -> tuple[dict, list[str]]:
     return doc, [id]
 
 
+def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
+    """Adopt the controlled ontology vocabulary (interop tag-vocab work item).
+
+    ``vocab`` is a caller-provided config (ZP-owned) — an inline object or a path
+    to a JSON file — mapping each ontology FIELD to its allowed values. Each
+    field maps to either a bare ``[values]`` list or an object
+    ``{values:[...], cardinality?, glosses?}``; sjv reads only ``values`` (the
+    HARD enum) and ``cardinality`` (a SOFT expectation surfaced by the
+    ``anomalies`` view, never enforced). Values are stored de-duplicated and
+    alphabetized for clean diffs.
+
+    The field SET is whatever the config declares — sjv does NOT hardcode
+    object/domain/role (config-driven, per the decision). Once a vocab is set,
+    ``validate`` REJECTS any ontology value outside its field's list and any
+    populated ontology field absent from the vocab. Enforcement is opt-in: with
+    no vocab set, ontology values are unconstrained (beyond the schema), so ZP
+    ratifies values first, then adopts. Because the postcondition validates the
+    whole registry, adopting a vocab that existing curation violates is refused —
+    fix the data (or the vocab) first.
+    """
+    doc = _require_doc(document)
+    raw = _load_json_input(vocab, label="vocab")
+    if not isinstance(raw, dict) or not raw:
+        raise OperationError(
+            "vocab must be a non-empty object mapping ontology fields to allowed values"
+        )
+    normalized: dict[str, dict] = {}
+    for field, spec in raw.items():
+        if isinstance(spec, list):
+            values, cardinality = spec, None
+        elif isinstance(spec, dict):
+            values, cardinality = spec.get("values"), spec.get("cardinality")
+        else:
+            raise OperationError(
+                f"vocab field {field!r} must map to a list of values or an object with 'values'"
+            )
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise OperationError(f"vocab field {field!r} 'values' must be a list of strings")
+        normalized[field] = {
+            "values": sorted(set(values)),
+            "cardinality": cardinality if isinstance(cardinality, str) else None,
+        }
+    doc["vocab"] = normalized
+    return doc, []
+
+
 OPERATIONS = {
     "import_baseline": import_baseline,
     "reconcile": reconcile,
@@ -560,4 +612,5 @@ OPERATIONS = {
     "annotate": annotate,
     "link_claim": link_claim,
     "add_citation": add_citation,
+    "set_vocab": set_vocab,
 }

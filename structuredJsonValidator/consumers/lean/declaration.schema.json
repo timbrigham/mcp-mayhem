@@ -28,6 +28,19 @@
     "entries": {
       "type": "array",
       "items": { "$ref": "#/$defs/entry" }
+    },
+    "vocab": {
+      "type": "object",
+      "$comment": "Controlled ontology vocabulary, adopted via set_vocab from a caller-owned config. Field set is data, not hardcoded. sjv enforces values (hard) in rules.py; cardinality is a soft expectation surfaced by the anomalies view.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["values"],
+        "properties": {
+          "values": { "type": "array", "items": { "type": "string" } },
+          "cardinality": { "type": ["string", "null"] }
+        }
+      }
     }
   },
   "$defs": {

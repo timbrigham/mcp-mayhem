@@ -98,4 +98,36 @@ def validate(document: dict) -> list[str]:
                     f"{eid}: disposition '{disposition}' requires a non-empty reason"
                 )
 
+    violations.extend(_vocab_violations(document, entries))
     return violations
+
+
+def _vocab_violations(document: dict, entries: list[dict]) -> list[str]:
+    """Config-driven ontology enum (interop tag-vocab work item).
+
+    Opt-in: only enforced once a ``vocab`` has been adopted (``set_vocab``). For
+    every populated ontology field, the field must be in the vocab and its value
+    must be one of that field's allowed values. A null (unset) axis is always
+    fine. Cardinality is NOT enforced here — it is a soft expectation surfaced by
+    the ``anomalies`` view.
+    """
+    vocab = document.get("vocab")
+    if not vocab:
+        return []
+    out: list[str] = []
+    for idx, entry in enumerate(entries):
+        eid = entry.get("id", f"entries[{idx}]")
+        for field, value in (entry.get("ontology") or {}).items():
+            if value is None:
+                continue
+            spec = vocab.get(field)
+            if spec is None:
+                out.append(f"{eid}: ontology field '{field}' is not in the vocab")
+                continue
+            allowed = spec.get("values", [])
+            if value not in allowed:
+                out.append(
+                    f"{eid}: ontology.{field} value {value!r} not in vocab "
+                    f"(allowed: {', '.join(allowed)})"
+                )
+    return out
