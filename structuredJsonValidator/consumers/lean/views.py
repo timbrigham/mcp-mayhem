@@ -8,7 +8,7 @@ from collections import Counter
 _DISPOSITIONS = ["pending", "present", "moved", "renamed", "merged", "split", "dropped", "new"]
 
 
-def status_table(document: dict) -> str:
+def status_table(document: dict, **_params) -> str:
     """A Markdown status table: count of entries per disposition."""
     entries = document.get("entries", [])
     counts = Counter(e.get("disposition") for e in entries)
@@ -19,7 +19,7 @@ def status_table(document: dict) -> str:
     return "\n".join(lines)
 
 
-def domain_table(document: dict) -> str:
+def domain_table(document: dict, **_params) -> str:
     """Markdown table: entry count per curated ontology.domain (null → '(unassigned)')."""
     entries = document.get("entries", [])
     counts = Counter((e.get("ontology", {}).get("domain") or "(unassigned)") for e in entries)
@@ -43,7 +43,11 @@ def _cardinality_min(cardinality) -> int:
     return 0
 
 
-def anomaly_table(document: dict) -> str:
+_ANOMALY_DEFAULT_LIMIT = 50
+
+
+def anomaly_table(document: dict, *, count_only: bool = False,
+                  limit=None, offset: int = 0, **_params) -> str:
     """Soft-cardinality anomalies (interop tag-vocab work item).
 
     Cardinality in the vocab is an EXPECTATION, never enforced: a declaration may
@@ -52,19 +56,49 @@ def anomaly_table(document: dict) -> str:
     impossibilities, so the model must be able to REPRESENT them. This view only
     SURFACES entries whose required (min>=1) ontology axis is unset, for review;
     it blocks nothing.
+
+    This IS the tagging worklist, so it is large by design — and returns a
+    receipt, not the warehouse (interop issue #6). Every render leads with a
+    summary (total + per-axis missing counts). ``count_only=True`` returns ONLY
+    that summary. Otherwise the rows are paged: ``offset``/``limit`` window them,
+    with a safe default page of 50; pass ``limit=0`` for all rows.
     """
     vocab = document.get("vocab") or {}
     required = sorted(f for f, spec in vocab.items()
                       if _cardinality_min(spec.get("cardinality")) >= 1)
-    lines = ["| id | missing required axis |", "|---|---|"]
-    hits = 0
+
+    rows: list[tuple] = []
+    per_axis = {f: 0 for f in required}
     for entry in document.get("entries", []):
         ont = entry.get("ontology") or {}
         missing = [f for f in required if ont.get(f) is None]
         if missing:
-            hits += 1
-            lines.append(f"| {entry.get('id')} | {', '.join(missing)} |")
-    if not hits:
+            rows.append((entry.get("id"), missing))
+            for f in missing:
+                per_axis[f] += 1
+    total = len(rows)
+
+    summary = [f"anomalies: {total} entr{'y' if total == 1 else 'ies'} "
+               f"missing a required axis (of {len(document.get('entries', []))} total)",
+               "", "| axis | missing |", "|---|---|"]
+    for f in required:
+        summary.append(f"| {f} | {per_axis[f]} |")
+    if not required:
+        summary.append("| _(no required axes in vocab)_ | |")
+
+    if count_only:
+        return "\n".join(summary)
+
+    lim = _ANOMALY_DEFAULT_LIMIT if limit is None else limit
+    window = rows[offset:] if lim in (0, None) else rows[offset:offset + lim]
+    shown = f"showing {offset + 1}–{offset + len(window)} of {total}" if window else "none in range"
+    lines = summary + ["",
+                       f"rows ({shown}; offset={offset}, "
+                       f"limit={'all' if lim in (0, None) else lim}, count_only for summary only)",
+                       "", "| id | missing required axis |", "|---|---|"]
+    for eid, missing in window:
+        lines.append(f"| {eid} | {', '.join(missing)} |")
+    if not window:
         lines.append("| _(none)_ | |")
     return "\n".join(lines)
 

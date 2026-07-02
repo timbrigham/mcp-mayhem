@@ -598,3 +598,39 @@ def test_set_vocab_skips_underscore_prefixed_keys(tmp_path):
         "_note": "draft marker, not a field",
         "role": ["core", "face"]}})
     assert sorted(reg.load()["vocab"].keys()) == ["role"]
+
+
+def test_anomalies_view_is_paged_and_count_only(tmp_path):
+    # anomalies is the tagging worklist (large by design) — it must not blow the
+    # token budget the way #6 addressed for find (interop retest 2026-07-02).
+    reg = _reg(tmp_path / "reg.json")
+    scan = [{"qualified": f"A.d{i}", "short": f"d{i}", "kind": "def",
+             "file": "f.lean", "line": i, "prefix": "A"} for i in range(400)]
+    _found(reg, scan)
+    reg.apply("set_vocab", {"vocab": {
+        "domain": {"values": ["order"], "cardinality": {"min": 1, "max": 1}},
+        "role": {"values": ["core"], "cardinality": {"min": 1, "max": 1}}}})
+
+    full = reg.export_view("anomalies")  # default page
+    # Leads with the summary counts (per-axis breakdown).
+    assert "anomalies: 400 entries" in full
+    assert "| domain | 400 |" in full and "| role | 400 |" in full
+    # Default page is capped (safe inline), not all 400 rows. Rows carry the
+    # surrogate id and the "domain, role" missing-axis cell, one per row.
+    assert full.count("domain, role") == 50   # default page, not 400
+    assert len(full) < 8000                    # small inline, not ~tens of KB
+
+    # count_only: summary only, no rows.
+    summary = reg.export_view("anomalies", count_only=True)
+    assert "| domain | 400 |" in summary
+    assert "| id | missing required axis |" not in summary
+    assert "domain, role" not in summary
+
+    # paging window.
+    page = reg.export_view("anomalies", limit=10, offset=20)
+    assert "showing 21–30 of 400" in page
+    assert page.count("domain, role") == 10
+
+    # limit=0 → all rows.
+    everything = reg.export_view("anomalies", limit=0)
+    assert everything.count("domain, role") == 400

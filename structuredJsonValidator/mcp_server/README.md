@@ -41,10 +41,13 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
   `count_only=true` → just `{count}`; `limit`/`offset` page (`count` is always
   the full match total); `fields=[...]` projects only those dotted paths
 - `history(id?)` — append-only audit log, optionally per-entry
-- `view(kind)` — render a projection (`status`, `domains`, `anomalies`).
-  `anomalies` surfaces entries missing a vocab-required ontology axis (soft
-  cardinality — never blocks; the framework must be able to represent the
-  impossible)
+- `view(kind, count_only?, limit?, offset?)` — render a projection (`status`,
+  `domains`, `anomalies`). `anomalies` surfaces entries missing a vocab-required
+  ontology axis (soft cardinality — never blocks; the framework must be able to
+  represent the impossible). It's the tagging worklist (large by design): it
+  always leads with a summary (total + per-axis missing counts), `count_only`
+  returns just that summary, and `limit`/`offset` page the rows (default page 50,
+  `limit=0` for all). The paging args are ignored by `status`/`domains`
 - `validate()` — full-file conformance → `{valid, violations}`
 - `verify_integrity()` — file hash vs last audit hash → `{ok, hash|error}`
 

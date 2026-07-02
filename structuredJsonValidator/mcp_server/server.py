@@ -108,10 +108,16 @@ def history(id: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
-def view(kind: str) -> dict:
-    """Render a projection view (e.g. 'status', 'domains') from the source."""
+def view(kind: str, count_only: bool = False, limit: Optional[int] = None,
+         offset: int = 0) -> dict:
+    """Render a projection view ('status', 'domains', 'anomalies') from the
+    source. `anomalies` is the tagging worklist (large by design): it always
+    leads with a summary (total + per-axis missing counts); `count_only=true`
+    returns just that summary, and `limit`/`offset` page the rows (default page
+    50, `limit=0` for all). count_only/limit/offset are ignored by other views."""
     try:
-        return {"ok": True, "kind": kind, "text": _registry().export_view(kind)}
+        text = _registry().export_view(kind, count_only=count_only, limit=limit, offset=offset)
+        return {"ok": True, "kind": kind, "text": text}
     except OperationError as exc:
         return {"ok": False, "error": str(exc)}
 

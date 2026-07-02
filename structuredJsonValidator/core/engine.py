@@ -243,9 +243,9 @@ class Registry:
             return records
         return [r for r in records if entry_id in r.get("entries_touched", [])]
 
-    def export_view(self, kind: str) -> str:
+    def export_view(self, kind: str, **params: Any) -> str:
         if kind not in self.views:
             raise OperationError(
                 f"Unknown view {kind!r}. Known: {', '.join(sorted(self.views)) or '(none)'}"
             )
-        return self.views[kind](self.load())
+        return self.views[kind](self.load(), **params)
