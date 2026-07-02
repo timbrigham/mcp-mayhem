@@ -77,6 +77,12 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 - `id` is a sjv-minted opaque surrogate (UUID), not a natural key. `file`,
   `qualified`, `line` are plain mutable fields; grep on `qualified`, not `id`.
   Scanner facts carry `qualified` (the match key), never a client `id`
+- ontology axes are LISTS — `object`, `domain`, `role` each store a list of
+  vocab values (unset = `[]`); a declaration can be multi-domain. `annotate`
+  and the bulk ops coerce a scalar (`"core"` → `["core"]`) and dedupe; `[]`
+  clears. Filter untagged entries with `{"ontology.domain": []}`. Per-axis soft
+  `cardinality {min,max}` (max `null` = uncapped) drives `view("anomalies")`,
+  never validation
 - `set_vocab(vocab?)` — adopt the controlled ontology vocabulary from a
   caller-owned config (inline object or path) mapping each ontology field to its
   allowed `values` (+ optional soft `cardinality`). Axes may sit under a `fields`

@@ -320,7 +320,7 @@ def test_import_baseline_refuses_non_empty_registry(tmp_path):
         reg.apply("import_baseline", {"scanner_output": _scan(2), "anchor": anchor})
 
     assert reg.verify_integrity() == before  # nothing written
-    assert reg.get(curated_id)["ontology"]["role"] == "core"  # curation intact
+    assert reg.get(curated_id)["ontology"]["role"] == ["core"]  # curation intact
 
 
 def test_import_baseline_force_overwrites(tmp_path):
@@ -388,7 +388,7 @@ def test_reconcile_updates_location_and_preserves_curation(tmp_path):
     assert entry is not None
     assert entry["old"]["file"] == "new.lean" and entry["old"]["line"] == 42  # relocated
     assert entry["disposition"] == "pending"
-    assert entry["ontology"]["role"] == "core" and entry["ontology"]["domain"] == "number"  # curation kept
+    assert entry["ontology"]["role"] == ["core"] and entry["ontology"]["domain"] == ["number"]  # curation kept
     assert res["drift"]["location_updated"] == 1
     assert res["drift"]["vanished"] == [] and res["drift"]["phantom"] == []
     assert len(reg.find()) == 1  # no drop+add
@@ -492,7 +492,7 @@ def test_set_vocab_enforces_hard_enum(tmp_path):
     # ...one outside it is rejected (postcondition fails, nothing written).
     with pytest.raises(ValidationError):
         reg.apply("annotate", {"id": eid, "domain": "not-a-domain"})
-    assert reg.get(eid)["ontology"]["domain"] == "number"  # unchanged
+    assert reg.get(eid)["ontology"]["domain"] == ["number"]  # unchanged
 
 
 def test_set_vocab_rejects_unknown_field(tmp_path):
@@ -510,13 +510,53 @@ def test_set_vocab_null_axes_are_allowed(tmp_path):
     assert reg.validate() == []  # all axes null on the pending entry → fine
 
 
+def test_domain_is_multivalue_and_scalar_is_coerced(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {
+        "domain": {"values": ["category", "set-theory"], "cardinality": {"min": 1, "max": None}}}})
+    # A declaration can live in several domains at once.
+    reg.apply("annotate", {"id": eid, "domain": ["category", "set-theory"]})
+    assert reg.get(eid)["ontology"]["domain"] == ["category", "set-theory"]
+    assert reg.validate() == []
+    # A scalar input is coerced to a single-element list; a bad element still rejects.
+    reg.apply("annotate", {"id": eid, "domain": "category"})
+    assert reg.get(eid)["ontology"]["domain"] == ["category"]
+    with pytest.raises(ValidationError):
+        reg.apply("annotate", {"id": eid, "domain": ["category", "not-a-domain"]})
+
+
+def test_annotate_dedupes_list(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {"domain": ["order"]}})
+    reg.apply("annotate", {"id": eid, "domain": ["order", "order"]})
+    assert reg.get(eid)["ontology"]["domain"] == ["order"]
+
+
+def test_uncapped_domain_no_overflag_but_capped_role_surfaces(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {
+        "domain": {"values": ["a", "b", "c"], "cardinality": {"min": 1, "max": None}},   # uncapped
+        "role": {"values": ["core", "no-go"], "cardinality": {"min": 1, "max": 1}}}})      # max 1
+    # Multi-domain (3) with a role over its soft cap of 1.
+    reg.apply("annotate", {"id": eid, "domain": ["a", "b", "c"], "role": ["core", "no-go"]})
+    assert reg.validate() == []  # cardinality is soft — never blocks, even over-cap
+    an = reg.export_view("anomalies")
+    assert "role>1" in an          # over-cap surfaced for the capped axis
+    assert eid in an
+    # domain is uncapped → 3 values is not an anomaly (only its min matters).
+    assert "domain>" not in an
+
+
 def test_role_no_go_passes_schema_and_vocab(tmp_path):
     # role is double-guarded (schema enum + vocab); 'no-go' must clear BOTH.
     reg = _reg(tmp_path / "reg.json")
     eid = _found1(reg)
     reg.apply("set_vocab", {"vocab": {"role": ["core", "no-go"]}})
     reg.apply("annotate", {"id": eid, "role": "no-go"})
-    assert reg.get(eid)["ontology"]["role"] == "no-go"
+    assert reg.get(eid)["ontology"]["role"] == ["no-go"]
     assert reg.validate() == []
 
 
@@ -527,7 +567,7 @@ def test_set_vocab_refuses_adoption_conflicting_with_existing_curation(tmp_path)
     # Adopting a vocab that omits 'number' must be refused (whole-registry postcond).
     with pytest.raises(ValidationError):
         reg.apply("set_vocab", {"vocab": {"domain": ["order", "logic"]}})
-    assert reg.get(eid)["ontology"]["domain"] == "number"  # data intact
+    assert reg.get(eid)["ontology"]["domain"] == ["number"]  # data intact
 
 
 def test_set_vocab_from_file_and_normalizes_values(tmp_path):
@@ -667,7 +707,7 @@ def test_annotate_many_sets_and_is_atomic(tmp_path):
         {"id": ids[0], "domain": "order", "role": "core"},
         {"id": ids[1], "domain": "order"}]})
     assert res["count"] == 2 and res["unchanged"] == 0
-    assert reg.get(ids[0])["ontology"] == {"object": None, "domain": "order", "role": "core"}
+    assert reg.get(ids[0])["ontology"] == {"object": [], "domain": ["order"], "role": ["core"]}
     assert reg.validate() == []
     # Re-applying the same tags is a no-op (idempotency visibility).
     res2 = reg.apply("annotate_many", {"items": [{"id": ids[0], "domain": "order", "role": "core"}]})
@@ -683,7 +723,7 @@ def test_annotate_many_rejects_bad_value_atomically(tmp_path):
         reg.apply("annotate_many", {"items": [
             {"id": ids[0], "domain": "order"},
             {"id": ids[1], "domain": "not-a-domain"}]})  # one bad → whole batch fails
-    assert reg.get(ids[0])["ontology"]["domain"] is None  # first item NOT written
+    assert reg.get(ids[0])["ontology"]["domain"] == []  # first item NOT written
     assert reg.verify_integrity() == before
 
 
@@ -704,7 +744,7 @@ def test_annotate_many_null_clears(tmp_path):
     eid = reg.find()[0]["id"]
     reg.apply("annotate", {"id": eid, "role": "core"})
     reg.apply("annotate_many", {"items": [{"id": eid, "role": None}]})  # explicit clear
-    assert reg.get(eid)["ontology"]["role"] is None
+    assert reg.get(eid)["ontology"]["role"] == []
 
 
 def test_annotate_by_filter_tags_all_matches(tmp_path):
@@ -713,9 +753,9 @@ def test_annotate_by_filter_tags_all_matches(tmp_path):
     res = reg.apply("annotate_by_filter", {"filter": {"old.prefix": "ZPA"},
                                            "tags": {"domain": "order"}})
     assert res["matched"] == 3 and res["updated"] == 3
-    assert all(e["ontology"]["domain"] == "order" for e in reg.find(**{"old.prefix": "ZPA"}))
+    assert all(e["ontology"]["domain"] == ["order"] for e in reg.find(**{"old.prefix": "ZPA"}))
     # ZPB untouched.
-    assert all(e["ontology"]["domain"] is None for e in reg.find(**{"old.prefix": "ZPB"}))
+    assert all(e["ontology"]["domain"] == [] for e in reg.find(**{"old.prefix": "ZPB"}))
 
 
 def test_annotate_by_filter_targets_only_untagged(tmp_path):
@@ -723,11 +763,11 @@ def test_annotate_by_filter_targets_only_untagged(tmp_path):
     _found_prefixes(reg)
     zpa = [e["id"] for e in reg.find(**{"old.prefix": "ZPA"})]
     reg.apply("annotate", {"id": zpa[0], "domain": "valuation"})  # pre-tag one
-    # Filter on the null axis to hit only the still-untagged ZPA entries.
+    # Untagged is now the empty list, so filter on [] to hit the still-untagged.
     res = reg.apply("annotate_by_filter", {
-        "filter": {"old.prefix": "ZPA", "ontology.domain": None}, "tags": {"domain": "order"}})
+        "filter": {"old.prefix": "ZPA", "ontology.domain": []}, "tags": {"domain": "order"}})
     assert res["matched"] == 2 and res["updated"] == 2
-    assert reg.get(zpa[0])["ontology"]["domain"] == "valuation"  # pre-tagged one preserved
+    assert reg.get(zpa[0])["ontology"]["domain"] == ["valuation"]  # pre-tagged one preserved
 
 
 def test_annotate_by_filter_rejects_empty_filter_and_bad_tag(tmp_path):

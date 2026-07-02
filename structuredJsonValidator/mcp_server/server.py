@@ -212,9 +212,10 @@ def add_new(new: dict, reason: str) -> dict:
 
 
 @mcp.tool()
-def annotate(id: str, object: Optional[str] = None, domain: Optional[str] = None,
-             role: Optional[str] = None) -> dict:
-    """Set curated ontology axes (only the provided ones)."""
+def annotate(id: str, object=None, domain=None, role=None) -> dict:
+    """Set curated ontology axes (only the provided ones). Each axis is stored as
+    a LIST; a scalar is coerced (`"core"` -> `["core"]`), a list is kept, and
+    `[]` clears. An omitted axis is left unchanged."""
     params: dict[str, Any] = {"id": id}
     if object is not None:
         params["object"] = object

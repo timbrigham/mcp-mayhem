@@ -29,9 +29,9 @@
       "disposition": "pending",
       "reason": null,
       "ontology": {
-        "object": null,
-        "domain": null,
-        "role": null
+        "object": [],
+        "domain": [],
+        "role": []
       },
       "claims": {
         "witness_of": ["T-SNAP"],
@@ -61,9 +61,9 @@
       "disposition": "renamed",
       "reason": "moved into the Padic domain namespace during the object x domain restructure",
       "ontology": {
-        "object": "bottom",
-        "domain": "number",
-        "role": "face"
+        "object": ["bottom"],
+        "domain": ["number"],
+        "role": ["face"]
       },
       "claims": {
         "witness_of": [],

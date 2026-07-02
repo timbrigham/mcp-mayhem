@@ -117,17 +117,17 @@ def _vocab_violations(document: dict, entries: list[dict]) -> list[str]:
     out: list[str] = []
     for idx, entry in enumerate(entries):
         eid = entry.get("id", f"entries[{idx}]")
-        for field, value in (entry.get("ontology") or {}).items():
-            if value is None:
-                continue
-            spec = vocab.get(field)
-            if spec is None:
-                out.append(f"{eid}: ontology field '{field}' is not in the vocab")
-                continue
-            allowed = spec.get("values", [])
-            if value not in allowed:
-                out.append(
-                    f"{eid}: ontology.{field} value {value!r} not in vocab "
-                    f"(allowed: {', '.join(allowed)})"
-                )
+        for field, values in (entry.get("ontology") or {}).items():
+            # Every axis is a list (uniform-lists model); an empty list is unset.
+            for value in (values or []):
+                spec = vocab.get(field)
+                if spec is None:
+                    out.append(f"{eid}: ontology field '{field}' is not in the vocab")
+                    break
+                allowed = spec.get("values", [])
+                if value not in allowed:
+                    out.append(
+                        f"{eid}: ontology.{field} value {value!r} not in vocab "
+                        f"(allowed: {', '.join(allowed)})"
+                    )
     return out

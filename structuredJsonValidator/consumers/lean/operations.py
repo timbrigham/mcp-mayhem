@@ -142,7 +142,7 @@ def _pending_entry_from_scan(item: dict) -> dict:
         "new": _empty_new(),
         "disposition": "pending",
         "reason": None,
-        "ontology": {"object": None, "domain": None, "role": None},
+        "ontology": {"object": [], "domain": [], "role": []},
         "claims": {
             "witness_of": list(item.get("witness_of", [])),
             "citations": list(item.get("citations", [])),
@@ -511,7 +511,7 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
         "new": new_group,
         "disposition": "new",
         "reason": reason,
-        "ontology": {"object": None, "domain": None, "role": None},
+        "ontology": {"object": [], "domain": [], "role": []},
         "claims": {"witness_of": list(witness_of or []), "citations": list(citations or [])},
         "verify": {"sorry_free": bool(sorry_free), "axioms": axioms},
     }
@@ -522,16 +522,35 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
 
 # -- curation -----------------------------------------------------------------
 
+def _to_axis_list(value) -> list:
+    """Coerce a provided axis value to its canonical list form (uniform-lists
+    model): a scalar becomes ``[scalar]``, ``None`` / ``[]`` become ``[]`` (unset/
+    clear), a list is kept (order preserved, deduped). Callers decide when an axis
+    is "provided" vs "left unchanged" — this only shapes a provided value."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    seen, out = set(), []
+    for v in value:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
 def annotate(document, *, id: str, object=None, domain=None, role=None) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
     ont = entry["ontology"]
+    # A provided axis (scalar or list) SETS it (coerced to a list); an omitted
+    # axis (None) is left unchanged. Pass [] to clear.
     if object is not None:
-        ont["object"] = object
+        ont["object"] = _to_axis_list(object)
     if domain is not None:
-        ont["domain"] = domain
+        ont["domain"] = _to_axis_list(domain)
     if role is not None:
-        ont["role"] = role
+        ont["role"] = _to_axis_list(role)
     return doc, [id]
 
 
@@ -547,26 +566,29 @@ def _tag_vocab_violations(doc: dict, tags: dict, *, where: str = "") -> list[str
     if not vocab:
         return []
     out: list[str] = []
-    for field, value in tags.items():
-        if value is None:
-            continue
+    for field, raw in tags.items():
         spec = vocab.get(field)
-        if spec is None:
-            out.append(f"{where}ontology field '{field}' is not in the vocab")
-        elif value not in spec.get("values", []):
-            out.append(f"{where}ontology.{field} value {value!r} not in vocab "
-                       f"(allowed: {', '.join(spec['values'])})")
+        values = _to_axis_list(raw)  # scalar or list -> list of elements
+        for value in values:
+            if spec is None:
+                out.append(f"{where}ontology field '{field}' is not in the vocab")
+                break
+            if value not in spec.get("values", []):
+                out.append(f"{where}ontology.{field} value {value!r} not in vocab "
+                           f"(allowed: {', '.join(spec['values'])})")
     return out
 
 
 def _apply_tags(entry: dict, tags: dict) -> bool:
     """Set/clear the provided ontology axes on one entry (set only the keys
-    present; a value SETS, explicit ``null`` CLEARS). Returns True if changed."""
+    present; a value SETS as a list, ``null``/``[]`` CLEARS). Coerces scalars to
+    single-element lists. Returns True if changed."""
     ont = entry["ontology"]
     changed = False
     for field, value in tags.items():
-        if ont.get(field) != value:
-            ont[field] = value
+        new_value = _to_axis_list(value)
+        if ont.get(field) != new_value:
+            ont[field] = new_value
             changed = True
     return changed
 

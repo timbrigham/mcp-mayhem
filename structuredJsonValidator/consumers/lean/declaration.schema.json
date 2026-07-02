@@ -94,11 +94,13 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["object", "domain", "role"],
+          "$comment": "Every axis is a LIST of enum values (uniform-lists model): unset = []; multi-value allowed. Per-axis cardinality (soft) lives in the vocab and is surfaced by the anomalies view, not enforced here. object/domain values are vocab-validated in rules.py; role items are also fixed by this enum.",
           "properties": {
-            "object": { "type": ["string", "null"] },
-            "domain": { "type": ["string", "null"] },
+            "object": { "type": "array", "items": { "type": "string" } },
+            "domain": { "type": "array", "items": { "type": "string" } },
             "role": {
-              "enum": ["core", "face", "bridge", "schema", "commitment", "scaffolding", "infra", "no-go", null]
+              "type": "array",
+              "items": { "enum": ["core", "face", "bridge", "schema", "commitment", "scaffolding", "infra", "no-go"] }
             }
           }
         },

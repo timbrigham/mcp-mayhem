@@ -1,11 +1,11 @@
 {
   "status": "SAMPLE — illustrative format for data/tag_vocab.json. Copy this to data/tag_vocab.json (git-ignored) and edit for your consumer. sjv reads only fields[*].values (hard enum) and fields[*].cardinality (soft).",
   "purpose": "The single controlled-vocabulary config for registry ontology tags. One entry per FIELD (axis), each with acceptable `values`, a soft `cardinality` expectation, and per-value `glosses` (legend).",
-  "contract": "FIELD SET = the keys under `fields` (adding an axis is an edit here, not an sjv schema change). HARD: sjv rejects any ontology value not in its field's `values`, or any populated field not in the vocab. SOFT: `cardinality` is an expectation only — never rejected; a missing required axis is surfaced by view('anomalies'). Values alphabetized. A bare `{field: [values]}` map (no `fields` wrapper, no metadata) is also accepted.",
+  "contract": "FIELD SET = the keys under `fields` (adding an axis is an edit here, not an sjv schema change). Every ontology axis is stored as a LIST (unset = []). HARD: sjv rejects any ontology value not in its field's `values`, or any populated field not in the vocab. SOFT: `cardinality` {min,max} is an expectation only — never rejected; max:null = uncapped (multi-value). A count below min (e.g. a required axis unset) or above a finite max is surfaced by view('anomalies'). Values alphabetized. A bare `{field: [values]}` map (no `fields` wrapper, no metadata) is also accepted; cardinality also accepts a range string like '1..*'.",
   "fields": {
     "object": {
       "gloss": "what the declaration is ABOUT. Replace these placeholder values with your own.",
-      "cardinality": "0..1 expected (soft)",
+      "cardinality": {"min": 0, "max": 1},
       "values": ["example-noun", "example-verb"],
       "glosses": {
         "example-noun": "PLACEHOLDER — a thing the declaration is about.",
@@ -13,8 +13,8 @@
       }
     },
     "domain": {
-      "gloss": "which field the declaration lives in. Replace these placeholder values with your own.",
-      "cardinality": "1 expected, soft (multi/zero allowed and flagged)",
+      "gloss": "which field(s) the declaration lives in — a list; multi-value allowed. Replace these placeholder values with your own.",
+      "cardinality": {"min": 1, "max": null},
       "values": ["example-domain-a", "example-domain-b"],
       "glosses": {
         "example-domain-a": "PLACEHOLDER — one subject-matter domain.",
@@ -23,7 +23,7 @@
     },
     "role": {
       "gloss": "the declaration's structural function. These values mirror the fixed sjv role enum.",
-      "cardinality": "1 expected (soft)",
+      "cardinality": {"min": 1, "max": 1},
       "values": ["bridge", "commitment", "core", "face", "infra", "no-go", "scaffolding", "schema"],
       "glosses": {
         "bridge": "a transform connecting two domains — an edge, not a cell.",
