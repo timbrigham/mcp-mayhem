@@ -1,0 +1,78 @@
+{
+  "schema_version": "1",
+  "anchor": {
+    "branch": "origin/main",
+    "commit": "0000000000000000000000000000000000000000",
+    "tree": "1111111111111111111111111111111111111111"
+  },
+  "counts": {
+    "files": 142,
+    "declarations": 2
+  },
+  "entries": [
+    {
+      "id": "ZeroParadox/ZPE.lean::ZeroParadox.ZPE.t_snap_derived::L142",
+      "old": {
+        "qualified": "ZeroParadox.ZPE.t_snap_derived",
+        "short": "t_snap_derived",
+        "kind": "theorem",
+        "file": "ZeroParadox/ZPE.lean",
+        "line": 142,
+        "prefix": "ZPE"
+      },
+      "new": {
+        "qualified": null,
+        "short": null,
+        "file": null,
+        "namespace": null
+      },
+      "disposition": "pending",
+      "reason": null,
+      "ontology": {
+        "object": null,
+        "domain": null,
+        "role": null
+      },
+      "claims": {
+        "witness_of": ["T-SNAP"],
+        "citations": ["CLAIMS.md"]
+      },
+      "verify": {
+        "sorry_free": true,
+        "axioms": "(none)"
+      }
+    },
+    {
+      "id": "ZeroParadox/ZPB.lean::ZeroParadox.ZPB.addVal_bot::L88",
+      "old": {
+        "qualified": "ZeroParadox.ZPB.addVal_bot",
+        "short": "addVal_bot",
+        "kind": "theorem",
+        "file": "ZeroParadox/ZPB.lean",
+        "line": 88,
+        "prefix": "ZPB"
+      },
+      "new": {
+        "qualified": "ZeroParadox.Domains.Padic.addVal_bot",
+        "short": "addVal_bot",
+        "file": "ZeroParadox/Domains/Padic.lean",
+        "namespace": "ZeroParadox.Domains.Padic"
+      },
+      "disposition": "renamed",
+      "reason": "moved into the Padic domain namespace during the object x domain restructure",
+      "ontology": {
+        "object": "bottom",
+        "domain": "number",
+        "role": "face"
+      },
+      "claims": {
+        "witness_of": [],
+        "citations": ["CLAIMS.md", "BOTTOMELEMENT.md"]
+      },
+      "verify": {
+        "sorry_free": true,
+        "axioms": "[propext, Classical.choice, Quot.sound]"
+      }
+    }
+  ]
+}

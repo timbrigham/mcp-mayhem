@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SSOT Registry — Lean declaration document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "anchor", "counts", "entries"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "commit", "tree"],
+      "properties": {
+        "branch": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "declarations"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "declarations": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "old", "new", "disposition", "reason", "ontology", "claims", "verify"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "old": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["qualified", "short", "kind", "file", "line", "prefix"],
+          "properties": {
+            "qualified": { "type": ["string", "null"] },
+            "short": { "type": ["string", "null"] },
+            "kind": {
+              "enum": ["theorem", "lemma", "def", "abbrev", "instance", "structure", "class", "inductive", null]
+            },
+            "file": { "type": ["string", "null"] },
+            "line": { "type": ["integer", "null"] },
+            "prefix": { "type": ["string", "null"] }
+          }
+        },
+        "new": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["qualified", "short", "file", "namespace"],
+          "properties": {
+            "qualified": { "type": ["string", "null"] },
+            "short": { "type": ["string", "null"] },
+            "file": { "type": ["string", "null"] },
+            "namespace": { "type": ["string", "null"] }
+          }
+        },
+        "disposition": {
+          "enum": ["pending", "present", "moved", "renamed", "merged", "split", "dropped", "new"]
+        },
+        "reason": { "type": ["string", "null"] },
+        "ontology": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["object", "domain", "role"],
+          "properties": {
+            "object": { "type": ["string", "null"] },
+            "domain": { "type": ["string", "null"] },
+            "role": {
+              "enum": ["core", "face", "bridge", "schema", "commitment", "scaffolding", "infra", null]
+            }
+          }
+        },
+        "claims": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["witness_of", "citations"],
+          "properties": {
+            "witness_of": { "type": "array", "items": { "type": "string" } },
+            "citations": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "verify": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sorry_free", "axioms"],
+          "properties": {
+            "sorry_free": { "type": "boolean" },
+            "axioms": { "type": ["string", "array", "null"] }
+          }
+        }
+      }
+    }
+  },
+  "$comment": "Conditional per-disposition rules and id-uniqueness are enforced in consumers/lean/rules.py — see spec §7."
+}
