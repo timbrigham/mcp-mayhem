@@ -56,13 +56,17 @@ def _sync_counts(document: dict) -> None:
     counts["files"] = _distinct_files(entries)
 
 
-# Terminal dispositions record a deliberate decision; a later verb must not
-# silently reverse it (spec §7 / interop issue #4, strict posture).
-_TERMINAL = ("dropped", "merged")
+# Terminal dispositions record a deliberate decision that spent the entry; a
+# later verb must not silently reverse it (spec §7 / interop issues #4, #7,
+# strict posture). ``dropped``/``merged``/``split`` are all spent: a split
+# source became multiple targets exactly as a merged source folded into one.
+# ``renamed``/``moved``/``present`` are NOT terminal — the entry still exists as
+# one declaration and may be re-dispositioned.
+_TERMINAL = ("dropped", "merged", "split")
 
 
 def _guard_not_terminal(entry: dict, *, force: bool) -> None:
-    """Refuse to mutate a terminal (dropped/merged) entry unless forced.
+    """Refuse to mutate a terminal (dropped/merged/split) entry unless forced.
 
     Use ``reopen`` to return the entry to ``pending`` first, or pass
     ``force=True`` to override deliberately (the override, like every write, is
@@ -102,16 +106,32 @@ def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
 
 
 def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor: dict,
-                    files: Optional[int] = None) -> tuple[dict, list[str]]:
+                    files: Optional[int] = None, force: bool = False) -> tuple[dict, list[str]]:
     """Freeze the initial entries (all ``pending``) from a scanner dump.
 
     ``scanner_output`` may be an inline list of declaration dicts or a path
     string to a JSON file containing that list (the practical form for the
     one-time bulk init, where the list is too large to author inline).
 
+    FOUNDING-ONCE (interop issue #5): this is REPLACE semantics — it discards the
+    current registry and writes a fresh all-``pending`` set, bypassing every
+    per-entry guard. That is correct for the founding write but catastrophic if
+    re-run over curated work (a re-scan reflex would annihilate dispositions,
+    reasons, ontology, claims). So it REFUSES a non-empty registry unless
+    ``force=True``. To fold a re-scan into an existing registry while preserving
+    curation, use a reconcile op, not a forced re-import.
+
     Idempotent: rebuilt deterministically from the same input yields the same
     document. ``scanner_output`` items carry the old-decl fields; new.* is null.
     """
+    existing = document.get("entries") if isinstance(document, dict) else None
+    if existing and not force:
+        raise OperationError(
+            f"import_baseline refuses to replace a non-empty registry "
+            f"({len(existing)} entries) — this would discard all curation "
+            f"(dispositions, reasons, ontology, claims). Pass force=true to "
+            f"overwrite deliberately, or reconcile a re-scan into the existing set."
+        )
     scanner_output = _resolve_scanner_output(scanner_output)
     entries: list[dict] = []
     touched: list[str] = []
@@ -265,12 +285,20 @@ def drop(document, *, id: str, reason: str, force: bool = False) -> tuple[dict, 
 
 
 def reopen(document, *, id: str, reason: str) -> tuple[dict, list[str]]:
-    """Return a terminal (dropped/merged) entry to ``pending``.
+    """Return a terminal (dropped/merged/split) entry to ``pending``.
 
-    The sanctioned way to undo a deliberate drop/merge: it clears ``new.*`` and
-    resets the disposition to ``pending`` so the entry can be re-dispositioned by
-    the normal verbs. Rejects entries with no prior declaration to revert to
-    (e.g. ``add_new`` entries, whose ``old.*`` is null).
+    The sanctioned way to undo a deliberate drop/merge/split: it clears ``new.*``
+    and resets the disposition to ``pending`` so the entry can be
+    re-dispositioned by the normal verbs. Rejects entries with no prior
+    declaration to revert to (e.g. ``add_new`` entries, whose ``old.*`` is null).
+
+    SCOPE (single entry only — interop issue #7): ``reopen`` reverts exactly the
+    named entry and does NOT unwind related entries. Reopening one source of a
+    multi-source ``merge`` leaves the other sources still pointing at the target
+    (the target is fed by one fewer source, but is not a registry entry of its
+    own, so nothing dangles). Reopening a ``split`` source leaves any sibling
+    ``add_new`` target entries in place — reconcile those explicitly if the whole
+    split is being undone. The caller owns re-dispositioning the related entries.
     """
     doc = _require_doc(document)
     entry = _find(doc, id)

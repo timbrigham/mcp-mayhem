@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 
 from consumers.lean import build_registry
 from core.errors import IntegrityError, OperationError, ValidationError
+from core.query import _MISSING, get_path
 
 DATA_PATH = os.environ.get("SJV_DATA", "data/registry.json")
 ACTOR = os.environ.get("SJV_ACTOR", "mcp")
@@ -62,12 +63,41 @@ def get(id: str) -> dict:
     return {"found": entry is not None, "entry": entry}
 
 
+def _project(entry: dict, fields: list[str]) -> dict:
+    """Pull only the requested dotted paths out of an entry (interop issue #6)."""
+    out: dict[str, Any] = {}
+    for path in fields:
+        value = get_path(entry, path)
+        if value is not _MISSING:
+            out[path] = value
+    return out
+
+
 @mcp.tool()
-def find(filters: dict[str, Any]) -> dict:
+def find(filters: dict[str, Any], count_only: bool = False,
+         limit: Optional[int] = None, offset: int = 0,
+         fields: Optional[list[str]] = None) -> dict:
     """Find entries matching every dotted.path=value filter (AND). Example
-    filters: {"disposition": "pending", "ontology.domain": "number"}."""
+    filters: {"disposition": "pending", "ontology.domain": "number"}.
+
+    At scale, keep the return small (interop issue #6):
+      - count_only=True   -> just {count}, no entries (cheapest).
+      - limit / offset    -> page the results; `count` is always the full match
+                             total, `returned` is how many entries came back.
+      - fields=[...]       -> project only those dotted paths per entry (e.g.
+                             ["id", "disposition"]) instead of full payloads.
+    """
     results = _registry().find(**filters)
-    return {"count": len(results), "entries": results}
+    total = len(results)
+    if count_only:
+        return {"count": total}
+    if offset:
+        results = results[offset:]
+    if limit is not None:
+        results = results[:limit]
+    if fields:
+        results = [_project(e, fields) for e in results]
+    return {"count": total, "returned": len(results), "entries": results}
 
 
 @mcp.tool()

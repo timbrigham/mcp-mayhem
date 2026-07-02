@@ -268,3 +268,77 @@ def test_reopen_rejects_non_terminal(sample_file):
     reg.seal()
     with pytest.raises(OperationError):
         reg.apply("reopen", {"id": _PENDING_ID, "reason": "nothing to reopen"})
+
+
+def test_split_source_is_terminal(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    reg.apply("split", {"id": _PENDING_ID,
+                        "targets": [{"qualified": "A.one", "file": "A.lean", "namespace": "A"},
+                                    {"qualified": "A.two", "file": "A.lean", "namespace": "A"}],
+                        "reason": "one decl became two"})
+    assert reg.get(_PENDING_ID)["disposition"] == "split"
+    # A split source is spent, like merged — refuse a later mutation.
+    with pytest.raises(OperationError):
+        reg.apply("rename", {"id": _PENDING_ID, "new_qualified": "A.three",
+                             "new_file": "A.lean", "namespace": "A", "reason": "no"})
+    # reopen brings it back to pending.
+    reg.apply("reopen", {"id": _PENDING_ID, "reason": "undo the split"})
+    assert reg.get(_PENDING_ID)["disposition"] == "pending"
+
+
+# -- founding-once guard (interop issue #5) -----------------------------------
+
+def _scan(n_files):
+    return [{"qualified": f"A.d{i}", "short": f"d{i}", "kind": "def",
+             "file": f"F{i % n_files}.lean", "line": i, "prefix": "A", "sorry_free": True}
+            for i in range(4)]
+
+
+def test_import_baseline_refuses_non_empty_registry(tmp_path):
+    path = tmp_path / "reg.json"
+    reg = _reg(path)
+    anchor = {"branch": "origin/main", "commit": None, "tree": None}
+    reg.apply("import_baseline", {"scanner_output": _scan(2), "anchor": anchor})
+    # Curate something so we can prove it survives the refused re-import.
+    curated_id = reg.find(disposition="pending")[0]["id"]
+    reg.apply("annotate", {"id": curated_id, "role": "core"})
+    before = reg.verify_integrity()
+
+    with pytest.raises(OperationError):
+        reg.apply("import_baseline", {"scanner_output": _scan(2), "anchor": anchor})
+
+    assert reg.verify_integrity() == before  # nothing written
+    assert reg.get(curated_id)["ontology"]["role"] == "core"  # curation intact
+
+
+def test_import_baseline_force_overwrites(tmp_path):
+    path = tmp_path / "reg.json"
+    reg = _reg(path)
+    anchor = {"branch": "origin/main", "commit": None, "tree": None}
+    reg.apply("import_baseline", {"scanner_output": _scan(2), "anchor": anchor})
+    reg.apply("import_baseline", {"scanner_output": _scan(2), "anchor": anchor, "force": True})
+    assert reg.validate() == []
+    assert len(reg.find(disposition="pending")) == 4  # replaced, all pending again
+
+
+# -- terse write receipt (interop issue #6) -----------------------------------
+
+def test_write_receipt_is_terse_for_bulk_but_echoes_small(tmp_path):
+    path = tmp_path / "reg.json"
+    reg = _reg(path)
+    anchor = {"branch": "origin/main", "commit": None, "tree": None}
+    big_scan = [{"qualified": f"A.d{i}", "short": f"d{i}", "kind": "def",
+                 "file": "F.lean", "line": i, "prefix": "A", "sorry_free": True}
+                for i in range(40)]  # > 25 -> id echo suppressed
+    result = reg.apply("import_baseline", {"scanner_output": big_scan, "anchor": anchor})
+    assert result["touched_count"] == 40
+    assert "entries_touched" not in result  # bulk receipt stays terse
+    # But the audit log still keeps the full touched list.
+    last = audit.read_records(reg.audit_path)[-1]
+    assert len(last["entries_touched"]) == 40
+    # Small op: id is echoed for convenience.
+    eid = reg.find(disposition="pending")[0]["id"]
+    small = reg.apply("annotate", {"id": eid, "role": "core"})
+    assert small["touched_count"] == 1
+    assert small["entries_touched"] == [eid]

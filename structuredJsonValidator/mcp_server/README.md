@@ -36,7 +36,10 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 
 **Read** (`{...}` result shapes vary):
 - `get(id)` — one entry by id → `{found, entry}`
-- `find(filters)` — dotted-path AND filters → `{count, entries}`
+- `find(filters, count_only?, limit?, offset?, fields?)` — dotted-path AND
+  filters → `{count, returned, entries}`. At scale keep the return small:
+  `count_only=true` → just `{count}`; `limit`/`offset` page (`count` is always
+  the full match total); `fields=[...]` projects only those dotted paths
 - `history(id?)` — append-only audit log, optionally per-entry
 - `view(kind)` — render a projection (`status`, `domains`, …)
 - `validate()` — full-file conformance → `{valid, violations}`
@@ -46,9 +49,13 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 - `seal()` — adopt the current file as the managed baseline (validate + record hash)
 - §9 verbs — `rename`, `move`, `mark_present`, `drop`, `merge`, `split`,
   `reopen`, `add_new`, `annotate`, `link_claim`, `add_citation`
-- terminal-state guard — `dropped`/`merged` entries are immutable: a
+- terminal-state guard — `dropped`/`merged`/`split` entries are immutable: a
   disposition-changing verb on one is refused unless `force=true`; use
   `reopen(id, reason)` to return it to `pending` first
+- `import_baseline` is founding-once — it REPLACES the whole registry, so it
+  refuses a non-empty registry unless `force=true` (guards against a re-scan
+  reflex wiping all curation). Returns a terse receipt (`touched_count`, not a
+  full id echo) for bulk writes; the full list stays in the audit log
 - `export_full(dest)` — publish the complete validated, deterministic registry
   to `dest` for a consuming repo to commit
 - `apply(op, params)` — generic escape hatch for any registered operation

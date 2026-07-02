@@ -29,6 +29,11 @@ Operation = Callable[..., tuple[dict, list[str]]]
 BusinessValidator = Callable[[dict], list[str]]
 View = Callable[[dict], str]
 
+# A write receipt echoes touched ids only up to this many; beyond it the caller
+# gets just a count (the full list stays in the audit log). Keeps bulk-op
+# returns from blowing an agent's token budget (interop issue #6).
+_MAX_TOUCHED_ECHO = 25
+
 
 class Registry:
     def __init__(
@@ -138,10 +143,16 @@ class Registry:
             actor=actor or self.actor,
             op=op_name,
             params=params,
-            entries_touched=touched,
+            entries_touched=touched,  # audit keeps the full list regardless
             resulting_sha256=sha,
         )
-        return {"op": op_name, "entries_touched": touched, "resulting_sha256": sha}
+        # Terse receipt, not the warehouse (interop issue #6): echo ids only for
+        # small results so a bulk op (e.g. a 1k-entry import) can't blow the
+        # caller's token budget. The full list is always in the audit log.
+        result = {"op": op_name, "touched_count": len(touched), "resulting_sha256": sha}
+        if len(touched) <= _MAX_TOUCHED_ECHO:
+            result["entries_touched"] = touched
+        return result
 
     def export_full(self, dest_path: str | os.PathLike, *, actor: Optional[str] = None) -> dict:
         """Publish the COMPLETE registry as a deterministic, schema-valid artifact.
