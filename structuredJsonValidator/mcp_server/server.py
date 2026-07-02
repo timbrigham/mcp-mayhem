@@ -220,14 +220,18 @@ def annotate(id: str, object: Optional[str] = None, domain: Optional[str] = None
 
 
 @mcp.tool()
-def set_vocab(vocab) -> dict:
-    """Adopt the controlled ontology vocabulary from a caller-owned config
-    (inline object or a path to a JSON file) mapping each ontology field to its
-    allowed values. Once set, `validate` REJECTS ontology values outside their
-    field's list and fields not in the vocab; `cardinality` stays a soft
-    expectation surfaced by `view('anomalies')`. The field set is data — sjv does
-    not hardcode object/domain/role."""
-    return _write("set_vocab", {"vocab": vocab})
+def set_vocab(vocab=None) -> dict:
+    """Adopt the controlled ontology vocabulary from a caller-owned config.
+
+    `vocab` may be an inline object or a path to a JSON file mapping each
+    ontology field to its allowed values (axes under a `fields` key, or a bare
+    `{field: [values]}` map). Omit it to load the default `tag_vocab.json` from
+    the registry's own data folder (next to SJV_DATA). Once set, `validate`
+    REJECTS ontology values outside their field's list and fields not in the
+    vocab; `cardinality` stays a soft expectation surfaced by `view('anomalies')`.
+    The field set is data — sjv does not hardcode object/domain/role."""
+    source = vocab if vocab is not None else str(_registry().vocab_path)
+    return _write("set_vocab", {"vocab": source})
 
 
 @mcp.tool()

@@ -531,6 +531,33 @@ def test_set_vocab_from_file_and_normalizes_values(tmp_path):
     assert stored == ["number", "order"]  # de-duped + alphabetized
 
 
+def test_set_vocab_accepts_fields_wrapper_and_ignores_metadata(tmp_path):
+    # The real config nests axes under `fields` with sibling metadata keys.
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    cfg = {
+        "status": "DRAFT — ignored by sjv",
+        "purpose": "ignored",
+        "fields": {
+            "domain": {"values": ["order", "number"], "cardinality": "1 expected (soft)",
+                       "glosses": {"order": "…", "number": "…"}},
+            "role": {"values": ["core", "face"]},
+        },
+        "_open": "ignored",
+    }
+    reg.apply("set_vocab", {"vocab": cfg})
+    stored = reg.load()["vocab"]
+    assert sorted(stored.keys()) == ["domain", "role"]  # only the fields, not metadata
+    assert stored["domain"]["values"] == ["number", "order"]
+    reg.apply("annotate", {"id": eid, "domain": "number", "role": "core"})
+    assert reg.validate() == []
+
+
+def test_registry_default_vocab_path_is_in_data_folder(tmp_path):
+    reg = _reg(tmp_path / "sub" / "registry.json")
+    assert reg.vocab_path == tmp_path / "sub" / "tag_vocab.json"
+
+
 def test_cardinality_is_soft_and_surfaced_by_anomaly_view(tmp_path):
     reg = _reg(tmp_path / "reg.json")
     eid = _found1(reg)

@@ -47,6 +47,7 @@ class Registry:
         entries_key: str = "entries",
         id_key: str = "id",
         audit_path: Optional[str | os.PathLike] = None,
+        vocab_path: Optional[str | os.PathLike] = None,
         actor: str = "cli",
     ):
         self.data_path = Path(data_path)
@@ -57,6 +58,9 @@ class Registry:
         self.entries_key = entries_key
         self.id_key = id_key
         self.audit_path = Path(audit_path) if audit_path else audit.default_audit_path(data_path)
+        # Default location for the caller-owned ontology vocab config: alongside
+        # the registry in the same data folder (interop tag-vocab work item).
+        self.vocab_path = Path(vocab_path) if vocab_path else self.data_path.parent / "tag_vocab.json"
         self.actor = actor
 
     # -- helpers ---------------------------------------------------------------

@@ -1,0 +1,39 @@
+{
+  "status": "SAMPLE — illustrative format for data/tag_vocab.json. Copy this to data/tag_vocab.json (git-ignored) and edit for your consumer. sjv reads only fields[*].values (hard enum) and fields[*].cardinality (soft).",
+  "purpose": "The single controlled-vocabulary config for registry ontology tags. One entry per FIELD (axis), each with acceptable `values`, a soft `cardinality` expectation, and per-value `glosses` (legend).",
+  "contract": "FIELD SET = the keys under `fields` (adding an axis is an edit here, not an sjv schema change). HARD: sjv rejects any ontology value not in its field's `values`, or any populated field not in the vocab. SOFT: `cardinality` is an expectation only — never rejected; a missing required axis is surfaced by view('anomalies'). Values alphabetized. A bare `{field: [values]}` map (no `fields` wrapper, no metadata) is also accepted.",
+  "fields": {
+    "object": {
+      "gloss": "what the declaration is ABOUT. Replace these placeholder values with your own.",
+      "cardinality": "0..1 expected (soft)",
+      "values": ["example-noun", "example-verb"],
+      "glosses": {
+        "example-noun": "PLACEHOLDER — a thing the declaration is about.",
+        "example-verb": "PLACEHOLDER — an act the declaration is about."
+      }
+    },
+    "domain": {
+      "gloss": "which field the declaration lives in. Replace these placeholder values with your own.",
+      "cardinality": "1 expected, soft (multi/zero allowed and flagged)",
+      "values": ["example-domain-a", "example-domain-b"],
+      "glosses": {
+        "example-domain-a": "PLACEHOLDER — one subject-matter domain.",
+        "example-domain-b": "PLACEHOLDER — another subject-matter domain."
+      }
+    },
+    "role": {
+      "gloss": "the declaration's structural function. These values mirror the fixed sjv role enum.",
+      "cardinality": "1 expected (soft)",
+      "values": ["bridge", "commitment", "core", "face", "infra", "scaffolding", "schema"],
+      "glosses": {
+        "bridge": "a transform connecting two domains — an edge, not a cell.",
+        "commitment": "a labeled modeling commitment / identity claim; held, not proved.",
+        "core": "a central load-bearing result.",
+        "face": "an (object, domain) cell — an object realized inside one domain.",
+        "infra": "non-framework build scaffolding.",
+        "scaffolding": "a helper / stepping-stone declaration, not a headline claim.",
+        "schema": "structure about the registry itself — the synthesis / meta layer."
+      }
+    }
+  }
+}

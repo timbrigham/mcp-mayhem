@@ -578,8 +578,15 @@ def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
         raise OperationError(
             "vocab must be a non-empty object mapping ontology fields to allowed values"
         )
+    # Two accepted shapes: the minimal ``{field: [values]|{...}}`` map, or the
+    # enriched config whose axes live under a ``fields`` key alongside metadata
+    # (status/purpose/contract/glosses/_open — all ignored; sjv reads only the
+    # field map's values + cardinality).
+    field_map = raw["fields"] if isinstance(raw.get("fields"), dict) else raw
+    if not field_map:
+        raise OperationError("vocab has no fields")
     normalized: dict[str, dict] = {}
-    for field, spec in raw.items():
+    for field, spec in field_map.items():
         if isinstance(spec, list):
             values, cardinality = spec, None
         elif isinstance(spec, dict):

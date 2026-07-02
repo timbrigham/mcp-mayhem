@@ -6,7 +6,9 @@ build/
 dist/
 *.tmp
 # Real data + integrity sidecars. Everything the server writes under data/ is
-# treated as private live data and kept out of git. The one exception is the
-# demo/fixture sample.json, which is safe to track.
+# treated as private live data and kept out of git. The exceptions are the
+# demo/fixture sample.json and the vocab sample, which are safe to track.
+# The live, consumer-owned tag_vocab.json stays private (matched by data/*).
 data/*
 !data/sample.json
+!data/tag_vocab.sample.json

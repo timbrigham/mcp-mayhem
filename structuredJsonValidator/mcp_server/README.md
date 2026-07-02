@@ -67,12 +67,17 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 - `id` is a sjv-minted opaque surrogate (UUID), not a natural key. `file`,
   `qualified`, `line` are plain mutable fields; grep on `qualified`, not `id`.
   Scanner facts carry `qualified` (the match key), never a client `id`
-- `set_vocab(vocab)` — adopt the controlled ontology vocabulary from a
+- `set_vocab(vocab?)` — adopt the controlled ontology vocabulary from a
   caller-owned config (inline object or path) mapping each ontology field to its
-  allowed `values` (+ optional soft `cardinality`). Once set, `validate` REJECTS
-  ontology values outside their field's list and fields not in the vocab. The
-  field set is data — sjv does not hardcode object/domain/role. Enforcement is
-  opt-in (no vocab → unconstrained), so ratify values before adopting
+  allowed `values` (+ optional soft `cardinality`). Axes may sit under a `fields`
+  key (with metadata siblings, ignored) or as a bare `{field: [values]}` map.
+  Omit `vocab` to load the default `tag_vocab.json` from the registry's own data
+  folder (next to `SJV_DATA`). That file is private/git-ignored like the
+  registry; `data/tag_vocab.sample.json` is the committed template. Once set,
+  `validate` REJECTS ontology values outside their field's list and fields not in
+  the vocab. The field set is data — sjv does not hardcode object/domain/role.
+  Enforcement is opt-in (no vocab → unconstrained), so ratify values before
+  adopting
 - `export_full(dest)` — publish the complete validated, deterministic registry
   to `dest` for a consuming repo to commit
 - `apply(op, params)` — generic escape hatch for any registered operation
@@ -91,10 +96,12 @@ of git**, via `structuredJsonValidator/.gitignore`:
 ```gitignore
 data/*
 !data/sample.json
+!data/tag_vocab.sample.json
 ```
 
-Only the demo fixture `data/sample.json` is tracked. Your real registry and its
-audit log will **not** be committed.
+Only the demo fixture `data/sample.json` and the vocab template
+`data/tag_vocab.sample.json` are tracked. Your real registry, its audit log, and
+your live `data/tag_vocab.json` will **not** be committed.
 
 If you deliberately want to publish a registry as a committed source-of-truth,
 either:
