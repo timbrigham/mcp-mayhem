@@ -38,7 +38,14 @@
         "required": ["values"],
         "properties": {
           "values": { "type": "array", "items": { "type": "string" } },
-          "cardinality": { "type": ["string", "null"] }
+          "cardinality": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "min": { "type": "integer", "minimum": 0 },
+              "max": { "type": ["integer", "null"] }
+            }
+          }
         }
       }
     }

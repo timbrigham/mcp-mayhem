@@ -552,6 +552,37 @@ def add_citation(document, *, id: str, target: str) -> tuple[dict, list[str]]:
     return doc, [id]
 
 
+def _parse_cardinality(spec) -> Optional[dict]:
+    """Normalize a cardinality expectation to ``{'min': int, 'max': int|None}``.
+
+    Accepts the object form ``{min, max}`` (ZP's form), a range/count string
+    (``'1'``, ``'1..1'``, ``'0..1'``, ``'1..*'``, or prose like
+    ``'1 expected (soft)'``), or ``None``. Only ``min`` is currently consulted
+    (by the ``anomalies`` view); ``max`` is stored for future use. Returns
+    ``None`` when no expectation is expressed.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, dict):
+        lo, hi = spec.get("min", 0), spec.get("max", None)
+        mn = int(lo) if isinstance(lo, int) or (isinstance(lo, str) and lo.isdigit()) else 0
+        mx = int(hi) if isinstance(hi, int) or (isinstance(hi, str) and hi.isdigit()) else None
+        return {"min": mn, "max": mx}
+    if isinstance(spec, str):
+        s = spec.strip()
+        if not s:
+            return None
+        if ".." in s:
+            lo, hi = s.split("..", 1)
+            lo_tok = (lo.strip().split() or ["0"])[0]
+            hi_tok = (hi.strip().split() or [""])[0]
+            return {"min": int(lo_tok) if lo_tok.isdigit() else 0,
+                    "max": int(hi_tok) if hi_tok.isdigit() else None}
+        tok = s.split()[0]
+        return {"min": int(tok) if tok.isdigit() else 0, "max": None}
+    return None
+
+
 def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
     """Adopt the controlled ontology vocabulary (interop tag-vocab work item).
 
@@ -560,8 +591,13 @@ def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
     field maps to either a bare ``[values]`` list or an object
     ``{values:[...], cardinality?, glosses?}``; sjv reads only ``values`` (the
     HARD enum) and ``cardinality`` (a SOFT expectation surfaced by the
-    ``anomalies`` view, never enforced). Values are stored de-duplicated and
+    ``anomalies`` view, never enforced). ``cardinality`` may be an object
+    ``{min, max}`` or a range/count string. Values are stored de-duplicated and
     alphabetized for clean diffs.
+
+    Two config shapes are accepted: axes under a ``fields`` key (with sibling
+    metadata like status/purpose/glosses, all ignored), or a bare
+    ``{field: ...}`` map. Top-level ``_``-prefixed keys are skipped as markers.
 
     The field SET is whatever the config declares — sjv does NOT hardcode
     object/domain/role (config-driven, per the decision). Once a vocab is set,
@@ -578,15 +614,11 @@ def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
         raise OperationError(
             "vocab must be a non-empty object mapping ontology fields to allowed values"
         )
-    # Two accepted shapes: the minimal ``{field: [values]|{...}}`` map, or the
-    # enriched config whose axes live under a ``fields`` key alongside metadata
-    # (status/purpose/contract/glosses/_open — all ignored; sjv reads only the
-    # field map's values + cardinality).
     field_map = raw["fields"] if isinstance(raw.get("fields"), dict) else raw
-    if not field_map:
-        raise OperationError("vocab has no fields")
     normalized: dict[str, dict] = {}
     for field, spec in field_map.items():
+        if field.startswith("_"):  # a draft marker / note, not a field
+            continue
         if isinstance(spec, list):
             values, cardinality = spec, None
         elif isinstance(spec, dict):
@@ -599,8 +631,10 @@ def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
             raise OperationError(f"vocab field {field!r} 'values' must be a list of strings")
         normalized[field] = {
             "values": sorted(set(values)),
-            "cardinality": cardinality if isinstance(cardinality, str) else None,
+            "cardinality": _parse_cardinality(cardinality),
         }
+    if not normalized:
+        raise OperationError("vocab has no fields")
     doc["vocab"] = normalized
     return doc, []
 

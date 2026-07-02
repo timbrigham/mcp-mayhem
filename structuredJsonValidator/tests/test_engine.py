@@ -570,3 +570,31 @@ def test_cardinality_is_soft_and_surfaced_by_anomaly_view(tmp_path):
     # Once the required axis is set, the anomaly clears.
     reg.apply("annotate", {"id": eid, "role": "core"})
     assert "_(none)_" in reg.export_view("anomalies")
+
+
+def test_cardinality_object_form_is_persisted_and_fires(tmp_path):
+    # Regression: ZP supplied cardinality as {"min":1,"max":1}; it was dropped
+    # (only string form was persisted) so anomalies stayed inert on pending rows.
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("annotate", {"id": eid, "object": "bottom"})  # partial: object only
+    reg.apply("set_vocab", {"vocab": {
+        "object": {"values": ["bottom"], "cardinality": {"min": 0, "max": 1}},
+        "domain": {"values": ["order"], "cardinality": {"min": 1, "max": 1}},
+        "role": {"values": ["core"], "cardinality": {"min": 1, "max": 1}}}})
+    # Object cardinality is persisted (normalized), not silently dropped.
+    stored = reg.load()["vocab"]
+    assert stored["domain"]["cardinality"] == {"min": 1, "max": 1}
+    # A pending, partially-tagged entry (domain+role null, both required) is flagged.
+    anomalies = reg.export_view("anomalies")
+    assert eid in anomalies and "domain" in anomalies and "role" in anomalies
+    assert reg.validate() == []  # still soft — never blocks
+
+
+def test_set_vocab_skips_underscore_prefixed_keys(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found1(reg)
+    reg.apply("set_vocab", {"vocab": {
+        "_note": "draft marker, not a field",
+        "role": ["core", "face"]}})
+    assert sorted(reg.load()["vocab"].keys()) == ["role"]

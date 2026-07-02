@@ -30,8 +30,17 @@ def domain_table(document: dict) -> str:
 
 
 def _cardinality_min(cardinality) -> int:
-    """Lower bound of a cardinality spec ('1', '1..*' → 1; else 0)."""
-    return 1 if isinstance(cardinality, str) and cardinality.strip().startswith("1") else 0
+    """Lower bound of a stored cardinality (normalized to {'min','max'} by
+    set_vocab). Tolerates a raw range/count string too, for robustness."""
+    if isinstance(cardinality, dict):
+        try:
+            return int(cardinality.get("min") or 0)
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(cardinality, str):
+        tok = (cardinality.strip().split("..")[0].split() or [""])[0]
+        return int(tok) if tok.isdigit() else 0
+    return 0
 
 
 def anomaly_table(document: dict) -> str:
