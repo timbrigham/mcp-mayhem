@@ -98,7 +98,7 @@
             "object": { "type": ["string", "null"] },
             "domain": { "type": ["string", "null"] },
             "role": {
-              "enum": ["core", "face", "bridge", "schema", "commitment", "scaffolding", "infra", null]
+              "enum": ["core", "face", "bridge", "schema", "commitment", "scaffolding", "infra", "no-go", null]
             }
           }
         },

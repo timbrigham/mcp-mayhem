@@ -24,13 +24,14 @@
     "role": {
       "gloss": "the declaration's structural function. These values mirror the fixed sjv role enum.",
       "cardinality": "1 expected (soft)",
-      "values": ["bridge", "commitment", "core", "face", "infra", "scaffolding", "schema"],
+      "values": ["bridge", "commitment", "core", "face", "infra", "no-go", "scaffolding", "schema"],
       "glosses": {
         "bridge": "a transform connecting two domains — an edge, not a cell.",
         "commitment": "a labeled modeling commitment / identity claim; held, not proved.",
         "core": "a central load-bearing result.",
         "face": "an (object, domain) cell — an object realized inside one domain.",
         "infra": "non-framework build scaffolding.",
+        "no-go": "an apophatic / obstruction result — establishes what something is NOT (counterexample, no-morphism, negation with no fixed point).",
         "scaffolding": "a helper / stepping-stone declaration, not a headline claim.",
         "schema": "structure about the registry itself — the synthesis / meta layer."
       }

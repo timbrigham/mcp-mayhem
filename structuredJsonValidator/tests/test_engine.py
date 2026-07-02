@@ -510,6 +510,16 @@ def test_set_vocab_null_axes_are_allowed(tmp_path):
     assert reg.validate() == []  # all axes null on the pending entry → fine
 
 
+def test_role_no_go_passes_schema_and_vocab(tmp_path):
+    # role is double-guarded (schema enum + vocab); 'no-go' must clear BOTH.
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {"role": ["core", "no-go"]}})
+    reg.apply("annotate", {"id": eid, "role": "no-go"})
+    assert reg.get(eid)["ontology"]["role"] == "no-go"
+    assert reg.validate() == []
+
+
 def test_set_vocab_refuses_adoption_conflicting_with_existing_curation(tmp_path):
     reg = _reg(tmp_path / "reg.json")
     eid = _found1(reg)
