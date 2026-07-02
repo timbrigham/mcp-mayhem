@@ -634,3 +634,98 @@ def test_anomalies_view_is_paged_and_count_only(tmp_path):
     # limit=0 → all rows.
     everything = reg.export_view("anomalies", limit=0)
     assert everything.count("domain, role") == 400
+
+
+# -- bulk annotate (interop issue #9) -----------------------------------------
+
+def _found_prefixes(reg):
+    """Found a small registry across two prefixes and adopt a vocab."""
+    scan = ([{"qualified": f"ZPA.d{i}", "short": f"d{i}", "kind": "def",
+              "file": "ZPA.lean", "line": i, "prefix": "ZPA"} for i in range(3)]
+            + [{"qualified": f"ZPB.d{i}", "short": f"d{i}", "kind": "def",
+                "file": "ZPB.lean", "line": i, "prefix": "ZPB"} for i in range(2)])
+    _found(reg, list(scan))
+    reg.apply("set_vocab", {"vocab": {
+        "domain": ["order", "valuation"], "role": ["core", "face"]}})
+
+
+def test_annotate_many_sets_and_is_atomic(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    ids = [e["id"] for e in reg.find(**{"old.prefix": "ZPA"})]
+    res = reg.apply("annotate_many", {"items": [
+        {"id": ids[0], "domain": "order", "role": "core"},
+        {"id": ids[1], "domain": "order"}]})
+    assert res["count"] == 2 and res["unchanged"] == 0
+    assert reg.get(ids[0])["ontology"] == {"object": None, "domain": "order", "role": "core"}
+    assert reg.validate() == []
+    # Re-applying the same tags is a no-op (idempotency visibility).
+    res2 = reg.apply("annotate_many", {"items": [{"id": ids[0], "domain": "order", "role": "core"}]})
+    assert res2["count"] == 0 and res2["unchanged"] == 1
+
+
+def test_annotate_many_rejects_bad_value_atomically(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    ids = [e["id"] for e in reg.find(**{"old.prefix": "ZPA"})]
+    before = reg.verify_integrity()
+    with pytest.raises(ValidationError):
+        reg.apply("annotate_many", {"items": [
+            {"id": ids[0], "domain": "order"},
+            {"id": ids[1], "domain": "not-a-domain"}]})  # one bad → whole batch fails
+    assert reg.get(ids[0])["ontology"]["domain"] is None  # first item NOT written
+    assert reg.verify_integrity() == before
+
+
+def test_annotate_many_rejects_duplicate_and_missing_ids(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    eid = reg.find()[0]["id"]
+    with pytest.raises(OperationError):
+        reg.apply("annotate_many", {"items": [{"id": eid, "role": "core"},
+                                              {"id": eid, "role": "face"}]})  # dup
+    with pytest.raises(OperationError):
+        reg.apply("annotate_many", {"items": [{"id": "no-such-id", "role": "core"}]})
+
+
+def test_annotate_many_null_clears(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    eid = reg.find()[0]["id"]
+    reg.apply("annotate", {"id": eid, "role": "core"})
+    reg.apply("annotate_many", {"items": [{"id": eid, "role": None}]})  # explicit clear
+    assert reg.get(eid)["ontology"]["role"] is None
+
+
+def test_annotate_by_filter_tags_all_matches(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    res = reg.apply("annotate_by_filter", {"filter": {"old.prefix": "ZPA"},
+                                           "tags": {"domain": "order"}})
+    assert res["matched"] == 3 and res["updated"] == 3
+    assert all(e["ontology"]["domain"] == "order" for e in reg.find(**{"old.prefix": "ZPA"}))
+    # ZPB untouched.
+    assert all(e["ontology"]["domain"] is None for e in reg.find(**{"old.prefix": "ZPB"}))
+
+
+def test_annotate_by_filter_targets_only_untagged(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    zpa = [e["id"] for e in reg.find(**{"old.prefix": "ZPA"})]
+    reg.apply("annotate", {"id": zpa[0], "domain": "valuation"})  # pre-tag one
+    # Filter on the null axis to hit only the still-untagged ZPA entries.
+    res = reg.apply("annotate_by_filter", {
+        "filter": {"old.prefix": "ZPA", "ontology.domain": None}, "tags": {"domain": "order"}})
+    assert res["matched"] == 2 and res["updated"] == 2
+    assert reg.get(zpa[0])["ontology"]["domain"] == "valuation"  # pre-tagged one preserved
+
+
+def test_annotate_by_filter_rejects_empty_filter_and_bad_tag(tmp_path):
+    reg = _reg(tmp_path / "reg.json")
+    _found_prefixes(reg)
+    with pytest.raises(OperationError):
+        reg.apply("annotate_by_filter", {"filter": {}, "tags": {"domain": "order"}})
+    reg.apply("annotate_by_filter", {"filter": {}, "tags": {"domain": "order"}, "force": True})  # ok
+    with pytest.raises(ValidationError):
+        reg.apply("annotate_by_filter", {"filter": {"old.prefix": "ZPB"},
+                                         "tags": {"domain": "bogus"}})

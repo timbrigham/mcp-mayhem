@@ -55,6 +55,13 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 - `seal()` — adopt the current file as the managed baseline (validate + record hash)
 - §9 verbs — `rename`, `move`, `mark_present`, `drop`, `merge`, `split`,
   `reopen`, `add_new`, `annotate`, `link_claim`, `add_citation`
+- bulk annotate (scale the tagging pass) — `annotate_many(items)` tags many
+  entries by explicit id in one atomic call; `annotate_by_filter(filter, tags,
+  dry_run?)` tags every entry matching a `find`-style filter (e.g.
+  `{"old.prefix":"ZPA"}`, or add `{"ontology.domain":null}` for only-untagged).
+  Both reuse the vocab hard-enum, are all-or-nothing, and return a terse receipt;
+  `dry_run=true` previews the blast radius (`would_match`, `sample`) without
+  writing
 - terminal-state guard — `dropped`/`merged`/`split` entries are immutable: a
   disposition-changing verb on one is refused unless `force=true`; use
   `reopen(id, reason)` to return it to `pending` first

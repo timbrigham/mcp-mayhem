@@ -12,7 +12,8 @@ import json
 import uuid
 from typing import Optional, Union
 
-from core.errors import OperationError
+from core import query
+from core.errors import OperationError, ValidationError
 
 
 # -- structure helpers --------------------------------------------------------
@@ -534,6 +535,115 @@ def annotate(document, *, id: str, object=None, domain=None, role=None) -> tuple
     return doc, [id]
 
 
+def _tag_vocab_violations(doc: dict, tags: dict, *, where: str = "") -> list[str]:
+    """Validate a raw ``{axis: value}`` map against the adopted vocab (if any).
+
+    Same hard-enum rule as ``rules.validate`` but on tags before they are applied,
+    so a bulk op reports one clean violation per bad axis instead of one per
+    affected entry. Null values (clears) and, when no vocab is set, everything,
+    pass here; structural checks still run as the engine postcondition.
+    """
+    vocab = doc.get("vocab")
+    if not vocab:
+        return []
+    out: list[str] = []
+    for field, value in tags.items():
+        if value is None:
+            continue
+        spec = vocab.get(field)
+        if spec is None:
+            out.append(f"{where}ontology field '{field}' is not in the vocab")
+        elif value not in spec.get("values", []):
+            out.append(f"{where}ontology.{field} value {value!r} not in vocab "
+                       f"(allowed: {', '.join(spec['values'])})")
+    return out
+
+
+def _apply_tags(entry: dict, tags: dict) -> bool:
+    """Set/clear the provided ontology axes on one entry (set only the keys
+    present; a value SETS, explicit ``null`` CLEARS). Returns True if changed."""
+    ont = entry["ontology"]
+    changed = False
+    for field, value in tags.items():
+        if ont.get(field) != value:
+            ont[field] = value
+            changed = True
+    return changed
+
+
+def annotate_many(document, *, items: list, force: bool = False) -> tuple[dict, list[str], dict]:
+    """Batch annotate ontology axes by explicit id (interop issue #9).
+
+    ``items`` is a list of ``{id, object?, domain?, role?, …}``. Per item the
+    ``annotate`` rule holds: an OMITTED axis is left unchanged, an axis present
+    with a value SETS it, and an axis present with explicit ``null`` CLEARS it.
+    Atomic: the whole batch is validated (every id exists, no duplicate ids,
+    every non-null value in its field's vocab) before any write, and the engine
+    postcondition re-checks the result — any failure writes nothing. Returns a
+    terse receipt ``{count, unchanged}`` (per #6, no full-entry echo).
+    """
+    doc = _require_doc(document)
+    if not isinstance(items, list) or not items:
+        raise OperationError("annotate_many requires a non-empty list of items")
+
+    seen: set = set()
+    resolved: list = []
+    violations: list[str] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict) or "id" not in item:
+            raise OperationError(f"items[{i}] must be an object with an 'id'")
+        eid = item["id"]
+        if eid in seen:
+            raise OperationError(f"duplicate id {eid!r} in items (ambiguous)")
+        seen.add(eid)
+        entry = _find(doc, eid)  # OperationError if missing
+        tags = {k: v for k, v in item.items() if k != "id"}
+        violations.extend(_tag_vocab_violations(doc, tags, where=f"items[{i}] ({eid}): "))
+        resolved.append((entry, tags))
+    if violations:
+        raise ValidationError(violations)  # same shape as annotate's failure
+
+    touched: list[str] = []
+    unchanged = 0
+    for entry, tags in resolved:
+        if _apply_tags(entry, tags):
+            touched.append(entry["id"])
+        else:
+            unchanged += 1
+    return doc, touched, {"count": len(touched), "unchanged": unchanged}
+
+
+def annotate_by_filter(document, *, filter: dict, tags: dict,
+                       force: bool = False) -> tuple[dict, list[str], dict]:
+    """Annotate every entry matching a ``find``-style filter (interop issue #9).
+
+    ``filter`` uses the same dotted-path AND semantics as ``find`` (e.g.
+    ``{"old.prefix": "ZPA"}`` or ``{"old.prefix": "ZPB", "ontology.domain": null}``
+    to hit only still-untagged entries). An empty filter would match the whole
+    registry and is refused unless ``force=True``. ``tags`` is the uniform
+    ``{axis: value}`` set applied to every match (value SETS, explicit ``null``
+    CLEARS). Tags are vocab-validated ONCE up front. Atomic; terse receipt
+    ``{matched, updated}``. (A read-only ``dry_run`` preview is offered by the MCP
+    tool, which never writes.)
+    """
+    doc = _require_doc(document)
+    if not isinstance(filter, dict):
+        raise OperationError("filter must be an object of dotted-path = value")
+    if not filter and not force:
+        raise OperationError(
+            "empty filter would match the whole registry; pass force=true to confirm"
+        )
+    if not isinstance(tags, dict) or not tags:
+        raise OperationError("tags must be a non-empty object of axis = value")
+    violations = _tag_vocab_violations(doc, tags)
+    if violations:
+        raise ValidationError(violations)
+
+    matches = query.find(doc.get("entries", []), **filter)
+    touched = [entry["id"] for entry in matches if _apply_tags(entry, tags)]
+    return doc, touched, {"matched": len(matches), "updated": len(touched)}
+
+
 def link_claim(document, *, id: str, claim: str) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
@@ -651,6 +761,8 @@ OPERATIONS = {
     "reopen": reopen,
     "add_new": add_new,
     "annotate": annotate,
+    "annotate_many": annotate_many,
+    "annotate_by_filter": annotate_by_filter,
     "link_claim": link_claim,
     "add_citation": add_citation,
     "set_vocab": set_vocab,

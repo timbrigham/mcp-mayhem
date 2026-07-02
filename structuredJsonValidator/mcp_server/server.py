@@ -7,9 +7,9 @@ Run:
 
 Read tools:  get, find, history, view, validate, verify_integrity
 Write tools: seal, and the §9 verbs (rename, move, drop, mark_present, merge,
-             split, reopen, add_new, annotate, link_claim, add_citation,
-             set_vocab, import_baseline, reconcile) plus a generic `apply`
-             escape hatch.
+             split, reopen, add_new, annotate, annotate_many,
+             annotate_by_filter, link_claim, add_citation, set_vocab,
+             import_baseline, reconcile) plus a generic `apply` escape hatch.
 
 Every write returns {ok, ...}. Enforcement failures (schema, §7 rules, drift,
 bad params) come back as {ok: false, error_type, error} — the library raised,
@@ -223,6 +223,46 @@ def annotate(id: str, object: Optional[str] = None, domain: Optional[str] = None
     if role is not None:
         params["role"] = role
     return _write("annotate", params)
+
+
+@mcp.tool()
+def annotate_many(items: list[dict], force: bool = False) -> dict:
+    """Batch-annotate ontology axes by explicit id — the write-side scale tool.
+
+    `items` is a list of `{id, object?, domain?, role?, …}`. Per item: an omitted
+    axis is left unchanged, a value SETS it, explicit `null` CLEARS it. Atomic —
+    the whole batch validates (ids exist, no duplicates, values in vocab) before
+    any write; on any failure nothing is written and the violations are returned.
+    Terse receipt `{ok, count, unchanged, resulting_sha256}`."""
+    return _write("annotate_many", {"items": items, "force": force})
+
+
+@mcp.tool()
+def annotate_by_filter(filter: dict, tags: dict, dry_run: bool = False,
+                       force: bool = False) -> dict:
+    """Annotate every entry matching a `find`-style filter with uniform `tags`.
+
+    `filter` uses the same dotted-path AND semantics as `find` (e.g.
+    `{"old.prefix":"ZPA"}`, or add `{"ontology.domain": null}` to hit only
+    untagged ones). `tags` is the `{axis: value}` set applied to every match
+    (value SETS, `null` CLEARS). An empty filter is refused unless `force=true`.
+    With `dry_run=true` NOTHING is written — returns `{ok, would_match, sample}`
+    so you can preview the blast radius first. On apply: `{ok, matched, updated,
+    resulting_sha256}`."""
+    if dry_run:
+        if not isinstance(filter, dict):
+            return {"ok": False, "error": "filter must be an object"}
+        if not filter and not force:
+            return {"ok": False, "error":
+                    "empty filter would match the whole registry; pass force=true"}
+        reg = _registry()
+        matches = reg.find(**filter)
+        sample = []
+        for m in matches[:20]:
+            grp = m.get("new") if m.get("disposition") in ("renamed", "new") else m.get("old")
+            sample.append({"id": m.get("id"), "qualified": (grp or {}).get("qualified")})
+        return {"ok": True, "dry_run": True, "would_match": len(matches), "sample": sample}
+    return _write("annotate_by_filter", {"filter": filter, "tags": tags, "force": force})
 
 
 @mcp.tool()
