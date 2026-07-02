@@ -157,6 +157,8 @@ def rename(document, *, id: str, new_qualified: str, new_file: str, namespace: s
 
 def merge(document, *, ids: list[str], target: dict, reason: str) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
+    if len(ids) < 2:
+        raise OperationError("merge needs >= 2 source ids")
     tq = target.get("qualified")
     new = {
         "qualified": tq,
@@ -175,8 +177,8 @@ def merge(document, *, ids: list[str], target: dict, reason: str) -> tuple[dict,
 
 def split(document, *, id: str, targets: list[dict], reason: str) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
-    if not targets:
-        raise OperationError("split requires at least one target")
+    if len(targets) < 2:
+        raise OperationError("split needs >= 2 targets")
     primary = targets[0]  # new.* records the primary; siblings tracked via add_new
     pq = primary.get("qualified")
     entry = _find(doc, id)
