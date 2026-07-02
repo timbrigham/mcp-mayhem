@@ -102,32 +102,49 @@ def validate(document: dict) -> list[str]:
     return violations
 
 
-def _vocab_violations(document: dict, entries: list[dict]) -> list[str]:
-    """Config-driven ontology enum (interop tag-vocab work item).
+# Built-in floor values per ontology axis (interop 2026-07-02: role config-driven).
+# The effective allowed set for an axis is these UNION the adopted vocab's values
+# — config EXTENDS the built-ins, it does not replace them. So adding a value to
+# ANY axis (incl. role) is a `set_vocab`, not a schema/code change. Axes with no
+# built-ins (object/domain) are governed entirely by the vocab. role keeps a floor
+# so it stays constrained even if no vocab is adopted (safety).
+_BUILTIN_AXIS_VALUES: dict[str, tuple[str, ...]] = {
+    "role": ("bridge", "commitment", "core", "face", "infra", "no-go", "scaffolding", "schema"),
+}
 
-    Opt-in: only enforced once a ``vocab`` has been adopted (``set_vocab``). For
-    every populated ontology field, the field must be in the vocab and its value
-    must be one of that field's allowed values. A null (unset) axis is always
-    fine. Cardinality is NOT enforced here — it is a soft expectation surfaced by
-    the ``anomalies`` view.
+
+def _vocab_violations(document: dict, entries: list[dict]) -> list[str]:
+    """Ontology enum enforcement: each element of each axis must be in that axis's
+    (built-in floor) UNION (adopted vocab values).
+
+    An axis with neither a built-in floor nor a vocab entry is unconstrained —
+    EXCEPT that once a vocab IS adopted, a populated axis missing from it is
+    flagged ('field not in the vocab'), preserving the config-drives-the-field-set
+    contract. Empty lists are unset (skipped); cardinality is soft (anomalies
+    view), not enforced here.
     """
-    vocab = document.get("vocab")
-    if not vocab:
-        return []
+    vocab = document.get("vocab") or {}
+    has_vocab = bool(vocab)
     out: list[str] = []
     for idx, entry in enumerate(entries):
         eid = entry.get("id", f"entries[{idx}]")
         for field, values in (entry.get("ontology") or {}).items():
-            # Every axis is a list (uniform-lists model); an empty list is unset.
-            for value in (values or []):
-                spec = vocab.get(field)
-                if spec is None:
+            values = values or []
+            if not values:
+                continue  # empty list = unset
+            builtins = set(_BUILTIN_AXIS_VALUES.get(field, ()))
+            in_vocab = field in vocab
+            if not builtins and not in_vocab:
+                # governed by neither: unconstrained, unless a vocab is adopted
+                # and simply omits this field (then it's an unknown field).
+                if has_vocab:
                     out.append(f"{eid}: ontology field '{field}' is not in the vocab")
-                    break
-                allowed = spec.get("values", [])
+                continue
+            allowed = builtins | set(vocab.get(field, {}).get("values", []))
+            for value in values:
                 if value not in allowed:
                     out.append(
-                        f"{eid}: ontology.{field} value {value!r} not in vocab "
-                        f"(allowed: {', '.join(allowed)})"
+                        f"{eid}: ontology.{field} value {value!r} not allowed "
+                        f"(built-ins ∪ vocab: {', '.join(sorted(allowed))})"
                     )
     return out

@@ -496,11 +496,40 @@ def test_set_vocab_enforces_hard_enum(tmp_path):
 
 
 def test_set_vocab_rejects_unknown_field(tmp_path):
+    # An axis with no built-in floor (domain) that a vocab omits is rejected.
     reg = _reg(tmp_path / "reg.json")
     eid = _found1(reg)
-    reg.apply("set_vocab", {"vocab": {"domain": ["number"]}})  # no 'role' field
+    reg.apply("set_vocab", {"vocab": {"role": ["core"]}})  # no 'domain' field
     with pytest.raises(ValidationError):
-        reg.apply("annotate", {"id": eid, "role": "core"})  # 'role' not in vocab
+        reg.apply("annotate", {"id": eid, "domain": "number"})  # 'domain' not in vocab
+    # But a built-in role is allowed even though the vocab has no explicit role
+    # extension beyond it (role is config-driven with a built-in floor).
+    reg.apply("annotate", {"id": eid, "role": "face"})  # 'face' is a built-in
+    assert reg.get(eid)["ontology"]["role"] == ["face"]
+
+
+def test_role_is_config_driven_no_schema_change(tmp_path):
+    # A brand-new role value comes from the vocab (union with built-ins) — no
+    # schema/code change (interop 2026-07-02 design request).
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("set_vocab", {"vocab": {"role": ["go"]}})  # 'go' not a built-in
+    reg.apply("annotate", {"id": eid, "role": ["go", "core"]})  # go via vocab, core built-in
+    assert reg.get(eid)["ontology"]["role"] == ["go", "core"]
+    assert reg.validate() == []
+    # A value in neither built-ins nor the vocab still rejects.
+    with pytest.raises(ValidationError):
+        reg.apply("annotate", {"id": eid, "role": "wizard"})
+
+
+def test_builtin_role_enforced_without_any_vocab(tmp_path):
+    # role stays constrained to its built-in floor even with no vocab adopted.
+    reg = _reg(tmp_path / "reg.json")
+    eid = _found1(reg)
+    reg.apply("annotate", {"id": eid, "role": "core"})   # built-in → ok, no vocab
+    assert reg.validate() == []
+    with pytest.raises(ValidationError):
+        reg.apply("annotate", {"id": eid, "role": "invented"})  # off-floor → rejected
 
 
 def test_set_vocab_null_axes_are_allowed(tmp_path):

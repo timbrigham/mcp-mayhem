@@ -22,7 +22,7 @@
       }
     },
     "role": {
-      "gloss": "the declaration's structural function. These values mirror the fixed sjv role enum.",
+      "gloss": "the declaration's structural function. role has a built-in floor (these values); the vocab EXTENDS it (union) — add a new role here, no schema change.",
       "cardinality": {"min": 1, "max": 1},
       "values": ["bridge", "commitment", "core", "face", "infra", "no-go", "scaffolding", "schema"],
       "glosses": {
