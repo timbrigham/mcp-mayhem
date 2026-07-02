@@ -44,8 +44,15 @@ def _find(document: dict, entry_id: str) -> dict:
     raise OperationError(f"no entry with id {entry_id!r}")
 
 
+def _distinct_files(entries: list[dict]) -> int:
+    return len({e["old"]["file"] for e in entries if e.get("old", {}).get("file")})
+
+
 def _sync_counts(document: dict) -> None:
-    document.setdefault("counts", {})["declarations"] = len(document.get("entries", []))
+    entries = document.get("entries", [])
+    counts = document.setdefault("counts", {})
+    counts["declarations"] = len(entries)
+    counts["files"] = _distinct_files(entries)
 
 
 # -- bootstrapping ------------------------------------------------------------
@@ -91,7 +98,7 @@ def import_baseline(document, *, scanner_output: list[dict], anchor: dict,
             "tree": anchor.get("tree"),
         },
         "counts": {
-            "files": files if files is not None else 0,
+            "files": files if files is not None else _distinct_files(entries),
             "declarations": len(entries),
         },
         "entries": entries,
