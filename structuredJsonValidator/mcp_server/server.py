@@ -42,13 +42,34 @@ def _registry():
     return build_registry(DATA_PATH, actor=ACTOR)
 
 
+# Cap the violations echoed on a failed write so a pathological validation
+# failure (e.g. thousands of violations) can't blow the caller's token budget
+# (interop issue #6 applied to the error path). The full count is always given.
+_MAX_VIOLATIONS_ECHO = 100
+
+
+def _validation_result(exc: ValidationError) -> dict:
+    """Terse, budget-safe result for a validation failure (full count + capped
+    list). str(ValidationError) joins every violation, so never echo it."""
+    violations = exc.violations
+    result = {
+        "ok": False, "error_type": "validation",
+        "error": f"{len(violations)} validation violation(s)",
+        "violation_count": len(violations),
+        "violations": violations[:_MAX_VIOLATIONS_ECHO],
+    }
+    if len(violations) > _MAX_VIOLATIONS_ECHO:
+        result["violations_truncated"] = len(violations) - _MAX_VIOLATIONS_ECHO
+    return result
+
+
 def _write(op: str, params: dict[str, Any]) -> dict:
     """Run a write op through the library, converting enforcement errors into
     structured results instead of transport-level exceptions."""
     try:
         return {"ok": True, **_registry().apply(op, params)}
     except ValidationError as exc:
-        return {"ok": False, "error_type": "validation", "error": str(exc), "violations": exc.violations}
+        return _validation_result(exc)
     except IntegrityError as exc:
         return {"ok": False, "error_type": "integrity", "error": str(exc)}
     except OperationError as exc:
@@ -147,7 +168,7 @@ def seal() -> dict:
         rec = _registry().seal()
         return {"ok": True, "resulting_sha256": rec["resulting_sha256"]}
     except ValidationError as exc:
-        return {"ok": False, "error_type": "validation", "error": str(exc), "violations": exc.violations}
+        return _validation_result(exc)
 
 
 @mcp.tool()
@@ -319,7 +340,7 @@ def export_full(dest: str) -> dict:
     try:
         return {"ok": True, **_registry().export_full(dest)}
     except ValidationError as exc:
-        return {"ok": False, "error_type": "validation", "error": str(exc), "violations": exc.violations}
+        return _validation_result(exc)
     except IntegrityError as exc:
         return {"ok": False, "error_type": "integrity", "error": str(exc)}
 

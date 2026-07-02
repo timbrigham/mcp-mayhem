@@ -510,6 +510,21 @@ def test_set_vocab_null_axes_are_allowed(tmp_path):
     assert reg.validate() == []  # all axes null on the pending entry → fine
 
 
+def test_failed_write_returns_terse_capped_violations():
+    # A pathological validation failure must not blow the caller's budget: the
+    # MCP layer caps the violations echoed and never returns str(exc) (which
+    # joins every violation). (interop 2026-07-02 bug #3.)
+    from mcp_server.server import _validation_result, _MAX_VIOLATIONS_ECHO
+    many = [f"entries[{i}]: ontology.domain value ['x'] not in vocab" for i in range(3036)]
+    result = _validation_result(ValidationError(many))
+    assert result["ok"] is False
+    assert result["violation_count"] == 3036
+    assert len(result["violations"]) == _MAX_VIOLATIONS_ECHO      # capped
+    assert result["violations_truncated"] == 3036 - _MAX_VIOLATIONS_ECHO
+    assert result["error"] == "3036 validation violation(s)"       # not the giant join
+    assert len(result["error"]) < 60
+
+
 def test_domain_is_multivalue_and_scalar_is_coerced(tmp_path):
     reg = _reg(tmp_path / "reg.json")
     eid = _found1(reg)
