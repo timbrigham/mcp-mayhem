@@ -45,7 +45,10 @@ The audit sidecar is always `<SJV_DATA>.audit.jsonl` (e.g.
 **Write** (each returns `{ok, ...}`; failures return `{ok: false, error_type, error}`):
 - `seal()` — adopt the current file as the managed baseline (validate + record hash)
 - §9 verbs — `rename`, `move`, `mark_present`, `drop`, `merge`, `split`,
-  `add_new`, `annotate`, `link_claim`, `add_citation`
+  `reopen`, `add_new`, `annotate`, `link_claim`, `add_citation`
+- terminal-state guard — `dropped`/`merged` entries are immutable: a
+  disposition-changing verb on one is refused unless `force=true`; use
+  `reopen(id, reason)` to return it to `pending` first
 - `export_full(dest)` — publish the complete validated, deterministic registry
   to `dest` for a consuming repo to commit
 - `apply(op, params)` — generic escape hatch for any registered operation

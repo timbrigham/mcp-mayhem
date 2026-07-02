@@ -206,3 +206,65 @@ def test_import_baseline_missing_file_is_operation_error(tmp_path):
             "anchor": {"branch": "origin/main", "commit": None, "tree": None},
         })
     assert not (tmp_path / "fresh.json").exists()  # nothing written on failure
+
+
+# -- terminal-state guard (interop issue #4, strict) --------------------------
+
+_PENDING_ID = "ZeroParadox/ZPE.lean::ZeroParadox.ZPE.t_snap_derived::L142"
+_RENAMED_ID = "ZeroParadox/ZPB.lean::ZeroParadox.ZPB.addVal_bot::L88"
+
+
+def test_dropped_entry_is_terminal(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    reg.apply("drop", {"id": _PENDING_ID, "reason": "obsolete"})
+    before = reg.verify_integrity()
+    # A later verb must not silently reverse the drop.
+    with pytest.raises(OperationError):
+        reg.apply("rename", {"id": _PENDING_ID, "new_qualified": "X.y",
+                             "new_file": "X.lean", "namespace": "X", "reason": "oops"})
+    assert reg.get(_PENDING_ID)["disposition"] == "dropped"
+    assert reg.verify_integrity() == before  # refused op did not write
+
+
+def test_force_overrides_terminal_guard(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    reg.apply("drop", {"id": _PENDING_ID, "reason": "obsolete"})
+    reg.apply("rename", {"id": _PENDING_ID, "new_qualified": "X.y", "new_file": "X.lean",
+                         "namespace": "X", "reason": "actually keeping it", "force": True})
+    assert reg.get(_PENDING_ID)["disposition"] == "renamed"
+    assert reg.validate() == []
+
+
+def test_reopen_returns_terminal_entry_to_pending(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    reg.apply("drop", {"id": _PENDING_ID, "reason": "obsolete"})
+    reg.apply("reopen", {"id": _PENDING_ID, "reason": "brought back"})
+    entry = reg.get(_PENDING_ID)
+    assert entry["disposition"] == "pending"
+    assert entry["new"]["qualified"] is None  # new.* cleared
+    assert reg.validate() == []
+    # After reopen the normal verbs work again without force.
+    reg.apply("mark_present", {"id": _PENDING_ID})
+    assert reg.get(_PENDING_ID)["disposition"] == "present"
+
+
+def test_merged_entry_is_terminal(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    # Both sample entries are non-terminal (pending, renamed) → mergeable.
+    reg.apply("merge", {"ids": [_PENDING_ID, _RENAMED_ID],
+                        "target": {"qualified": "Z.merged", "file": "Z.lean",
+                                   "namespace": "Z"}, "reason": "unify"})
+    assert reg.get(_PENDING_ID)["disposition"] == "merged"
+    with pytest.raises(OperationError):
+        reg.apply("move", {"id": _PENDING_ID, "new_file": "elsewhere.lean"})
+
+
+def test_reopen_rejects_non_terminal(sample_file):
+    reg = _reg(sample_file)
+    reg.seal()
+    with pytest.raises(OperationError):
+        reg.apply("reopen", {"id": _PENDING_ID, "reason": "nothing to reopen"})

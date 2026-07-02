@@ -56,6 +56,25 @@ def _sync_counts(document: dict) -> None:
     counts["files"] = _distinct_files(entries)
 
 
+# Terminal dispositions record a deliberate decision; a later verb must not
+# silently reverse it (spec §7 / interop issue #4, strict posture).
+_TERMINAL = ("dropped", "merged")
+
+
+def _guard_not_terminal(entry: dict, *, force: bool) -> None:
+    """Refuse to mutate a terminal (dropped/merged) entry unless forced.
+
+    Use ``reopen`` to return the entry to ``pending`` first, or pass
+    ``force=True`` to override deliberately (the override, like every write, is
+    recorded in the audit log via ``engine.apply``).
+    """
+    disp = entry.get("disposition")
+    if disp in _TERMINAL and not force:
+        raise OperationError(
+            f"entry {entry.get('id')!r} is {disp}; reopen it first (or pass force=true)"
+        )
+
+
 # -- bootstrapping ------------------------------------------------------------
 
 def _resolve_scanner_output(scanner_output: Union[str, list]) -> list:
@@ -138,9 +157,10 @@ def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor:
 
 # -- disposition transitions --------------------------------------------------
 
-def mark_present(document, *, id: str) -> tuple[dict, list[str]]:
+def mark_present(document, *, id: str, force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
     old = entry["old"]
     q = old.get("qualified")
     entry["new"] = {
@@ -154,9 +174,11 @@ def mark_present(document, *, id: str) -> tuple[dict, list[str]]:
 
 
 def move(document, *, id: str, new_file: str, new_qualified: Optional[str] = None,
-         namespace: Optional[str] = None, reason: Optional[str] = None) -> tuple[dict, list[str]]:
+         namespace: Optional[str] = None, reason: Optional[str] = None,
+         force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
     q = new_qualified or entry["old"].get("qualified")
     entry["new"] = {
         "qualified": q,
@@ -171,9 +193,10 @@ def move(document, *, id: str, new_file: str, new_qualified: Optional[str] = Non
 
 
 def rename(document, *, id: str, new_qualified: str, new_file: str, namespace: str,
-           reason: str, short: Optional[str] = None) -> tuple[dict, list[str]]:
+           reason: str, short: Optional[str] = None, force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
     entry["new"] = {
         "qualified": new_qualified,
         "short": short or short_of(new_qualified),
@@ -185,10 +208,16 @@ def rename(document, *, id: str, new_qualified: str, new_file: str, namespace: s
     return doc, [id]
 
 
-def merge(document, *, ids: list[str], target: dict, reason: str) -> tuple[dict, list[str]]:
+def merge(document, *, ids: list[str], target: dict, reason: str,
+          force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     if len(ids) < 2:
         raise OperationError("merge needs >= 2 source ids")
+    # Resolve + guard every source up front so a terminal source aborts the whole
+    # merge before any mutation (all-or-nothing).
+    sources = [_find(doc, eid) for eid in ids]
+    for entry in sources:
+        _guard_not_terminal(entry, force=force)
     tq = target.get("qualified")
     new = {
         "qualified": tq,
@@ -197,21 +226,22 @@ def merge(document, *, ids: list[str], target: dict, reason: str) -> tuple[dict,
         "namespace": target.get("namespace") if target.get("namespace") is not None
         else (namespace_of(tq) if tq else None),
     }
-    for eid in ids:
-        entry = _find(doc, eid)
+    for entry in sources:
         entry["new"] = dict(new)
         entry["disposition"] = "merged"
         entry["reason"] = reason
     return doc, list(ids)
 
 
-def split(document, *, id: str, targets: list[dict], reason: str) -> tuple[dict, list[str]]:
+def split(document, *, id: str, targets: list[dict], reason: str,
+          force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     if len(targets) < 2:
         raise OperationError("split needs >= 2 targets")
     primary = targets[0]  # new.* records the primary; siblings tracked via add_new
     pq = primary.get("qualified")
     entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
     entry["new"] = {
         "qualified": pq,
         "short": primary.get("short") or (short_of(pq) if pq else None),
@@ -224,11 +254,37 @@ def split(document, *, id: str, targets: list[dict], reason: str) -> tuple[dict,
     return doc, [id]
 
 
-def drop(document, *, id: str, reason: str) -> tuple[dict, list[str]]:
+def drop(document, *, id: str, reason: str, force: bool = False) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
     entry["new"] = _empty_new()
     entry["disposition"] = "dropped"
+    entry["reason"] = reason
+    return doc, [id]
+
+
+def reopen(document, *, id: str, reason: str) -> tuple[dict, list[str]]:
+    """Return a terminal (dropped/merged) entry to ``pending``.
+
+    The sanctioned way to undo a deliberate drop/merge: it clears ``new.*`` and
+    resets the disposition to ``pending`` so the entry can be re-dispositioned by
+    the normal verbs. Rejects entries with no prior declaration to revert to
+    (e.g. ``add_new`` entries, whose ``old.*`` is null).
+    """
+    doc = _require_doc(document)
+    entry = _find(doc, id)
+    if entry.get("disposition") not in _TERMINAL:
+        raise OperationError(
+            f"entry {id!r} is {entry.get('disposition')!r}, not terminal; reopen only "
+            f"applies to {' or '.join(_TERMINAL)} entries"
+        )
+    if entry["old"].get("qualified") is None:
+        raise OperationError(
+            f"cannot reopen {id!r}: no prior (old) declaration to revert to"
+        )
+    entry["new"] = _empty_new()
+    entry["disposition"] = "pending"
     entry["reason"] = reason
     return doc, [id]
 
@@ -303,6 +359,7 @@ OPERATIONS = {
     "merge": merge,
     "split": split,
     "drop": drop,
+    "reopen": reopen,
     "add_new": add_new,
     "annotate": annotate,
     "link_claim": link_claim,

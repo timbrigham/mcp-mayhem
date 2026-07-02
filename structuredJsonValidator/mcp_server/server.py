@@ -7,8 +7,8 @@ Run:
 
 Read tools:  get, find, history, view, validate, verify_integrity
 Write tools: seal, and the §9 verbs (rename, move, drop, mark_present, merge,
-             split, add_new, annotate, link_claim, add_citation, import_baseline)
-             plus a generic `apply` escape hatch.
+             split, reopen, add_new, annotate, link_claim, add_citation,
+             import_baseline) plus a generic `apply` escape hatch.
 
 Every write returns {ok, ...}. Enforcement failures (schema, §7 rules, drift,
 bad params) come back as {ok: false, error_type, error} — the library raised,
@@ -114,43 +114,58 @@ def seal() -> dict:
 
 
 @mcp.tool()
-def rename(id: str, new_qualified: str, new_file: str, namespace: str, reason: str) -> dict:
-    """Rename a declaration into a new qualified name/file/namespace."""
+def rename(id: str, new_qualified: str, new_file: str, namespace: str, reason: str,
+           force: bool = False) -> dict:
+    """Rename a declaration into a new qualified name/file/namespace. A terminal
+    (dropped/merged) entry is refused unless force=True (reopen it instead)."""
     return _write("rename", {"id": id, "new_qualified": new_qualified,
-                             "new_file": new_file, "namespace": namespace, "reason": reason})
+                             "new_file": new_file, "namespace": namespace,
+                             "reason": reason, "force": force})
 
 
 @mcp.tool()
-def move(id: str, new_file: str, reason: Optional[str] = None) -> dict:
-    """Move a declaration to a new file (qualified name unchanged by default)."""
-    params: dict[str, Any] = {"id": id, "new_file": new_file}
+def move(id: str, new_file: str, reason: Optional[str] = None, force: bool = False) -> dict:
+    """Move a declaration to a new file (qualified name unchanged by default). A
+    terminal (dropped/merged) entry is refused unless force=True."""
+    params: dict[str, Any] = {"id": id, "new_file": new_file, "force": force}
     if reason is not None:
         params["reason"] = reason
     return _write("move", params)
 
 
 @mcp.tool()
-def mark_present(id: str) -> dict:
-    """Mark a pending declaration as present (new mirrors old identity)."""
-    return _write("mark_present", {"id": id})
+def mark_present(id: str, force: bool = False) -> dict:
+    """Mark a pending declaration as present (new mirrors old identity). A
+    terminal (dropped/merged) entry is refused unless force=True."""
+    return _write("mark_present", {"id": id, "force": force})
 
 
 @mcp.tool()
-def drop(id: str, reason: str) -> dict:
-    """Drop a declaration (new.* stays null; reason required)."""
-    return _write("drop", {"id": id, "reason": reason})
+def drop(id: str, reason: str, force: bool = False) -> dict:
+    """Drop a declaration (new.* stays null; reason required). Re-dropping a
+    terminal (dropped/merged) entry is refused unless force=True."""
+    return _write("drop", {"id": id, "reason": reason, "force": force})
 
 
 @mcp.tool()
-def merge(ids: list[str], target: dict, reason: str) -> dict:
-    """Merge several declarations into one target {qualified, file, namespace?}."""
-    return _write("merge", {"ids": ids, "target": target, "reason": reason})
+def reopen(id: str, reason: str) -> dict:
+    """Return a terminal (dropped/merged) entry to pending so it can be
+    re-dispositioned. The sanctioned undo for a deliberate drop/merge."""
+    return _write("reopen", {"id": id, "reason": reason})
 
 
 @mcp.tool()
-def split(id: str, targets: list[dict], reason: str) -> dict:
-    """Split a declaration; new.* records the primary (first) target."""
-    return _write("split", {"id": id, "targets": targets, "reason": reason})
+def merge(ids: list[str], target: dict, reason: str, force: bool = False) -> dict:
+    """Merge several declarations into one target {qualified, file, namespace?}.
+    Needs >= 2 source ids. Any terminal source is refused unless force=True."""
+    return _write("merge", {"ids": ids, "target": target, "reason": reason, "force": force})
+
+
+@mcp.tool()
+def split(id: str, targets: list[dict], reason: str, force: bool = False) -> dict:
+    """Split a declaration; new.* records the primary (first) target. Needs >= 2
+    targets. A terminal (dropped/merged) entry is refused unless force=True."""
+    return _write("split", {"id": id, "targets": targets, "reason": reason, "force": force})
 
 
 @mcp.tool()
