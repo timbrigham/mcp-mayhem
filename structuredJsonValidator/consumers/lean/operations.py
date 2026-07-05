@@ -675,12 +675,45 @@ def link_claim(document, *, id: str, claim: str) -> tuple[dict, list[str]]:
     return doc, [id]
 
 
+def unlink_claim(document, *, id: str, claim: str) -> tuple[dict, list[str]]:
+    """Remove a claim from an entry's ``claims.witness_of``. The honest inverse of
+    ``link_claim``: if this was the last live witness of a ``proved``/``deep``
+    claim, the store's cross-collection invariant fails the write and it rolls
+    back (interop #12 T4 — a witness cannot be silently removed from under a
+    proved claim). A no-op if the claim was not witnessed."""
+    doc = _require_doc(document)
+    entry = _find(doc, id)
+    witnesses = entry["claims"]["witness_of"]
+    if claim in witnesses:
+        witnesses.remove(claim)
+    return doc, [id]
+
+
 def add_citation(document, *, id: str, target: str) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     entry = _find(doc, id)
     citations = entry["claims"]["citations"]
     if target not in citations:
         citations.append(target)
+    return doc, [id]
+
+
+_UNSET = object()
+
+
+def set_verify(document, *, id: str, sorry_free=None, axioms=_UNSET) -> tuple[dict, list[str]]:
+    """Record the build-derived verification state on a declaration. ``sorry_free``
+    is the honest 'is the proof live' flag (ZP re-derives it from the build, not
+    the stored value). Flipping it to ``false`` on the sole live witness of a
+    ``proved``/``deep`` claim fails the store invariant — a broken proof cannot
+    leave a proved claim standing (interop #12 T4). Metadata-only (no disposition
+    change), so no terminal guard applies."""
+    doc = _require_doc(document)
+    entry = _find(doc, id)
+    if sorry_free is not None:
+        entry["verify"]["sorry_free"] = bool(sorry_free)
+    if axioms is not _UNSET:
+        entry["verify"]["axioms"] = axioms
     return doc, [id]
 
 
@@ -786,6 +819,8 @@ OPERATIONS = {
     "annotate_many": annotate_many,
     "annotate_by_filter": annotate_by_filter,
     "link_claim": link_claim,
+    "unlink_claim": unlink_claim,
     "add_citation": add_citation,
+    "set_verify": set_verify,
     "set_vocab": set_vocab,
 }

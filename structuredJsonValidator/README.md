@@ -41,10 +41,43 @@ consumers/lean/           # consumer #1 — kept OUT of core (spec §13/§14)
   rules.py                # §7 per-disposition table + id-uniqueness + counts
   operations.py           # §9 verbs (rename/move/drop/merge/split/…)
   views.py                # projections (status table, domain table)
+consumers/claims/         # the claim-graph collection (interop #12)
+  claim.schema.json       # claim node/edge shape (one shape; edge = from/to set)
+  rules.py                # claim_id uniqueness, status/object/domain enum, edge refs
+  operations.py           # add_claim/seed_claims/set_status/set_edge/annotate_claim
+  views.py                # status table + Mermaid graph (joins claims × declarations)
+consumers/deps/           # the declaration dependency graph (interop #13)
+  dep.schema.json         # directed edge {id, from, to, kind}; derived, zero-curation
+  rules.py                # id uniqueness (reference integrity is cross-collection)
+  operations.py           # import_deps (whole-collection REPLACE) / add_dep
+  views.py                # cycles (Tarjan SCC; informational, not a gate)
+consumers/store.py        # composition root: build_store + the cross-collection validators
+scripts/migrate_to_collections.py  # one-time legacy → v2 envelope migration
 mcp_server/               # thin MCP transport (added last; no enforcement)
 data/sample.json          # two conforming entries (§8)
 tests/                    # negative tests proving the gate is real
 ```
+
+## Multi-collection store (the claims layer, interop #12)
+`core.engine.Store` generalizes the single-collection `Registry` to an ENVELOPE of
+named, homogeneous collections in one physical file — `declarations` (the decl
+registry, its sub-document shape unchanged), `claims` (the framework's claim
+graph, interop #12), and `deps` (the declaration dependency graph, interop #13).
+All the same machinery is shared: surrogate ids, operation-mediated writes, a
+**whole-store** hash chain, validate/verify_integrity/export_full, terse receipts,
+config-vocab. Beyond each collection's own schema+rules, **cross-collection**
+validators run as the whole-store postcondition on every write:
+- the **witness invariant** — a `proved`/`deep` claim is valid only if some
+  declaration witnesses it with a live (`sorry_free`) proof, so over-claiming is
+  structurally impossible;
+- **deps reference integrity** — every dependency edge's `from`/`to` must resolve
+  to an effective-current declaration `qualified` (the shared reconcile match-key).
+
+`deps` is derived, zero-curation data: `import_deps` does a whole-collection REPLACE
+on re-extract, with content-derived deterministic ids so a re-extract of unchanged
+source is a byte-identical no-op. Migrate a legacy bare registry (or backfill a
+newly-introduced collection into an existing envelope) with
+`python -m scripts.migrate_to_collections --data data/registry.json`.
 
 ## Enforcement, split honestly
 - **Structural** (types, enums, required-ness, `additionalProperties:false`) →

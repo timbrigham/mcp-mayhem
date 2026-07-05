@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SSOT Registry — Declaration dependency graph (interop issue #13)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dep" }
+    }
+  },
+  "$defs": {
+    "dep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from", "to", "kind"],
+      "$comment": "A directed dependency edge: `from` directly uses `to` (the arrow points at the prerequisite). Endpoints reference the greppable declaration handle (effective-current `qualified`), resolved by query — NOT the surrogate id. This is a DERIVED, zero-curation collection: whole-collection REPLACE on re-extract.",
+      "properties": {
+        "id": {
+          "type": "string", "minLength": 1,
+          "$comment": "Opaque sjv-minted surrogate — DETERMINISTIC uuid5 of the (from,to,kind) triple (not random uuid4), because deps are derived + REPLACE-on-re-extract + referenced by nothing, so a stable content-derived id makes a re-extract byte-identical (clean diffs, true no-op). Identity is the (from,to,kind) triple; deduped on import."
+        },
+        "from": {
+          "type": "string", "minLength": 1,
+          "$comment": "The DEPENDENT declaration's effective-current qualified name (its type or proof references `to`). downstream(X)=dependents={from : edge(to=X)}."
+        },
+        "to": {
+          "type": "string", "minLength": 1,
+          "$comment": "The DEPENDENCY / prerequisite declaration's effective-current qualified name. upstream(X)=dependencies={to : edge(from=X)}."
+        },
+        "kind": {
+          "enum": ["type", "proof", null],
+          "$comment": "Optional enrichment: 'type' = `to` appears in `from`'s signature (hard structural dep, constrains module boundary); 'proof' = only in the proof term (softer); null = unclassified. The extractor MAY populate it."
+        }
+      }
+    }
+  },
+  "$comment": "id uniqueness is enforced in consumers/deps/rules.py. Cross-collection reference integrity (from/to must resolve to an effective-current declaration qualified) is enforced at the store level (consumers/store.py::deps_reference_integrity) — it reuses the Issue 5 Part 2 reconcile match-key. Acyclicity is NOT enforced (Lean 'mutual' blocks are legitimate); view('deps','cycles') is a convenience projection only."
+}

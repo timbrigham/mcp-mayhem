@@ -18,13 +18,13 @@ from typing import Any
 from core.errors import IntegrityError, OperationError, ValidationError
 
 
-def _load_registry(args) -> Any:
+def _load_store(args) -> Any:
     if args.consumer != "lean":
         print(f"unknown consumer {args.consumer!r} (only 'lean' is wired up)", file=sys.stderr)
         raise SystemExit(2)
-    from consumers.lean import build_registry
+    from consumers.store import build_store
 
-    return build_registry(args.data, actor=args.actor)
+    return build_store(args.data, actor=args.actor)
 
 
 def _parse_scalar(text: str) -> Any:
@@ -54,8 +54,8 @@ def _emit(obj: Any) -> None:
 # -- command handlers ---------------------------------------------------------
 
 def cmd_validate(args) -> int:
-    reg = _load_registry(args)
-    violations = reg.validate()
+    store = _load_store(args)
+    violations = store.validate()
     if violations:
         print(f"INVALID — {len(violations)} violation(s):", file=sys.stderr)
         for v in violations:
@@ -66,9 +66,9 @@ def cmd_validate(args) -> int:
 
 
 def cmd_seal(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     try:
-        record = reg.seal()
+        record = store.seal()
     except ValidationError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -77,9 +77,9 @@ def cmd_seal(args) -> int:
 
 
 def cmd_verify_integrity(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     try:
-        sha = reg.verify_integrity()
+        sha = store.verify_integrity()
     except IntegrityError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -88,34 +88,34 @@ def cmd_verify_integrity(args) -> int:
 
 
 def cmd_get(args) -> int:
-    reg = _load_registry(args)
-    entry = reg.get(args.id)
+    store = _load_store(args)
+    entry = store.get(args.collection, args.id)
     if entry is None:
-        print(f"no entry with id {args.id!r}", file=sys.stderr)
+        print(f"no entry with id {args.id!r} in {args.collection!r}", file=sys.stderr)
         return 1
     _emit(entry)
     return 0
 
 
 def cmd_find(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     filters = _parse_kv_list(args.filters)
-    results = reg.find(**filters)
+    results = store.find(args.collection, **filters)
     _emit(results)
     print(f"{len(results)} match(es)", file=sys.stderr)
     return 0
 
 
 def cmd_history(args) -> int:
-    reg = _load_registry(args)
-    _emit(reg.history(args.id))
+    store = _load_store(args)
+    _emit(store.history(args.id))
     return 0
 
 
 def cmd_view(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     try:
-        print(reg.export_view(args.kind))
+        print(store.export_view(args.collection, args.kind))
     except OperationError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -123,9 +123,9 @@ def cmd_view(args) -> int:
 
 
 def cmd_export(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     try:
-        result = reg.export_full(args.to)
+        result = store.export_full(args.to)
     except (ValidationError, IntegrityError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -138,7 +138,7 @@ def cmd_export(args) -> int:
 
 
 def cmd_apply(args) -> int:
-    reg = _load_registry(args)
+    store = _load_store(args)
     if args.json is not None:
         try:
             params = json.loads(args.json)
@@ -151,7 +151,7 @@ def cmd_apply(args) -> int:
     else:
         params = _parse_kv_list(args.set)
     try:
-        result = reg.apply(args.op, params)
+        result = store.apply(args.collection, args.op, params)
     except (ValidationError, IntegrityError, OperationError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -165,6 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sjv", description="Schema-enforced flat-file SSOT registry.")
     p.add_argument("--data", required=True, help="path to the flat JSON source of truth")
     p.add_argument("--consumer", default="lean", help="consumer wiring (default: lean)")
+    p.add_argument("--collection", default="declarations",
+                   help="target collection for get/find/view/apply (default: declarations; also 'claims')")
     p.add_argument("--actor", default="cli", help="actor recorded in the audit log")
     sub = p.add_subparsers(dest="command", required=True)
 

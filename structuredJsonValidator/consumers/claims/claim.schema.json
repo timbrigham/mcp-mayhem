@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SSOT Registry — Claim graph document (interop issue #12)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claim" }
+    },
+    "vocab": {
+      "type": "object",
+      "$comment": "Controlled vocab for the claims collection (object/domain reuse the declaration axes; status is claims-specific). Adopted via set_vocab; sjv enforces values (hard) in rules.py, cardinality is soft.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["values"],
+        "properties": {
+          "values": { "type": "array", "items": { "type": "string" } },
+          "cardinality": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "min": { "type": "integer", "minimum": 0 },
+              "max": { "type": ["integer", "null"] }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "claim_id", "statement", "object", "domain", "status", "from", "to", "date", "history", "reason"],
+      "properties": {
+        "id": {
+          "type": "string", "minLength": 1,
+          "$comment": "Opaque sjv-minted surrogate (UUID), permanent, never recomputed (Decision A applies to claims too). Match on claim_id, never on id."
+        },
+        "claim_id": {
+          "type": "string", "minLength": 1,
+          "$comment": "Stable human-readable handle (e.g. 'T-SNAP') — the greppable natural key, like a declaration's qualified. Referenced by declarations[*].claims.witness_of and by from/to."
+        },
+        "statement": { "type": "string" },
+        "object": {
+          "type": "array", "items": { "type": "string" },
+          "$comment": "Reuses the object vocab; multi-value (element-aware enum in rules.py)."
+        },
+        "domain": {
+          "type": "array", "items": { "type": "string" },
+          "$comment": "Reuses the domain vocab; multi-value; element-aware enum."
+        },
+        "status": {
+          "type": "string",
+          "$comment": "Config-driven vocab (built-in floor UNION adopted vocab, like role). Floor: commitment, conj, corr, deep, proved. The killer cross-collection invariant gates proved/deep on a live witness."
+        },
+        "from": {
+          "type": ["string", "null"],
+          "$comment": "Populated => this claim is an EDGE; references another claim's claim_id."
+        },
+        "to": {
+          "type": ["string", "null"],
+          "$comment": "Populated => this claim is an EDGE; references another claim's claim_id."
+        },
+        "date": { "type": ["string", "null"] },
+        "history": {
+          "type": "array",
+          "$comment": "Append-only status provenance; downgrades KEPT, never erased (T5).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "date"],
+            "properties": {
+              "status": { "type": "string" },
+              "date": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "$comment": "claim_id uniqueness, status/object/domain enum (floor UNION vocab), and from/to reference integrity are enforced in consumers/claims/rules.py. The cross-collection witness invariant lives at the store level (core/engine.Store cross_validators)."
+}

@@ -5,6 +5,8 @@ __pycache__/
 build/
 dist/
 *.tmp
+# Runtime server logs (e.g. server.out.log / server.err.log from a direct run).
+*.log
 # Real data + integrity sidecars. Everything the server writes under data/ is
 # treated as private live data and kept out of git. The exceptions are the
 # demo/fixture sample.json and the vocab sample, which are safe to track.
