@@ -227,9 +227,17 @@ killed the registry. Never give two supervised servers the same module path.
 3. **`push` does not reach branch or PR creation**, and `gh` is not proxied.
    Releases mint permanent DOIs; that is a human decision, and it is out of scope
    until someone decides otherwise.
-4. **The `.claude-local` → OneDrive backup** used to be triggered by a PostToolUse
-   hook matching `git commit`. Direct git is now blocked, so that hook can no
-   longer fire. It needs re-hooking to gitRobot's commit path.
+4. **The `.claude-local` → OneDrive backup is superseded, not broken.** A PostToolUse
+   hook matching `git commit` used to mirror that directory to OneDrive; direct git
+   is now blocked, so it can no longer fire. It should be **removed**, not re-hooked
+   — pushing `.claude-local` to its own private remote replaced it, and that is
+   reachable here via `push(branch=…, repo_mode='.claude-local')`. Removal belongs
+   to a larger refactor on the consumer side.
+
+   One asymmetry worth carrying into that refactor: the mirror was *automatic* on
+   every commit, whereas a push is a deliberate act someone has to remember. Same
+   coverage, different failure mode — the replacement is only equivalent while the
+   push actually happens.
 
 ## Tests
 
