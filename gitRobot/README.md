@@ -82,7 +82,8 @@ required field, not a nicety.
 |---|---|
 | `stage` | named paths only; `-A`/`.`/`-u` refused on the main repo (background agents write here concurrently, and a scratch probe reached permanent history that way). `.claude-local` is exempt — bulk add is its documented flow — reached as a **named mode**, never a path. |
 | `commit` | the project's `pre-commit` pipeline runs **first**, so a failing gate costs a report rather than a half-made commit; the installed hook runs again during the commit as the backstop. Message read from a **file**, never argv. |
-| `preflight` | runs the full `pre-push` pipeline **without pushing**, and records the verdict against the current HEAD |
+| `preflight` | STARTS the full `pre-push` pipeline **without pushing** and returns at once; the verdict is recorded against the current HEAD when it lands |
+| `preflight_status` | `running` / `passed` / `failed` / **`died`** / `none` for the current HEAD |
 | `push` | refuses without a passing preflight for the current HEAD, and without a stated reason |
 | `worktree` | **encouraged** — the sanctioned escape from Tier 1, in one call |
 
@@ -91,6 +92,17 @@ a zero-length response window: the push completes in the same invocation, so the
 findings arrive after the irreversible act. Splitting the verdict from the act is
 the point. A preflight is bound to the HEAD it ran against, so it cannot authorise
 anything committed after it.
+
+**Why `preflight` does not wait.** Measured 2026-08-22: the real pipeline takes
+~155s. Held open, that outlives two separate limits — the caller's ~120s call
+window, and (the one that actually bit) the supervisor's 30s health poll. FastMCP
+runs a synchronous tool function *on the event loop*, so a blocking call stalls
+the whole server; the supervisor saw gitRobot unresponsive, declared it Down,
+restarted it, and killed the run mid-flight, losing both the verdict and its audit
+trail. So every tool is `async` and offloads to a worker thread, and `preflight`
+writes a `started` row, runs in the background, and appends the verdict when it
+lands. An interrupted run is reported as **`died`** rather than as silence —
+because "it failed" and "it never ran" are different facts.
 
 **gitRobot does not reimplement the gate pipeline.** It invokes the project's own
 `tools/verify/hooks.py <phase>`. There was previously one pipeline in shell and
@@ -132,7 +144,8 @@ checkout on the machine — a strictly worse hole than the one it closes.
 
 Every Tier 1 and Tier 2 call appends one line to `data/git_ops.jsonl` — timestamp,
 actor, operation, arguments, HEAD, branch, tree state, decision, gate verdicts
-where run, and the caller's reason. Append-only, same shape as the sibling
+where run, the caller's reason, the refusal's *alternative* (so `explain` survives
+a restart), and the writing `pid` (so an interrupted run is detectable). Append-only, same shape as the sibling
 registry's audit sidecar.
 
 **Refusals are logged too, and so are clean passes.** This comes directly from a
@@ -198,7 +211,7 @@ killed the registry. Never give two supervised servers the same module path.
 ## Tests
 
 ```
-python -m pytest -q          # 106 tests
+python -m pytest -q          # 125 tests
 ```
 
 Every test runs against a disposable repository created per test — never the

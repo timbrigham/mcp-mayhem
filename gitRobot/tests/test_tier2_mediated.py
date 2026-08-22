@@ -153,7 +153,7 @@ def test_push_refuses_without_a_preflight(robot, repo, tmp_path, fake_gate):
 def test_preflight_then_push(robot, repo, tmp_path, fake_gate):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    pre = robot.preflight(reason="pre-ship check")
+    pre = robot.preflight(reason="pre-ship check", wait=True)
     assert pre["passed"] is True and pre["head"] == robot.git.head()
     result = robot.push("illustrated", reason="shipping the fix")
     assert result["decision"] == "allowed" and result["ok"]
@@ -163,7 +163,7 @@ def test_a_failing_preflight_does_not_authorise_a_push(robot, repo, tmp_path, fa
     fake_gate(0)
     _commit(robot, repo, tmp_path)
     fake_gate(1, "BLOCK: check_paths failed")   # the pipeline goes red after the commit
-    assert robot.preflight()["passed"] is False
+    assert robot.preflight(wait=True)["passed"] is False
     with pytest.raises(RefusalError, match="no passing pre-push preflight"):
         robot.push("illustrated", reason="shipping anyway")
 
@@ -173,7 +173,7 @@ def test_a_preflight_does_not_survive_a_later_commit(robot, repo, tmp_path, fake
     everything that came after it."""
     fake_gate(0)
     _commit(robot, repo, tmp_path, "a.txt")
-    robot.preflight()
+    robot.preflight(wait=True)
     _commit(robot, repo, tmp_path, "b.txt")
     with pytest.raises(RefusalError, match="no passing pre-push preflight"):
         robot.push("illustrated", reason="shipping")
@@ -182,7 +182,7 @@ def test_a_preflight_does_not_survive_a_later_commit(robot, repo, tmp_path, fake
 def test_push_requires_a_reason(robot, repo, tmp_path, fake_gate):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight()
+    robot.preflight(wait=True)
     with pytest.raises(RefusalError, match="requires a reason"):
         robot.push("illustrated", reason="")
 
@@ -190,7 +190,7 @@ def test_push_requires_a_reason(robot, repo, tmp_path, fake_gate):
 def test_private_branches_never_reach_a_remote(robot, repo, tmp_path, fake_gate):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight()
+    robot.preflight(wait=True)
     with pytest.raises(RefusalError, match="not a pushable branch"):
         robot.push("private/scratch", reason="oops")
 
@@ -200,7 +200,7 @@ def test_push_records_the_gate_verdict_on_the_clean_path(robot, repo, tmp_path, 
     indistinguishable afterwards."""
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight()
+    robot.preflight(wait=True)
     robot.push("illustrated", reason="shipping")
     record = robot.audit.read()[-1]
     assert record["op"] == "push" and record["decision"] == "allowed"
@@ -225,9 +225,17 @@ def test_worktree_add_gives_an_isolated_tree(robot, repo, dirty):
     assert robot.worktree("remove", name=str(wt))["decision"] == "allowed"
 
 
-def test_worktree_remove_refuses_anything_outside_the_scratch_area(robot, repo):
-    with pytest.raises(RefusalError, match="not one of gitRobot's scratch worktrees"):
+def test_worktree_remove_refuses_the_main_checkout(robot, repo):
+    """The main checkout is the thing every other guard here exists to protect."""
+    with pytest.raises(RefusalError, match="main checkout"):
         robot.worktree("remove", name=str(repo))
+
+
+def test_worktree_remove_refuses_a_path_git_does_not_list(robot, tmp_path):
+    stranger = tmp_path / "not-a-worktree"
+    stranger.mkdir()
+    with pytest.raises(RefusalError, match="not a worktree of this repository"):
+        robot.worktree("remove", name=str(stranger))
 
 
 def test_worktree_lands_outside_the_repository(robot):

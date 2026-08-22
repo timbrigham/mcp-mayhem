@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shlex
+import threading
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -88,7 +88,7 @@ class GitRobot:
         self.audit.append(
             actor=self.actor, op=op, args=args, decision="refused",
             head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
-            reason=reason, detail=f"[{rid}] {what}",
+            reason=reason, detail=f"[{rid}] {what}", alternative=alternative,
         )
         return RefusalError(f"{what}\n\nINSTEAD: {alternative}",
                             alternative=alternative, refusal_id=rid)
@@ -287,41 +287,108 @@ class GitRobot:
 
     # -- push, and the response window ----------------------------------------
 
-    def preflight(self, *, reason: Optional[str] = None) -> dict:
-        """Run the pre-push pipeline WITHOUT pushing, and record the verdict.
+    def preflight(self, *, reason: Optional[str] = None, wait: bool = False) -> dict:
+        """Start the pre-push pipeline WITHOUT pushing, and record the verdict.
 
         ⚠ This exists because a gate that runs during the push has a zero-length
         response window: the push completes in the same invocation, so the advice
         arrives after the irreversible act. Splitting the verdict from the act is
         the whole point — you get the findings while you can still act on them.
 
+        ⚠⚠ IT RETURNS IMMEDIATELY AND RUNS IN THE BACKGROUND, and that is not a
+        convenience. Measured 2026-08-22: this pipeline takes ~155s on the real
+        repository. Held open, it outlives BOTH limits above it — the caller's
+        ~120s call window, and (the one that actually bit) the process
+        supervisor's 30s health poll, which saw the server unresponsive, declared
+        it Down, and killed the run mid-flight. A long synchronous call here is
+        not slow, it is self-destroying.
+
+        So: a ``started`` row is written first, the pipeline runs on a worker
+        thread, and the verdict is appended when it lands. Poll with
+        ``preflight_status()``. ``wait=True`` blocks to completion — for the CLI,
+        which has neither of those limits.
+
         A passing preflight is bound to the HEAD it ran against, so it cannot be
         reused across a later commit. Same idea as the project's existing
         clearance-lock-keyed-to-HEAD pattern.
         """
-        gate = self.gates.run("pre-push")
-        record = gate.record()
         head = self.git.head()
+        running = self.preflight_status()
+        if running.get("state") == "running":
+            raise self._refuse(
+                "preflight", {}, "a preflight is already running for this store.",
+                "Wait for it and poll preflight_status(). Starting a second run would "
+                "spend the pipeline twice and leave two verdicts racing for the same HEAD.",
+                reason=reason,
+            )
+
+        run_id = _refusal_id("preflight", f"{head}|{self.audit.path}|{len(self.audit.read())}")
         self.audit.append(
-            actor=self.actor, op="preflight", args={}, decision=(
-                "allowed" if gate.passed else "failed"),
+            actor=self.actor, op="preflight", args={}, decision="started",
             head=head, branch=self.git.branch(), tree=self.git.tree_state(),
-            gates=[record], reason=reason,
-            detail="pre-push preflight",
+            reason=reason, detail="pre-push preflight started", run_id=run_id,
         )
-        return {"op": "preflight", "head": head, "passed": gate.passed,
-                "exit_code": gate.exit_code, "note": gate.note,
-                "output": gate.output[-8000:]}
+
+        def _run() -> dict:
+            gate = self.gates.run("pre-push")
+            self.audit.append(
+                actor=self.actor, op="preflight", args={},
+                decision="allowed" if gate.passed else "failed",
+                head=head, branch=self.git.branch(), tree=self.git.tree_state(),
+                gates=[gate.record()], reason=reason,
+                detail="pre-push preflight finished", run_id=run_id,
+            )
+            return {"op": "preflight", "run_id": run_id, "head": head,
+                    "passed": gate.passed, "exit_code": gate.exit_code,
+                    "note": gate.note, "output": gate.output[-8000:]}
+
+        if wait:
+            return _run()
+        thread = threading.Thread(target=_run, name=f"preflight-{run_id}", daemon=True)
+        thread.start()
+        return {"op": "preflight", "run_id": run_id, "head": head, "state": "running",
+                "note": "the pipeline runs in the background; poll preflight_status(). "
+                        "push stays refused until it lands green for this HEAD."}
+
+    def preflight_status(self) -> dict:
+        """The state of the latest preflight for the current HEAD.
+
+        ``running`` / ``passed`` / ``failed`` / ``died`` / ``none``. ``died`` is
+        the one worth having: a ``started`` row whose run never wrote an outcome
+        and whose pid is no longer this process is an interrupted run, and saying
+        so is the difference between "it failed" and "it never ran".
+        """
+        head = self.git.head()
+        started = self.audit.last_where(op="preflight", head=head, decision="started")
+        if started is None:
+            return {"state": "none", "head": head}
+        run_id = started.get("run_id")
+        for record in reversed(self.audit.read()):
+            if record.get("run_id") == run_id and record.get("decision") in ("allowed", "failed"):
+                return {"state": "passed" if record["decision"] == "allowed" else "failed",
+                        "head": head, "run_id": run_id, "ts": record["ts"],
+                        "gates": record.get("gates")}
+        alive = any(t.name == f"preflight-{run_id}" and t.is_alive()
+                    for t in threading.enumerate())
+        if alive or started.get("pid") == os.getpid():
+            return {"state": "running", "head": head, "run_id": run_id,
+                    "started_at": started["ts"]}
+        return {"state": "died", "head": head, "run_id": run_id,
+                "started_at": started["ts"],
+                "note": "the run was interrupted (its process is gone) and never recorded a "
+                        "verdict — most likely killed mid-flight. Re-run preflight()."}
 
     def _fresh_preflight(self) -> Optional[dict]:
-        """The most recent PASSING preflight, if it was run against the current HEAD."""
+        """The completed, PASSING preflight for the current HEAD, if there is one.
+
+        A ``started`` row never satisfies this: an in-flight or interrupted run is
+        not a verdict.
+        """
         head = self.git.head()
         if head is None:
             return None
-        record = self.audit.last_where(op="preflight", head=head)
-        if record and record.get("decision") == "allowed":
-            return record
-        return None
+        record = self.audit.last_where(op="preflight", head=head, decision="allowed")
+        return record
 
     def push(self, branch: str, *, reason: Optional[str] = None) -> dict:
         """Push a branch, only on a passing preflight for the current HEAD.
@@ -393,23 +460,52 @@ class GitRobot:
                                  detail=result.output,
                                  extra={"path": str(path), "output": result.output,
                                         "ok": result.ok})
+        if action == "prune":
+            result = self.git.run(["worktree", "prune", "-v"], timeout=120)
+            return self._receipt("worktree.prune", {}, "allowed" if result.ok else "failed",
+                                 detail=result.output,
+                                 extra={"output": result.output, "ok": result.ok})
         if action == "remove":
             if not name:
                 raise UsageError("worktree(action='remove') requires name=<path from add>")
             path = Path(name)
-            if self.scratch.resolve() not in path.resolve().parents:
+            # Removable = anything GIT ITSELF lists as a worktree of this repo, except
+            # the main checkout. Keying on git's own list rather than on gitRobot's
+            # scratch directory means leftovers from other sessions can be cleaned up
+            # (one was found stranded in a foreign scratchpad), while the set stays
+            # enumerable from the repo instead of taken from the caller.
+            known = self._worktree_paths()
+            resolved = path.resolve()
+            if resolved == self.repo:
                 raise self._refuse(
                     "worktree.remove", {"name": name},
-                    f"{name!r} is not one of gitRobot's scratch worktrees.",
-                    f"Only worktrees created by worktree(action='add') under {self.scratch} "
-                    f"can be removed here. The main checkout is not removable by design.",
+                    "that is the main checkout, not a worktree.",
+                    "The main checkout is not removable by design — it is the thing every "
+                    "other guard here exists to protect.",
+                )
+            if resolved not in known:
+                raise self._refuse(
+                    "worktree.remove", {"name": name},
+                    f"{name!r} is not a worktree of this repository.",
+                    f"worktree(action='list') shows what can be removed. If the directory is "
+                    f"already gone, worktree(action='prune') clears its leftover record.",
                 )
             result = self.git.run(["worktree", "remove", "--force", str(path)], timeout=300)
             decision = "allowed" if result.ok else "failed"
             return self._receipt("worktree.remove", {"name": str(path)}, decision,
                                  detail=result.output,
                                  extra={"output": result.output, "ok": result.ok})
-        raise UsageError(f"unknown worktree action {action!r}; expected add, list or remove")
+        raise UsageError(
+            f"unknown worktree action {action!r}; expected add, list, remove or prune")
+
+    def _worktree_paths(self) -> set:
+        """Every path git reports as a worktree of this repo (main checkout included)."""
+        result = self.git.run(["worktree", "list", "--porcelain"])
+        out = set()
+        for line in result.stdout.splitlines():
+            if line.startswith("worktree "):
+                out.add(Path(line.split(" ", 1)[1].strip()).resolve())
+        return out
 
     # =========================================================================
     # Explanation + history
@@ -425,8 +521,14 @@ class GitRobot:
             if detail.startswith(f"[{refusal_id}]"):
                 return {"refusal_id": refusal_id, "op": record["op"],
                         "args": record["args"], "what": detail.split("] ", 1)[-1],
-                        "alternative": "(restart lost the long form; the audit record above "
-                                       "is the durable copy)", "ts": record["ts"]}
+                        # Persisted with the refusal, so this survives a restart. It
+                        # used to degrade to "the audit record is the durable copy",
+                        # which was true and useless: the alternative is the half a
+                        # caller actually needs, and losing it turns a refusal back
+                        # into a dead end.
+                        "alternative": record.get("alternative") or "(recorded before "
+                        "alternatives were persisted; see 'what' above)",
+                        "ts": record["ts"]}
         raise UsageError(f"no refusal with id {refusal_id!r} in this session or the log")
 
     def history(self, limit: int = 20) -> dict:

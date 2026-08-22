@@ -46,12 +46,27 @@ class AuditLog:
         gates: Optional[list[dict]] = None,
         reason: Optional[str] = None,
         detail: Optional[str] = None,
+        alternative: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> dict:
         """Append one immutable record and return it.
 
-        ``decision`` is one of ``allowed`` / ``refused`` / ``failed``:
-        allowed = the mutation ran; refused = policy said no and nothing ran;
+        ``decision`` is one of ``started`` / ``allowed`` / ``refused`` / ``failed``:
+        started = the work was launched and its outcome is not yet known;
+        allowed = it ran; refused = policy said no and nothing ran;
         failed = policy allowed it and git or a gate rejected it.
+
+        ⚠ ``started`` exists because an outcome-only log cannot distinguish a run
+        that FAILED from one that never happened. A long gate run was killed
+        mid-flight by the process supervisor and left no trace at all — §7's own
+        lesson ("judged clean" vs "never ran") recurring one door over. A start
+        row plus ``pid`` makes an interrupted run detectable afterwards instead of
+        invisible: a ``started`` row with no matching outcome, written by a pid
+        that is no longer this process, is a run that died.
+
+        ``alternative`` is persisted so a refusal's long form survives a restart —
+        ``explain`` must not degrade to "the durable copy is the audit record"
+        when the audit record is where it should have been all along.
         """
         record = {
             "ts": _now_iso(),
@@ -65,6 +80,9 @@ class AuditLog:
             "gates": gates or [],
             "reason": reason,
             "detail": detail,
+            "alternative": alternative,
+            "run_id": run_id,
+            "pid": os.getpid(),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as fh:

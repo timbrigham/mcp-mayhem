@@ -119,12 +119,12 @@ def test_the_mcp_surface_has_no_bypass_parameter_either():
     pytest.importorskip("mcp")
     from gitrobot_server import server
 
-    for name in PUBLIC_METHODS:
-        fn = getattr(server, name, None)
-        if fn is None:
-            continue
-        target = getattr(fn, "fn", fn)          # unwrap the FastMCP tool decorator
-        params = set(inspect.signature(target).parameters)
+    # Every REGISTERED tool, taken from the tool manager rather than a hand-kept
+    # list — a bypass parameter added on a new tool has to be caught too.
+    tools = server.mcp._tool_manager._tools
+    assert len(tools) >= 9, "tool registry looks empty — the introspection broke"
+    for name, tool in sorted(tools.items()):
+        params = set(inspect.signature(tool.fn).parameters)
         assert not (params & FORBIDDEN_PARAMS), f"MCP tool {name} exposes a bypass parameter"
 
 

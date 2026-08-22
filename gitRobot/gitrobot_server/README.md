@@ -27,7 +27,8 @@ registration, before it ran.
 | `status()` | 3 | tree + branch + unpushed count + what would block a push |
 | `stage(paths[], repo_mode?)` | 2 | named paths only (`-A` refused on the main repo) |
 | `commit(message_file, reason?, repo_mode?)` | 2 | `pre-commit` pipeline, then commit; message from a file |
-| `preflight(reason?)` | 2 | the full `pre-push` pipeline **without** pushing |
+| `preflight(reason?)` | 2 | STARTS the `pre-push` pipeline without pushing; returns at once |
+| `preflight_status()` | 2 | `running` / `passed` / `failed` / `died` / `none` |
 | `push(branch, reason)` | 2 | refuses without a passing preflight for the current HEAD |
 | `worktree(action, ref?, name?)` | 2 | the sanctioned isolation path |
 | `explain(refusal_id)` | — | why it was refused and exactly what discharges it |
@@ -35,6 +36,12 @@ registration, before it ran.
 
 Every failure returns `{ok: false, error_type, error}` and never a transport
 crash. A refusal additionally carries `alternative` and `refusal_id`.
+
+⚠ **Every tool is `async` and offloads its work to a worker thread.** FastMCP runs
+a synchronous tool function directly on the event loop, so one blocking call
+stalls the entire server — including the health endpoint the supervisor polls. A
+~155s gate run once got gitRobot declared Down and restarted mid-call. A test
+asserts every registered tool is a coroutine so this cannot regress.
 
 **Absent by design**, and asserted absent by a test over this module: no `force`,
 no `no_verify`, no `skip_gates`, no `allow_dirty`, no `repo`, no raw
