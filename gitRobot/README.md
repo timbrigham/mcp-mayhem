@@ -85,6 +85,11 @@ required field, not a nicety.
 | `preflight` | STARTS the full `pre-push` pipeline **without pushing** and returns at once; the verdict is recorded against the current HEAD when it lands |
 | `preflight_status` | `running` / `passed` / `failed` / **`died`** / `none` for the current HEAD |
 | `push` | refuses without a passing preflight for the current HEAD, and without a stated reason |
+| `switch` / `merge` / `rebase` | refused while the tree is dirty. `rebase` additionally refuses to rewrite commits **already on the remote** |
+| `branch_delete` | **safe delete only** — an unmerged branch is refused, never force-deleted |
+| `tag_create` | annotated tags only; there is deliberately **no tag deletion** |
+| `remove_files` | `git rm` on named paths; a file with uncommitted work is refused |
+| `fetch` | updates remote-tracking refs; destroys nothing |
 | `worktree` | **encouraged** — the sanctioned escape from Tier 1, in one call |
 
 **Why `preflight` is separate from `push`.** A gate that runs *inside* the push has
@@ -103,6 +108,24 @@ trail. So every tool is `async` and offloads to a worker thread, and `preflight`
 writes a `started` row, runs in the background, and appends the verdict when it
 lands. An interrupted run is reported as **`died`** rather than as silence —
 because "it failed" and "it never ran" are different facts.
+
+**Why there is no acknowledgement flag.** The spec said these refuse "unless
+explicitly acknowledged". No such parameter was built: an acknowledgement flag is
+shaped exactly like the `force` / `allow_dirty` parameters that must stay absent,
+and that absence is what the whole design rests on. The escape is an action —
+commit the work, or take a worktree — and both leave it somewhere a person can
+still find it, which an acknowledged switch does not.
+
+**`.claude-local` is a separate repository, and the same verbs reach it.**
+`stage` / `commit` / `push` / `fetch` / `remove_files` / `read` all take
+`repo_mode='.claude-local'`, which targets that nested repo and its own remote.
+Two rules follow from it being genuinely separate: it has **no gate pipeline**, so
+`push` there requires no preflight (demanding a verdict from a pipeline that does
+not exist would make the operation unreachable, not safe); and its contents must
+**never enter the production repo**, so staging a `.claude-local` path in `main`
+mode is refused with a pointer to the right mode. The audit records the tree that
+was actually touched — logging the main repo's HEAD for a nested write would be a
+log that lies.
 
 **gitRobot does not reimplement the gate pipeline.** It invokes the project's own
 `tools/verify/hooks.py <phase>`. There was previously one pipeline in shell and
@@ -211,7 +234,7 @@ killed the registry. Never give two supervised servers the same module path.
 ## Tests
 
 ```
-python -m pytest -q          # 125 tests
+python -m pytest -q          # 163 tests
 ```
 
 Every test runs against a disposable repository created per test — never the

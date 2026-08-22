@@ -48,6 +48,20 @@ def _refusal_id(op: str, detail: str) -> str:
     return hashlib.sha256(f"{op}|{detail}".encode("utf-8")).hexdigest()[:12]
 
 
+def _first_segment(path: str) -> str:
+    """The first path component, separator- and ``./``-normalised.
+
+    Compared against a directory NAME, so it must be a segment match, not a prefix
+    match. ``str.strip('./')`` looks right and is not: it strips a character SET,
+    so it eats the leading dot of ``.claude-local`` and the comparison silently
+    stops matching — which is exactly how the guard failed the first time.
+    """
+    p = path.replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.split("/", 1)[0]
+
+
 class GitRobot:
     def __init__(self, repo: str | os.PathLike, *, data_path: str | os.PathLike,
                  actor: str = "cli", scratch: Optional[Path] = None):
@@ -75,7 +89,7 @@ class GitRobot:
         )
 
     def _refuse(self, op: str, args: Any, what: str, alternative: str, *,
-                reason: Optional[str] = None) -> RefusalError:
+                reason: Optional[str] = None, target: Optional[Git] = None) -> RefusalError:
         """Record the refusal, then return the error for the caller to raise.
 
         Refusals are audited exactly like allowed operations. A guard that only
@@ -85,19 +99,24 @@ class GitRobot:
         rid = _refusal_id(op, what)
         self._refusals[rid] = {"op": op, "args": args, "what": what,
                                "alternative": alternative}
+        git = target or self.git
         self.audit.append(
             actor=self.actor, op=op, args=args, decision="refused",
-            head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
+            head=git.head(), branch=git.branch(), tree=git.tree_state(),
             reason=reason, detail=f"[{rid}] {what}", alternative=alternative,
         )
         return RefusalError(f"{what}\n\nINSTEAD: {alternative}",
                             alternative=alternative, refusal_id=rid)
 
     def _receipt(self, op: str, args: Any, decision: str, *, gates=None,
-                 reason=None, detail=None, extra: Optional[dict] = None) -> dict:
+                 reason=None, detail=None, extra: Optional[dict] = None,
+                 target: Optional[Git] = None) -> dict:
+        # The audit must name the tree the operation actually touched. Recording the
+        # main repo's HEAD for a `.claude-local` write would be a log that lies.
+        git = target or self.git
         record = self.audit.append(
             actor=self.actor, op=op, args=args, decision=decision,
-            head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
+            head=git.head(), branch=git.branch(), tree=git.tree_state(),
             gates=gates, reason=reason, detail=detail,
         )
         out = {"op": op, "decision": decision, "head": record["head"],
@@ -139,15 +158,23 @@ class GitRobot:
             )
         if not tiers.is_read(op, args):
             allowed = ", ".join(sorted(tiers.READ_OPS))
+            elsewhere = tiers.MEDIATED_ELSEWHERE.get(op)
+            if elsewhere:
+                # It is available, just not here. Say which door, or the caller
+                # goes looking for a way around the wall instead.
+                alternative = (f"That operation is mediated, not forbidden — use "
+                               f"{elsewhere}. `read` is the read-only surface.")
+            else:
+                alternative = (
+                    f"Read operations available: {allowed}. If this is a MUTATION use the "
+                    f"dedicated tool. If it is genuinely a read that belongs on the list, "
+                    f"say so — the list is meant to grow deliberately, which is why an "
+                    f"unclassified operation is refused rather than assumed safe.")
             raise self._refuse(
                 "read", {"op": op, "args": args},
                 f"{('git ' + op + ' ' + ' '.join(args)).strip()!r} is not an "
                 f"allow-listed read.",
-                f"Read operations available: {allowed}. If this is a MUTATION use the "
-                f"dedicated tool (stage / commit / push / worktree). If it is genuinely a "
-                f"read that belongs on the list, say so — the list is meant to grow "
-                f"deliberately, which is why an unclassified operation is refused rather "
-                f"than assumed safe.",
+                alternative,
             )
         target = self._target(repo_mode)
         result = target.run([op, *args])
@@ -194,6 +221,19 @@ class GitRobot:
         paths = [str(p) for p in (paths or [])]
         if not paths:
             raise UsageError("stage requires at least one path; there is no bulk form")
+        target = self._target(repo_mode)
+        nested = [p for p in paths if _first_segment(p) == BULK_ADD_EXEMPT_REPO]
+        if nested and repo_mode == "main":
+            raise self._refuse(
+                "stage", {"paths": paths, "repo": repo_mode},
+                f"{nested[0]!r} is inside {BULK_ADD_EXEMPT_REPO}, which is a SEPARATE "
+                f"repository with its own remote. It must never become part of the "
+                f"production repo — the two histories are deliberately disjoint.",
+                f"Commit it in its own repo instead: "
+                f"stage(paths=[…], repo_mode='{BULK_ADD_EXEMPT_REPO}') then "
+                f"commit(..., repo_mode='{BULK_ADD_EXEMPT_REPO}') then "
+                f"push(..., repo_mode='{BULK_ADD_EXEMPT_REPO}').",
+            )
         bulk = [p for p in paths if p in BULK_ADD_TOKENS]
         if bulk and repo_mode != BULK_ADD_EXEMPT_REPO:
             raise self._refuse(
@@ -206,7 +246,6 @@ class GitRobot:
                 f"repository is exempt — bulk add is its documented flow — via "
                 f"repo_mode='{BULK_ADD_EXEMPT_REPO}'.)",
             )
-        target = self._target(repo_mode)
         if bulk:
             # Only reachable for the exempt nested repo (guarded above). Normalised
             # to a single form so the audit records one thing, not six spellings.
@@ -222,9 +261,10 @@ class GitRobot:
             result = target.run(["add", "--", *paths])
         if not result.ok:
             return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "failed",
-                                 detail=result.output, extra={"error": result.output})
+                                 detail=result.output, extra={"error": result.output},
+                                 target=target)
         return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "allowed",
-                             extra={"staged": paths})
+                             extra={"staged": paths}, target=target)
 
     def commit(self, message_file: str, *, reason: Optional[str] = None,
                repo_mode: str = "main", run_gate: bool = True) -> dict:
@@ -254,7 +294,7 @@ class GitRobot:
                 "commit", {"message_file": str(path), "repo": repo_mode},
                 "nothing is staged, so this commit would be empty.",
                 "stage(paths=[…]) the files you changed first; read(op='status') shows them.",
-                reason=reason,
+                reason=reason, target=target,
             )
 
         gate_records = []
@@ -282,7 +322,7 @@ class GitRobot:
         return self._receipt(
             "commit", {"message_file": str(path), "repo": repo_mode}, decision,
             gates=gate_records, reason=reason, detail=result.output,
-            extra={"output": result.output, "ok": result.ok},
+            extra={"output": result.output, "ok": result.ok}, target=target,
         )
 
     # -- push, and the response window ----------------------------------------
@@ -390,49 +430,311 @@ class GitRobot:
         record = self.audit.last_where(op="preflight", head=head, decision="allowed")
         return record
 
-    def push(self, branch: str, *, reason: Optional[str] = None) -> dict:
-        """Push a branch, only on a passing preflight for the current HEAD.
+    def push(self, branch: str, *, reason: Optional[str] = None,
+             repo_mode: str = "main") -> dict:
+        """Push a branch. On the main repo, only on a passing preflight for HEAD.
+
+        ``repo_mode='.claude-local'`` pushes that nested repository to its own
+        remote instead. It is a genuinely separate repo with a separate history and
+        no gate pipeline of its own, so no preflight is required there — requiring
+        one would demand a verdict from a pipeline that does not exist and make the
+        operation permanently unreachable. The reason and the audit row still apply:
+        those are about accountability, not about the gate.
 
         There is no force, no lease, no upstream override and no ``--no-verify``:
         the tool surface has no parameter that reaches any of them, so the
         installed pre-push hook runs as the backstop on every push gitRobot makes.
         """
+        target = self._target(repo_mode)
         if not branch or not isinstance(branch, str):
             raise UsageError("push requires a branch name")
+        args = {"branch": branch, "repo": repo_mode}
         if branch.startswith("-") or branch.startswith("private/"):
             raise self._refuse(
-                "push", {"branch": branch},
+                "push", args,
                 f"{branch!r} is not a pushable branch name here "
                 f"(private/* never reaches a remote; a leading '-' is a flag, not a branch).",
                 "Push the working branch by name, e.g. push(branch='illustrated').",
-                reason=reason,
+                reason=reason, target=target,
             )
         if not reason:
             raise self._refuse(
-                "push", {"branch": branch},
+                "push", args,
                 "push requires a reason.",
                 "Say what this push is for in one line: push(branch=…, reason='…'). It goes "
                 "in the audit log, which is the only durable record of why a publication "
                 "happened.",
+                target=target,
             )
-        preflight = self._fresh_preflight()
-        if preflight is None:
-            raise self._refuse(
-                "push", {"branch": branch},
-                "no passing pre-push preflight for the current HEAD.",
-                "Run preflight() first and read its findings. That is deliberate: a gate that "
-                "runs inside the push reports after the push has already happened, which is no "
-                "window at all. A preflight is bound to the HEAD it ran against, so commit "
-                "first, then preflight, then push.",
-                reason=reason,
-            )
-        result = self.git.run(["push", "origin", branch], timeout=900)
+
+        gates = None
+        if repo_mode == "main":
+            preflight = self._fresh_preflight()
+            if preflight is None:
+                raise self._refuse(
+                    "push", args,
+                    "no passing pre-push preflight for the current HEAD.",
+                    "Run preflight() first and read its findings. That is deliberate: a gate "
+                    "that runs inside the push reports after the push has already happened, "
+                    "which is no window at all. A preflight is bound to the HEAD it ran "
+                    "against, so commit first, then preflight, then push.",
+                    reason=reason, target=target,
+                )
+            gates = preflight.get("gates")
+        # The nested repo has no gate pipeline of its own, so there is no verdict to
+        # demand — requiring one would make its push permanently unreachable rather
+        # than safe. Reason and audit still apply: those are accountability, not gate.
+
+        result = target.run(["push", "origin", branch], timeout=900)
         decision = "allowed" if result.ok else "failed"
         return self._receipt(
-            "push", {"branch": branch}, decision,
-            gates=preflight.get("gates"), reason=reason, detail=result.output,
-            extra={"output": result.output, "ok": result.ok},
+            "push", args, decision, gates=gates, reason=reason, detail=result.output,
+            extra={"output": result.output, "ok": result.ok}, target=target,
         )
+
+    # -- branch movement: refused while the tree is dirty ----------------------
+
+    def _require_clean(self, op: str, args: Any, what: str, *,
+                       reason: Optional[str] = None) -> None:
+        """Refuse a branch-moving operation while uncommitted work is present.
+
+        ⚠ NOTE A DELIBERATE DIVERGENCE FROM THE SPEC. §3 says these refuse "unless
+        explicitly acknowledged". No acknowledgement parameter was built, because
+        an acknowledgement flag is shaped exactly like the `force` / `allow_dirty`
+        parameters §6 requires to stay ABSENT — and absence is the property that
+        makes the whole design hold. The escape is not a flag, it is an action:
+        commit the work, or take a worktree. Both leave the uncommitted work
+        somewhere a person can still find it, which an acknowledged switch does
+        not.
+
+        Git already refuses the cases that would *overwrite* a file. What this
+        catches is the quieter one: carrying uncommitted work across a branch
+        change, so it ends up committed on a branch it was never written for.
+        """
+        if not self.git.is_dirty():
+            return
+        tree = self.git.tree_state()
+        raise self._refuse(
+            op, args,
+            f"{what} while the tree is dirty ({tree['staged']} staged, "
+            f"{tree['unstaged']} unstaged, {tree['untracked']} untracked). Uncommitted "
+            f"work would either block the operation or be carried onto another branch "
+            f"and later committed where it was never written.",
+            "Either commit the work first (stage(paths=[…]) then commit(...)), or do this "
+            "on a private checkout: worktree(action='add', ref=<ref>). There is no "
+            "acknowledgement flag — the escape is an action that keeps your work "
+            "findable, not a parameter that waves it through.",
+            reason=reason,
+        )
+
+    def switch(self, branch: str, *, create: bool = False,
+               reason: Optional[str] = None) -> dict:
+        """Move HEAD to another branch. Refused while the tree is dirty."""
+        if not branch or branch.startswith("-"):
+            raise UsageError(f"{branch!r} is not a branch name")
+        args = {"branch": branch, "create": create}
+        self._require_clean("switch", args, f"switching to {branch!r}", reason=reason)
+        argv = ["switch", "-c", branch] if create else ["switch", branch]
+        result = self.git.run(argv, timeout=300)
+        return self._receipt("switch", args, "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok})
+
+    def merge(self, branch: str, *, reason: str) -> dict:
+        """Merge another branch into HEAD. Refused while the tree is dirty.
+
+        No `--no-verify`, no `--squash`, no strategy overrides: a merge that needs
+        those is a decision, not a mechanical step.
+        """
+        if not branch or branch.startswith("-"):
+            raise UsageError(f"{branch!r} is not a branch name")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("merge requires a non-empty reason")
+        args = {"branch": branch}
+        self._require_clean("merge", args, f"merging {branch!r}", reason=reason)
+        result = self.git.run(["merge", "--no-ff", branch], timeout=600)
+        return self._receipt("merge", args, "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok})
+
+    def rebase(self, onto: str, *, reason: str) -> dict:
+        """Rebase HEAD onto another ref. Refused while dirty, AND refused when it
+        would rewrite commits that are already on the remote.
+
+        ⚠ The second guard is the one that matters. Rebasing published commits
+        rewrites history other checkouts already have; the recovery is manual and
+        the damage is invisible until someone else pulls. gitRobot cannot make
+        that safe, so it declines to be the thing that made it easy.
+        """
+        if not onto or onto.startswith("-"):
+            raise UsageError(f"{onto!r} is not a ref")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("rebase requires a non-empty reason")
+        args = {"onto": onto}
+        self._require_clean("rebase", args, f"rebasing onto {onto!r}", reason=reason)
+
+        published = self._published_commits_rewritten_by(onto)
+        if published:
+            raise self._refuse(
+                "rebase", args,
+                f"this would rewrite {published} commit(s) that are already on the remote. "
+                f"Rewriting published history breaks every checkout that already has it, "
+                f"and the damage only surfaces when someone else pulls.",
+                "Merge instead: merge(branch=…, reason=…). If the history really must be "
+                "rewritten, that is a deliberate human operation, not an agent one.",
+                reason=reason,
+            )
+        result = self.git.run(["rebase", onto], timeout=900)
+        return self._receipt("rebase", args, "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok})
+
+    def _published_commits_rewritten_by(self, onto: str) -> int:
+        """How many commits a rebase onto ``onto`` would rewrite that are ALREADY upstream.
+
+        The set a rebase rewrites is ``onto..HEAD``. Of those, the ones the remote
+        has not seen are ``onto..HEAD --not @{upstream}``. The difference is what
+        would be rewritten out from under anyone who already pulled.
+
+        Returns 0 when there is no upstream to compare against: nothing has been
+        published, so nothing can be republished. Counting conservatively the other
+        way would refuse every rebase on a fresh branch.
+        """
+        def _count(argv: list[str]) -> Optional[int]:
+            res = self.git.run(argv)
+            token = res.stdout.strip()
+            return int(token) if res.ok and token.isdigit() else None
+
+        total = _count(["rev-list", "--count", f"{onto}..HEAD"])
+        unpublished = _count(["rev-list", "--count", f"{onto}..HEAD", "--not", "@{upstream}"])
+        if total is None or unpublished is None:
+            return 0
+        return max(0, total - unpublished)
+
+    # -- remote state ----------------------------------------------------------
+
+    def fetch(self, *, prune: bool = False, reason: Optional[str] = None,
+              repo_mode: str = "main") -> dict:
+        """Update remote-tracking refs. Touches no working file and no local branch.
+
+        Mediated rather than a Tier 3 read only because it goes to the network and
+        writes refs; it cannot destroy anything. It exists because an agent that
+        cannot see that the remote moved will push into a surprise.
+        """
+        target = self._target(repo_mode)
+        argv = ["fetch", "--prune", "origin"] if prune else ["fetch", "origin"]
+        result = target.run(argv, timeout=300)
+        return self._receipt("fetch", {"prune": prune, "repo": repo_mode},
+                             "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok}, target=target)
+
+    # -- deletion: mediated and audited ---------------------------------------
+
+    def branch_delete(self, name: str, *, reason: str) -> dict:
+        """Delete a branch — SAFE delete only (`-d`), never `-D`.
+
+        `-d` refuses a branch whose commits are not merged anywhere; `-D` discards
+        them. gitRobot does not offer the second: the commits are only recoverable
+        from the reflog, which expires, and nothing else here is willing to make a
+        silent loss one flag away.
+        """
+        if not name or name.startswith("-"):
+            raise UsageError(f"{name!r} is not a branch name")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("branch_delete requires a non-empty reason")
+        if name == self.git.branch():
+            raise self._refuse(
+                "branch_delete", {"name": name},
+                f"{name!r} is the branch currently checked out.",
+                "switch(branch=<other>) first, then delete it.", reason=reason,
+            )
+        result = self.git.run(["branch", "-d", name])
+        if not result.ok and "not fully merged" in result.output:
+            raise self._refuse(
+                "branch_delete", {"name": name},
+                f"{name!r} has commits that are not merged anywhere, so deleting it "
+                f"would strand them.",
+                "If the work matters, merge it or tag it first (tag_create) — a tag keeps "
+                "the commits reachable. gitRobot has no force-delete: recovering from one "
+                "depends on the reflog, which expires.",
+                reason=reason,
+            )
+        return self._receipt("branch_delete", {"name": name},
+                             "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok})
+
+    def tag_create(self, name: str, *, reason: str,
+                   message_file: Optional[str] = None) -> dict:
+        """Create an annotated tag. There is no tag deletion here.
+
+        A tag that has been pushed is a public marker other things reference — in
+        this project, releases mint permanent DOIs. Deleting one is not an agent
+        decision, so the verb simply does not exist; a wrong tag is superseded by
+        a corrected one.
+        """
+        if not name or name.startswith("-"):
+            raise UsageError(f"{name!r} is not a tag name")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("tag_create requires a non-empty reason")
+        if message_file:
+            path = Path(message_file)
+            if not path.is_absolute():
+                path = self.repo / path
+            if not path.exists():
+                raise UsageError(f"message file not found: {path}")
+            argv = ["tag", "-a", name, "--file", str(path)]
+        else:
+            argv = ["tag", "-a", name, "-m", reason]
+        result = self.git.run(argv)
+        return self._receipt("tag_create", {"name": name},
+                             "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok})
+
+    def remove_files(self, paths: Sequence[str], *, reason: str,
+                     cached: bool = False, repo_mode: str = "main") -> dict:
+        """`git rm` on NAMED paths — same discipline as `stage`, no bulk form.
+
+        ``cached=True`` untracks the file but leaves it on disk. Without it the
+        file is deleted, so a path that has uncommitted modifications is refused:
+        git would need `-f` to discard them, and `-f` is not available here.
+        """
+        paths = [str(p) for p in (paths or [])]
+        if not paths:
+            raise UsageError("remove_files requires at least one path")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("remove_files requires a non-empty reason")
+        bulk = [p for p in paths if p in BULK_ADD_TOKENS]
+        if bulk:
+            raise self._refuse(
+                "remove_files", {"paths": paths},
+                f"{bulk[0]!r} would delete everything matching it from the tree.",
+                "Name the files: remove_files(paths=['a.lean'], reason='…'). "
+                "read(op='status') shows what is there.", reason=reason,
+            )
+        escaped = [p for p in paths if p.startswith("-")]
+        if escaped:
+            raise UsageError(f"path {escaped[0]!r} looks like a flag; gitRobot passes "
+                             f"paths only, never options, to git rm")
+        target = self._target(repo_mode)
+        argv = ["rm", "--cached", "--"] if cached else ["rm", "--"]
+        result = target.run([*argv, *paths])
+        if not result.ok and "local modifications" in result.output:
+            raise self._refuse(
+                "remove_files", {"paths": paths},
+                "one of those files has uncommitted modifications, so deleting it "
+                "would discard work that exists nowhere else.",
+                "Commit or discard the modification deliberately first, or pass "
+                "cached=True to untrack the file while leaving it on disk. gitRobot has "
+                "no force flag for this.", reason=reason,
+            )
+        return self._receipt("remove_files",
+                             {"paths": paths, "cached": cached, "repo": repo_mode},
+                             "allowed" if result.ok else "failed",
+                             reason=reason, detail=result.output,
+                             extra={"output": result.output, "ok": result.ok}, target=target)
 
     # -- the sanctioned escape from Tier 1 -------------------------------------
 

@@ -157,14 +157,93 @@ async def preflight_status() -> dict:
 
 
 @mcp.tool()
-async def push(branch: str, reason: str) -> dict:
-    """Push a branch. Requires a passing preflight() for the CURRENT HEAD, and a reason.
+async def push(branch: str, reason: str, repo_mode: str = "main") -> dict:
+    """Push a branch. On the main repo: requires a passing preflight() for the CURRENT HEAD.
 
-    No force, no lease, no upstream override, no --no-verify: no parameter here reaches any
-    of them, so the installed pre-push hook runs as the backstop on every push. private/*
-    branches are refused outright. The reason is recorded in the audit log, which is the only
-    durable record of why a publication happened."""
-    return await _guard(_robot().push, branch, reason=reason)
+    repo_mode='.claude-local' pushes that nested repository to its OWN remote instead. It is a
+    genuinely separate repo with its own history and no gate pipeline, so no preflight is
+    required there — demanding a verdict from a pipeline that does not exist would make the
+    operation permanently unreachable rather than safe. Reason and audit still apply.
+
+    No force, no lease, no upstream override, no --no-verify: no parameter here reaches any of
+    them, so the installed pre-push hook runs as the backstop on every push. private/* branches
+    are refused outright. The reason is recorded in the audit log, which is the only durable
+    record of why a publication happened."""
+    return await _guard(_robot().push, branch, reason=reason, repo_mode=repo_mode)
+
+
+@mcp.tool()
+async def fetch(prune: bool = False, reason: Optional[str] = None,
+                repo_mode: str = "main") -> dict:
+    """Update remote-tracking refs from origin. Touches no working file, no local branch.
+
+    Run it before pushing so you know whether the remote moved. It cannot destroy anything
+    — it is mediated rather than a plain read only because it goes to the network and
+    writes refs, and those get an audit row."""
+    return await _guard(_robot().fetch, prune=prune, reason=reason, repo_mode=repo_mode)
+
+
+@mcp.tool()
+async def switch(branch: str, create: bool = False, reason: Optional[str] = None) -> dict:
+    """Move HEAD to another branch (create=True makes it). REFUSED while the tree is dirty.
+
+    Git already blocks a switch that would overwrite a file. What this catches is the
+    quieter case: carrying uncommitted work across a branch change so it later gets
+    committed on a branch it was never written for. There is no acknowledgement flag —
+    commit the work, or take a worktree. Both leave it somewhere a person can find it."""
+    return await _guard(_robot().switch, branch, create=create, reason=reason)
+
+
+@mcp.tool()
+async def merge(branch: str, reason: str) -> dict:
+    """Merge a branch into HEAD (--no-ff). REFUSED while the tree is dirty; reason required.
+
+    No squash, no strategy overrides, no --no-verify: a merge needing those is a decision,
+    not a mechanical step."""
+    return await _guard(_robot().merge, branch, reason=reason)
+
+
+@mcp.tool()
+async def rebase(onto: str, reason: str) -> dict:
+    """Rebase HEAD onto a ref. REFUSED while dirty, and refused if it would rewrite commits
+    that are ALREADY on the remote.
+
+    That second guard is the important one: rewriting published history breaks every
+    checkout that already has it, and the damage only surfaces when someone else pulls.
+    gitRobot cannot make that safe, so it declines to be what made it easy — use merge."""
+    return await _guard(_robot().rebase, onto, reason=reason)
+
+
+@mcp.tool()
+async def branch_delete(name: str, reason: str) -> dict:
+    """Delete a branch — SAFE delete only. Reason required.
+
+    A branch whose commits are not merged anywhere is REFUSED rather than force-deleted:
+    those commits would survive only in the reflog, which expires. Merge or tag them first.
+    There is no force-delete here and no parameter that reaches one."""
+    return await _guard(_robot().branch_delete, name, reason=reason)
+
+
+@mcp.tool()
+async def tag_create(name: str, reason: str, message_file: Optional[str] = None) -> dict:
+    """Create an annotated tag. There is deliberately NO tag deletion.
+
+    A pushed tag is a public marker other things reference — here, releases mint permanent
+    DOIs. Removing one is not an agent decision, so the verb does not exist; supersede a
+    wrong tag with a corrected one."""
+    return await _guard(_robot().tag_create, name, reason=reason, message_file=message_file)
+
+
+@mcp.tool()
+async def remove_files(paths: list[str], reason: str, cached: bool = False,
+                       repo_mode: str = "main") -> dict:
+    """`git rm` on NAMED paths. No bulk form, reason required.
+
+    cached=True untracks the file but leaves it on disk. Without it the file is deleted, so
+    a path carrying uncommitted modifications is REFUSED — git would need -f to discard
+    them, and -f is not available here."""
+    return await _guard(_robot().remove_files, paths, reason=reason, cached=cached,
+                        repo_mode=repo_mode)
 
 
 @mcp.tool()

@@ -134,6 +134,26 @@ def tier1_refusal(sub: str, args: Sequence[str]) -> Optional[tuple[str, str]]:
 
 # -- Tier 3 classification -----------------------------------------------------
 
+# Operations that ARE available, just not through `read`. Without this a caller
+# who asks for a mutation gets the generic "not an allow-listed read" and has to
+# guess which tool does it — and guessing is how people end up looking for a way
+# around the wall instead of the door beside it.
+MEDIATED_ELSEWHERE: dict[str, str] = {
+    "add": "stage(paths=[…])",
+    "commit": "commit(message_file=…)",
+    "push": "preflight() then push(branch=…, reason=…)",
+    "fetch": "fetch()",
+    "pull": "fetch() then merge(branch=…, reason=…) — pull is fetch+merge in one "
+            "step, and the merge half is the half that needs a clean tree and an audit row",
+    "switch": "switch(branch=…)",
+    "merge": "merge(branch=…, reason=…)",
+    "rebase": "rebase(onto=…, reason=…)",
+    "rm": "remove_files(paths=[…], reason=…)",
+    "mv": "remove_files(...) plus stage(...) — a rename is a delete and an add, and "
+          "gitRobot would rather you see both",
+}
+
+
 def forbidden_token(args: Sequence[str]) -> Optional[str]:
     """The first redirect/gate-disabling flag present, if any."""
     for arg in args:

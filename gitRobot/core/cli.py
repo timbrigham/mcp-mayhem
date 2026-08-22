@@ -53,13 +53,14 @@ def cmd_commit(args) -> int:
 
 
 def cmd_preflight(args) -> int:
-    result = _robot(args).preflight(reason=args.reason)
+    result = _robot(args).preflight(reason=args.reason, wait=args.wait)
     _emit(result)
-    return 0 if result["passed"] else 1
+    return 0 if result.get("passed", True) else 1
 
 
 def cmd_push(args) -> int:
-    result = _robot(args).push(args.branch, reason=args.reason)
+    result = _robot(args).push(args.branch, reason=args.reason,
+                               repo_mode=args.repo_mode)
     _emit(result)
     return 0 if result.get("ok", True) else 1
 
@@ -77,6 +78,37 @@ def cmd_explain(args) -> int:
 def cmd_history(args) -> int:
     _emit(_robot(args).history(limit=args.limit))
     return 0
+
+
+def cmd_fetch(args) -> int:
+    _emit(_robot(args).fetch(prune=args.prune, reason=args.reason,
+                             repo_mode=args.repo_mode)); return 0
+
+
+def cmd_switch(args) -> int:
+    _emit(_robot(args).switch(args.branch, create=args.create, reason=args.reason)); return 0
+
+
+def cmd_merge(args) -> int:
+    _emit(_robot(args).merge(args.branch, reason=args.reason)); return 0
+
+
+def cmd_rebase(args) -> int:
+    _emit(_robot(args).rebase(args.onto, reason=args.reason)); return 0
+
+
+def cmd_branch_delete(args) -> int:
+    _emit(_robot(args).branch_delete(args.name, reason=args.reason)); return 0
+
+
+def cmd_tag_create(args) -> int:
+    _emit(_robot(args).tag_create(args.name, reason=args.reason,
+                                  message_file=args.message_file)); return 0
+
+
+def cmd_remove_files(args) -> int:
+    _emit(_robot(args).remove_files(args.paths, reason=args.reason, cached=args.cached,
+                                    repo_mode=args.repo_mode)); return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +150,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser("preflight", help="run the pre-push pipeline WITHOUT pushing")
     f.add_argument("--reason", default=None)
+    f.add_argument("--no-wait", dest="wait", action="store_false", default=True,
+                   help="return immediately (the MCP default). The CLI blocks by default: "
+                        "it has neither a call window nor a health poll to outlive")
     f.set_defaults(func=cmd_preflight)
 
     u = sub.add_parser("push", help="push a branch (requires a passing preflight for HEAD)")
@@ -126,10 +161,48 @@ def build_parser() -> argparse.ArgumentParser:
     u.set_defaults(func=cmd_push)
 
     w = sub.add_parser("worktree", help="private throwaway checkouts")
-    w.add_argument("action", choices=["add", "list", "remove"])
+    w.add_argument("action", choices=["add", "list", "remove", "prune"])
     w.add_argument("--ref", default=None)
     w.add_argument("--name", default=None)
     w.set_defaults(func=cmd_worktree)
+
+    ft = sub.add_parser("fetch", help="update remote-tracking refs (destroys nothing)")
+    ft.add_argument("--prune", action="store_true")
+    ft.add_argument("--reason", default=None)
+    ft.set_defaults(func=cmd_fetch)
+
+    sw = sub.add_parser("switch", help="move HEAD to another branch (refused if dirty)")
+    sw.add_argument("branch")
+    sw.add_argument("--create", action="store_true")
+    sw.add_argument("--reason", default=None)
+    sw.set_defaults(func=cmd_switch)
+
+    mg = sub.add_parser("merge", help="merge a branch into HEAD (refused if dirty)")
+    mg.add_argument("branch")
+    mg.add_argument("--reason", required=True)
+    mg.set_defaults(func=cmd_merge)
+
+    rb = sub.add_parser("rebase", help="rebase HEAD (refused if dirty or already pushed)")
+    rb.add_argument("onto")
+    rb.add_argument("--reason", required=True)
+    rb.set_defaults(func=cmd_rebase)
+
+    bd = sub.add_parser("branch-delete", help="safe branch delete (never -D)")
+    bd.add_argument("name")
+    bd.add_argument("--reason", required=True)
+    bd.set_defaults(func=cmd_branch_delete)
+
+    tc = sub.add_parser("tag-create", help="create an annotated tag (no deletion verb)")
+    tc.add_argument("name")
+    tc.add_argument("--reason", required=True)
+    tc.add_argument("--message-file", dest="message_file", default=None)
+    tc.set_defaults(func=cmd_tag_create)
+
+    rf = sub.add_parser("remove-files", help="git rm on NAMED paths")
+    rf.add_argument("paths", nargs="+")
+    rf.add_argument("--reason", required=True)
+    rf.add_argument("--cached", action="store_true")
+    rf.set_defaults(func=cmd_remove_files)
 
     e = sub.add_parser("explain", help="why an operation was refused")
     e.add_argument("refusal_id")
