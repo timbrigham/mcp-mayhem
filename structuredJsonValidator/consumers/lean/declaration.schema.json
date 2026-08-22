@@ -64,6 +64,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["qualified", "short", "kind", "file", "line", "prefix"],
+          "$comment": "The anchored prior identity. For a declaration born AFTER the baseline there is no anchored name, so add_new records its BIRTH identity here flagged synthetic:true (interop #16a) — that is what makes rename/move/merge/split/drop reachable on it at all. The flag keeps 'born at HEAD' distinguishable from 'migrated from a real prior name', and is what `remove` (hard delete) keys on. Absent/false = a real anchored identity.",
           "properties": {
             "qualified": { "type": ["string", "null"] },
             "short": { "type": ["string", "null"] },
@@ -72,7 +73,8 @@
             },
             "file": { "type": ["string", "null"] },
             "line": { "type": ["integer", "null"] },
-            "prefix": { "type": ["string", "null"] }
+            "prefix": { "type": ["string", "null"] },
+            "synthetic": { "type": "boolean" }
           }
         },
         "new": {

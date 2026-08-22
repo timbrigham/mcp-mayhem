@@ -159,6 +159,22 @@ def cmd_apply(args) -> int:
     return 0
 
 
+def cmd_check_head(args) -> int:
+    """HEAD correspondence: does the registry still describe the source tree?
+    (interop #16b/#17). Exits 1 on drift so it can gate a pre-push hook."""
+    from consumers.store import head_correspondence
+
+    store = _load_store(args)
+    try:
+        report = head_correspondence(store.load(), root=args.root, tier=args.tier,
+                                     limit=args.limit)
+    except OperationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    _emit(report)
+    return 0 if report["ok"] else 1
+
+
 # -- parser -------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,6 +209,14 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("export", help="publish the full validated registry to a path")
     e.add_argument("--to", required=True, help="destination path for the deterministic dump")
     e.set_defaults(func=cmd_export)
+
+    c = sub.add_parser("check-head",
+                       help="check the registry against the source tree (drift -> exit 1)")
+    c.add_argument("--root", default=".", help="Lean source root that new.file is relative to")
+    c.add_argument("--tier", default="paths", choices=["paths", "names"],
+                   help="paths: new.file resolves on disk (cheap). names: the decl is declared there too")
+    c.add_argument("--limit", type=int, default=25, help="max offenders to list")
+    c.set_defaults(func=cmd_check_head)
 
     a = sub.add_parser("apply", help="run a write operation (verb)")
     a.add_argument("op", help="operation name, e.g. rename, drop, annotate")

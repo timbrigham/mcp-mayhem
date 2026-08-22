@@ -319,6 +319,7 @@ class Store:
         data_path: str | os.PathLike,
         collections: dict[str, CollectionSpec],
         cross_validators: Optional[list[CrossValidator]] = None,
+        store_operations: Optional[dict[str, Operation]] = None,
         audit_path: Optional[str | os.PathLike] = None,
         vocab_dir: Optional[str | os.PathLike] = None,
         actor: str = "cli",
@@ -326,6 +327,12 @@ class Store:
         self.data_path = Path(data_path)
         self.collections = dict(collections)
         self.cross_validators = list(cross_validators or [])
+        # Store-level (cross-collection) operations receive and return the WHOLE
+        # store document. A single-collection op cannot touch two collections
+        # atomically; a genuinely cross-collection write (e.g. migrate_batch,
+        # which transitions declaration identities AND replaces the deps edges in
+        # one transaction — interop #14) is registered here instead.
+        self.store_operations = dict(store_operations or {})
         self.audit_path = Path(audit_path) if audit_path else audit.default_audit_path(data_path)
         # Per-collection default vocab config lives next to the store file, named
         # <collection>_vocab.json (declarations keeps the legacy tag_vocab.json).
@@ -469,6 +476,61 @@ class Store:
             resulting_sha256=sha,
         )
         result = {"op": op_name, "collection": collection,
+                  "touched_count": len(touched), "resulting_sha256": sha}
+        if len(touched) <= _MAX_TOUCHED_ECHO:
+            result["entries_touched"] = touched
+        if extra:
+            result.update(extra)
+        return result
+
+    def apply_store(self, op_name: str, params: dict[str, Any], *,
+                    actor: Optional[str] = None) -> dict:
+        """Run a STORE-LEVEL (cross-collection) op with whole-store guarantees.
+
+        Unlike :meth:`apply`, the op receives the ENTIRE store document (all
+        collections) and returns the whole document, so it can mutate more than
+        one collection in a single atomic transaction (interop #14). Everything
+        else is identical: the integrity gate runs first, the op works on an
+        isolated deep copy, the whole store is validated as the postcondition
+        (each collection's rules plus the cross-collection invariants), and only
+        a conforming result is written and audited.
+        """
+        if op_name not in self.store_operations:
+            raise OperationError(
+                f"Unknown store operation {op_name!r}. Known: "
+                f"{', '.join(sorted(self.store_operations)) or '(none)'}"
+            )
+        op = self.store_operations[op_name]
+
+        if self._audit_exists():
+            self.verify_integrity()
+        current = self.load() if self.exists() else self.empty_store()
+
+        working = copy.deepcopy(current)
+        try:
+            op_result = op(working, **params)
+        except TypeError as exc:
+            raise OperationError(f"Bad parameters for {op_name!r}: {exc}") from exc
+        if len(op_result) == 3:
+            result_doc, touched, extra = op_result
+        else:
+            result_doc, touched = op_result
+            extra = None
+
+        violations = self.all_violations(result_doc)
+        if violations:
+            raise ValidationError(violations)
+
+        sha = store.atomic_write_json(self.data_path, result_doc)
+        audit.append_record(
+            self.audit_path,
+            actor=actor or self.actor,
+            op=f"store.{op_name}",
+            params={**params, "_scope": "store"},
+            entries_touched=touched,
+            resulting_sha256=sha,
+        )
+        result = {"op": op_name, "scope": "store",
                   "touched_count": len(touched), "resulting_sha256": sha}
         if len(touched) <= _MAX_TOUCHED_ECHO:
             result["entries_touched"] = touched

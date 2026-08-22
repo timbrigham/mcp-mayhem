@@ -12,6 +12,7 @@ import json
 import uuid
 from typing import Optional, Union
 
+from consumers.lean import rules
 from core import query
 from core.errors import OperationError, ValidationError
 
@@ -91,6 +92,53 @@ def _guard_not_terminal(entry: dict, *, force: bool) -> None:
         raise OperationError(
             f"entry {entry.get('id')!r} is {disp}; reopen it first (or pass force=true)"
         )
+
+
+
+def _synthetic_old(new_group: dict, *, kind=None, line=None) -> dict:
+    """Record a born-at-HEAD declaration's BIRTH identity as its ``old`` block.
+
+    Closes interop #15a/#16a. Every disposition verb (rename/move/merge/split/
+    drop/mark_present) needs a prior identity to transition FROM; a decl created
+    after the baseline had none, so ALL of them refused it — ``add_new`` had no
+    inverse and the entry was permanently unretirable. A decl born at HEAD *does*
+    have a prior identity: the name it was born with. Recording it is honest, and
+    it makes every verb work uniformly with no per-op exceptions.
+
+    ``synthetic: true`` keeps the distinction "born at HEAD" vs "migrated from a
+    real prior name" analytically available (and is what ``remove`` keys on).
+    """
+    q = new_group.get("qualified")
+    return {
+        "qualified": q,
+        "short": new_group.get("short") or (short_of(q) if q else None),
+        "kind": kind,
+        "file": new_group.get("file"),
+        "line": line,
+        "prefix": new_group.get("namespace") if new_group.get("namespace") is not None
+        else (namespace_of(q) if q else None),
+        "synthetic": True,
+    }
+
+
+def _ensure_old_identity(entry: dict) -> bool:
+    """Lazily backfill a synthetic ``old`` on a LEGACY born-new entry.
+
+    Entries created by ``add_new`` before #16a have a fully-null ``old`` and are
+    therefore refused by every disposition verb. Rather than requiring a
+    migration pass, the verbs call this first: an entry with no ``old.qualified``
+    but a populated ``new.qualified`` gets its birth identity recorded (flagged
+    synthetic, exactly as a fresh ``add_new`` now does) and then transitions
+    normally. Returns True if a backfill happened.
+    """
+    old = entry.setdefault("old", _empty_old())
+    if old.get("qualified") is not None:
+        return False
+    new_group = entry.get("new") or {}
+    if not new_group.get("qualified"):
+        return False  # nothing to synthesize from; the rules will report it
+    entry["old"] = _synthetic_old(new_group)
+    return True
 
 
 # -- bootstrapping ------------------------------------------------------------
@@ -206,31 +254,11 @@ def import_baseline(document, *, scanner_output: Union[str, list[dict]], anchor:
 # fully-qualified name; file and line are LOCATION, not identity. The surrogate
 # id is the stable handle a match resolves TO; ``qualified`` is what we match ON.
 
-# disposition -> (group holding the effective-current name, is the decl expected
-# to still be PRESENT in a fresh scan?). None => not matchable.
-_RECONCILE_CLASS: dict[str, tuple[str, bool]] = {
-    "pending": ("old", True),
-    "present": ("old", True),
-    "moved": ("old", True),   # a move changed the file, not the name
-    "renamed": ("new", True),  # the name changed to new.qualified
-    "new": ("new", True),      # add_new / merge-target / split-target
-    "dropped": ("old", False),   # source name expected GONE
-    "merged": ("old", False),    # merged-source name expected GONE
-    "split": ("old", False),     # split-source name expected GONE
-}
-
-
-def _effective_qualified(entry: dict) -> tuple[Optional[str], Optional[str], Optional[bool]]:
-    """Return ``(group, qualified, expected_present)`` for the match rule.
-
-    ``group`` is ``"old"`` or ``"new"`` — which side holds the effective-current
-    name (and thus the location fields reconcile updates on a match).
-    """
-    cls = _RECONCILE_CLASS.get(entry.get("disposition"))
-    if cls is None:
-        return None, None, None
-    group, present = cls
-    return group, entry.get(group, {}).get("qualified"), present
+# The match rule itself lives in rules.py (validate needs it for the
+# effective-name uniqueness gate); re-exported here under the names the
+# operations and the store cross-validators already use.
+_RECONCILE_CLASS = rules.RECONCILE_CLASS
+_effective_qualified = rules.effective_qualified
 
 
 def reconcile(document, *, scanner_output: Union[str, list[dict]],
@@ -355,6 +383,7 @@ def mark_present(document, *, id: str, force: bool = False) -> tuple[dict, list[
     doc = _require_doc(document)
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
+    _ensure_old_identity(entry)
     old = entry["old"]
     q = old.get("qualified")
     entry["new"] = {
@@ -373,6 +402,7 @@ def move(document, *, id: str, new_file: str, new_qualified: Optional[str] = Non
     doc = _require_doc(document)
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
+    _ensure_old_identity(entry)
     q = new_qualified or entry["old"].get("qualified")
     entry["new"] = {
         "qualified": q,
@@ -391,6 +421,7 @@ def rename(document, *, id: str, new_qualified: str, new_file: str, namespace: s
     doc = _require_doc(document)
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
+    _ensure_old_identity(entry)
     entry["new"] = {
         "qualified": new_qualified,
         "short": short or short_of(new_qualified),
@@ -412,6 +443,7 @@ def merge(document, *, ids: list[str], target: dict, reason: str,
     sources = [_find(doc, eid) for eid in ids]
     for entry in sources:
         _guard_not_terminal(entry, force=force)
+        _ensure_old_identity(entry)
     tq = target.get("qualified")
     new = {
         "qualified": tq,
@@ -436,6 +468,7 @@ def split(document, *, id: str, targets: list[dict], reason: str,
     pq = primary.get("qualified")
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
+    _ensure_old_identity(entry)
     entry["new"] = {
         "qualified": pq,
         "short": primary.get("short") or (short_of(pq) if pq else None),
@@ -452,6 +485,7 @@ def drop(document, *, id: str, reason: str, force: bool = False) -> tuple[dict, 
     doc = _require_doc(document)
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
+    _ensure_old_identity(entry)
     entry["new"] = _empty_new()
     entry["disposition"] = "dropped"
     entry["reason"] = reason
@@ -507,7 +541,12 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
     eid = id or _mint_id()  # sjv mints the surrogate (interop issue #5, A)
     entry = {
         "id": eid,
-        "old": _empty_old(),
+        # The BIRTH identity is recorded as a synthetic ``old`` (interop #16a) so
+        # this entry is not born immutable: rename/move/merge/split/drop all need
+        # a prior identity to transition FROM, and without one ``add_new`` had no
+        # inverse at all. ``remove`` is the hard-delete path for entries that were
+        # never real at HEAD.
+        "old": _synthetic_old(new_group),
         "new": new_group,
         "disposition": "new",
         "reason": reason,
@@ -518,6 +557,60 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
     doc.setdefault("entries", []).append(entry)
     _sync_counts(doc)
     return doc, [eid]
+
+
+def remove(document, *, ids, reason: str) -> tuple[dict, list[str], dict]:
+    """HARD-DELETE born-at-HEAD entries (interop #15a/#16a/#17 — the missing inverse).
+
+    ``drop`` tombstones: it keeps the entry and records that the declaration is
+    gone, which is right when there IS an anchored lineage worth preserving.
+    ``remove`` erases, and is therefore restricted to entries that were never
+    real at the anchor — an ``old`` that is synthetic (born at HEAD) or, for
+    legacy entries, absent. An entry with a genuine anchored ``old`` is REFUSED:
+    that lineage is the thing the registry exists to conserve, so retire it with
+    ``drop``/``merge`` instead.
+
+    This is the operation whose absence stranded the reverted ``HostVerdict.lean``
+    declarations and forced a knowing export over known drift (#17): a build that
+    is added and then reverted leaves entries that "nothing about them was ever
+    real at HEAD", and those should leave no tombstone.
+
+    ``ids`` may be a single id or a list — a list is the practical form, since a
+    reverted file strands its whole declaration set at once, and one atomic call
+    also lets a store carrying SEVERAL duplicate live names be repaired in a
+    single write. The reason is recorded in the audit log (the entries are gone,
+    so there is nowhere else to record it). Removing a declaration that a
+    ``proved`` claim's last live witness depends on, or that a ``deps`` edge
+    references, fails the whole-store postcondition and rolls back.
+    """
+    doc = _require_doc(document)
+    if isinstance(ids, str):
+        ids = [ids]
+    if not isinstance(ids, list) or not ids:
+        raise OperationError("remove requires an id or a non-empty list of ids")
+    if not (isinstance(reason, str) and reason.strip()):
+        raise OperationError("remove requires a non-empty reason (recorded in the audit log)")
+
+    seen: set = set()
+    targets: list[dict] = []
+    for eid in ids:
+        if eid in seen:
+            raise OperationError(f"duplicate id {eid!r} in remove (ambiguous)")
+        seen.add(eid)
+        entry = _find(doc, eid)  # OperationError if missing — whole batch aborts
+        if not rules.is_born_at_head(entry):
+            raise OperationError(
+                f"refusing to remove {eid!r}: it has an anchored old identity "
+                f"({entry['old'].get('qualified')!r}). remove only erases entries that "
+                f"were never real at the anchor (born-at-HEAD); use drop/merge to "
+                f"retire an anchored declaration and keep its lineage."
+            )
+        targets.append(entry)
+
+    remaining = [e for e in doc.get("entries", []) if e.get("id") not in seen]
+    doc["entries"] = remaining
+    _sync_counts(doc)
+    return doc, list(seen), {"removed": len(targets), "remaining": len(remaining)}
 
 
 # -- curation -----------------------------------------------------------------
@@ -815,6 +908,7 @@ OPERATIONS = {
     "drop": drop,
     "reopen": reopen,
     "add_new": add_new,
+    "remove": remove,
     "annotate": annotate,
     "annotate_many": annotate_many,
     "annotate_by_filter": annotate_by_filter,

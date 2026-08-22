@@ -31,7 +31,7 @@ from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from consumers.store import build_store
+from consumers.store import build_store, head_correspondence
 from core.errors import IntegrityError, OperationError, ValidationError
 from core.query import _MISSING, get_path
 
@@ -76,6 +76,18 @@ def _write(collection: str, op: str, params: dict[str, Any]) -> dict:
     errors into structured results instead of transport-level exceptions."""
     try:
         return {"ok": True, **_store().apply(collection, op, params)}
+    except ValidationError as exc:
+        return _validation_result(exc)
+    except IntegrityError as exc:
+        return {"ok": False, "error_type": "integrity", "error": str(exc)}
+    except OperationError as exc:
+        return {"ok": False, "error_type": "operation", "error": str(exc)}
+
+
+def _write_store(op: str, params: dict[str, Any]) -> dict:
+    """Run a STORE-LEVEL (cross-collection) op — same error mapping as ``_write``."""
+    try:
+        return {"ok": True, **_store().apply_store(op, params)}
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:
@@ -164,6 +176,32 @@ def validate() -> dict:
 
 
 @mcp.tool()
+def check_head(root: str = ".", tier: str = "paths", limit: int = 25) -> dict:
+    """HEAD-correspondence check: does the registry still describe the SOURCE TREE?
+    (interop #16b/#17.)
+
+    `validate` proves the store is internally well-formed; it cannot prove the
+    store still matches reality, and drift has shipped green three times. This is
+    the check that fails loud instead — run it before `export_full`.
+
+    tier='paths' (cheap, the default): every live entry's `new.file` resolves on
+    disk under `root`. One stat per entry, no Lean parsing — catches a reverted
+    file's whole stranded declaration set. tier='names': additionally each live
+    entry's short name is actually declared in that file — strictly stronger,
+    catches a live FILE with a dead NAME (a theorem split), heuristic by nature
+    (it reads the source, it does not elaborate it).
+
+    Also reports duplicate live names. Read-only; terse (counts + bounded sample).
+    Returns {ok, checked, resolved, unresolvable_files, missing_files[],
+    missing_files_by_file{}, duplicate_live_names, duplicates[]}."""
+    try:
+        return {"ok": True, **head_correspondence(_store().load(), root=root,
+                                                  tier=tier, limit=limit)}
+    except OperationError as exc:
+        return {"ok": False, "error_type": "operation", "error": str(exc)}
+
+
+@mcp.tool()
 def verify_integrity() -> dict:
     """Check the file hash against the last audit hash (whole-store). {ok, hash|error}."""
     try:
@@ -217,6 +255,26 @@ def drop(id: str, reason: str, force: bool = False) -> dict:
     """Drop a declaration (new.* stays null; reason required). Re-dropping a
     terminal (dropped/merged) entry is refused unless force=True."""
     return _write("declarations", "drop", {"id": id, "reason": reason, "force": force})
+
+
+@mcp.tool()
+def remove(ids, reason: str) -> dict:
+    """HARD-DELETE born-at-HEAD declaration entries — the missing inverse of
+    `add_new` (interop #15a/#16a/#17).
+
+    `drop` tombstones (keeps the entry, records that the decl is gone), which is
+    right when there is an anchored lineage worth preserving. `remove` erases, and
+    is allowed ONLY for entries that were never real at the anchor: `old` synthetic
+    (born at HEAD) or, for legacy entries, absent. An anchored entry is refused —
+    retire it with drop/merge instead.
+
+    Use it for a reverted build (a new .lean file added then `git revert`ed strands
+    its whole decl set) and to repair duplicate live names. `ids` takes a list, so
+    a stranded set — or several duplicates — clear in ONE atomic write. Removing a
+    decl that a proved claim's last live witness depends on, or that a deps edge
+    references, fails the store postcondition and rolls back.
+    Receipt {ok, removed, remaining, resulting_sha256}."""
+    return _write("declarations", "remove", {"ids": ids, "reason": reason})
 
 
 @mcp.tool()
@@ -473,13 +531,24 @@ def import_deps(edges) -> dict:
 # -- publication + generic escape hatch ---------------------------------------
 
 @mcp.tool()
-def export_full(dest: str) -> dict:
+def export_full(dest: str, head_root: Optional[str] = None) -> dict:
     """Publish the COMPLETE validated store (all collections) as a deterministic
     artifact to `dest`, for the caller to commit with git. Refuses to export an
     invalid or drifted store. Returns {ok, dest, entries, export_sha256,
-    source_sha256}."""
+    source_sha256}.
+
+    Pass `head_root` (the Lean source root) to also run the cheap HEAD-path check
+    and include a `head_check` summary in the receipt, so an export can never
+    SILENTLY publish a dead path (interop #17). It is a warning, not a gate — the
+    export still happens; `ok` stays true and `head_check.ok` tells you whether
+    what you just published still matches the source tree."""
     try:
-        return {"ok": True, **_store().export_full(dest)}
+        st = _store()
+        result = {"ok": True, **st.export_full(dest)}
+        if head_root is not None:
+            result["head_check"] = head_correspondence(st.load(), root=head_root,
+                                                       tier="paths")
+        return result
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:
@@ -487,10 +556,55 @@ def export_full(dest: str) -> dict:
 
 
 @mcp.tool()
+def migrate_batch(source: Optional[str] = None, reconcile: Optional[list[dict]] = None,
+                  add_new: Optional[list[dict]] = None, deps=None,
+                  remap_deps: bool = False, anchor: Optional[dict] = None,
+                  reason: Optional[str] = None) -> dict:
+    """Bulk declaration IDENTITY migration (interop #14) — the one atomic op that
+    transitions declarations to their HEAD identity AND fixes the deps coupling in
+    a single transaction (so a rename is not blocked by the deps reference gate).
+
+    `source` is a path to (or inline copy of) the ZP `sjv_reconcile_import` file;
+    its `reconcile`/`add_new`/`anchor` are used as defaults (explicit params
+    override). `reconcile` = id-keyed transitions [{id, new_qualified, new_file,
+    new_namespace, new_short, disposition, reason?}] — sets new.* + disposition on
+    the existing entry, PRESERVING old/ontology/claims/verify. `add_new` = new HEAD
+    decls [{qualified, file, namespace, short}] added as fresh 'new' entries.
+
+    Deps: pass `deps` (a fresh {from,to,kind?} list or path at the NEW names) to
+    REPLACE the deps collection, OR `remap_deps=true` to rewrite the EXISTING deps
+    endpoints old→new from this batch's rename map. Atomic: any violation (missing
+    id, dangling dep, broken witness) rolls the WHOLE batch back. Terse receipt
+    {ok, reconciled, added, deps, resulting_sha256}."""
+    params: dict[str, Any] = {"remap_deps": remap_deps}
+    if source is not None:
+        params["source"] = source
+    if reconcile is not None:
+        params["reconcile"] = reconcile
+    if add_new is not None:
+        params["add_new"] = add_new
+    if deps is not None:
+        params["deps"] = deps
+    if anchor is not None:
+        params["anchor"] = anchor
+    if reason is not None:
+        params["reason"] = reason
+    return _write_store("migrate_batch", params)
+
+
+@mcp.tool()
 def apply(op: str, params: dict, collection: str = "declarations") -> dict:
     """Generic escape hatch: run any registered operation on a collection
     (default 'declarations') with a params dict."""
     return _write(collection, op, params)
+
+
+@mcp.tool()
+def apply_store(op: str, params: dict) -> dict:
+    """Generic escape hatch for a STORE-LEVEL (cross-collection) op — e.g.
+    op='migrate_batch'. The op receives the whole store and is validated across
+    all collections as one atomic transaction."""
+    return _write_store(op, params)
 
 
 def main() -> None:
