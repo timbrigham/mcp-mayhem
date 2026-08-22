@@ -1,0 +1,10 @@
+# Per-machine Claude Code state. Currently excluded only by a global ignore on
+# one machine, which does not travel with the repo.
+.claude/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/

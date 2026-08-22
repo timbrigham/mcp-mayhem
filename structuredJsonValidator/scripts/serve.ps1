@@ -20,7 +20,7 @@ if (-not $env:SJV_ACTOR) { $env:SJV_ACTOR = 'mcp' }
 
 # Prefer the real interpreter path (the WindowsApps alias can be flaky in a
 # non-interactive/scheduled context); fall back to whatever `python` resolves to.
-$py = 'C:\Users\timbr\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe'
+$py = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe'
 if (-not (Test-Path $py)) { $py = 'python' }
 
 Set-Location $root
