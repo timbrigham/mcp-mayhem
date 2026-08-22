@@ -42,7 +42,7 @@ no `no_verify`, no `skip_gates`, no `allow_dirty`, no `repo`, no raw
 
 ## Registration
 
-Supervisor (`C:\Workspace\env\mcp-servers.json`) and the ZeroParadox project block
+Supervisor (`mcpSupervisor/mcp-servers.json`, created from its sample) and the ZeroParadox project block
 of `~/.claude.json` must agree on the port. Both are already set to **8010**, with
 `cmdlineMatch: gitrobot_server.server`.
 

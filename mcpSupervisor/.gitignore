@@ -1,0 +1,14 @@
+# Runtime logs. Unbounded - there is no rotation in the supervisor.
+logs/
+
+# The single-instance PID lockfile.
+*.lock
+
+# The real manifest is machine-specific: absolute interpreter paths, working
+# directories, and which servers this particular machine runs. Only the sample
+# is tracked. Copy it to mcp-servers.json and edit for your machine.
+mcp-servers.json
+!mcp-servers.sample.json
+
+# Local Claude Code permission grants - machine-specific path globs.
+.claude/
