@@ -1,0 +1,25 @@
+[project]
+name = "gitrobot"
+version = "0.1.0"
+description = "Mediated git for one repository: destructive operations refused, mutating operations gated and audited, reads passed through, every call logged."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+gitrobot = "core.cli:main"
+gitrobot-mcp = "gitrobot_server.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core", "gitrobot_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
