@@ -77,7 +77,7 @@ def _sync_counts(document: dict) -> None:
 # source became multiple targets exactly as a merged source folded into one.
 # ``renamed``/``moved``/``present`` are NOT terminal — the entry still exists as
 # one declaration and may be re-dispositioned.
-_TERMINAL = ("dropped", "merged", "split")
+_TERMINAL = ("dropped", "merged", "split", "withdrawn")
 
 
 def _guard_not_terminal(entry: dict, *, force: bool) -> None:
@@ -482,12 +482,65 @@ def split(document, *, id: str, targets: list[dict], reason: str,
 
 
 def drop(document, *, id: str, reason: str, force: bool = False) -> tuple[dict, list[str]]:
+    """Record that a declaration that EXISTED at the anchor identity is gone at HEAD.
+
+    Requires a real anchored ``old``. A declaration created after the baseline
+    never had one, so ``dropped`` would be a false statement about it — use
+    ``withdraw`` (added in error, never existed) or ``remove`` (erase entirely).
+    """
     doc = _require_doc(document)
     entry = _find(doc, id)
     _guard_not_terminal(entry, force=force)
-    _ensure_old_identity(entry)
+    if rules.is_born_at_head(entry):
+        raise OperationError(
+            f"cannot drop {id!r}: it was added after the baseline and never existed at "
+            f"the anchor, so 'dropped' (existed, now gone) would be false history. Use "
+            f"withdraw(id, reason) to record that it was added in error — or remove(ids, "
+            f"reason) to erase it entirely."
+        )
     entry["new"] = _empty_new()
     entry["disposition"] = "dropped"
+    entry["reason"] = reason
+    return doc, [id]
+
+
+def withdraw(document, *, id: str, reason: str, force: bool = False) -> tuple[dict, list[str]]:
+    """Terminal state for an entry ADDED IN ERROR — the mirror image of ``drop``.
+
+    ``dropped`` presupposes a prior identity ("this existed and is now gone"). An
+    entry created by ``add_new`` for a declaration that was then reverted has no
+    prior identity and never existed at HEAD, so it had no legal terminal state at
+    all — the gap that stranded the reverted ``HostVerdict.lean`` declarations.
+
+    The two are kept honest by the ``old`` side, checked in ``rules``: ``dropped``
+    requires a REAL anchored old, ``withdrawn`` requires that there is none. So an
+    entry with a real history can only be dropped and one without can only be
+    withdrawn, and nobody has to invent provenance to satisfy a validator.
+
+    ``new.qualified`` is KEPT (unlike ``drop``, which clears it): the record is
+    "this name was added in error", so the name is the substance of it. ``reason``
+    is required — a withdrawal with no stated cause is indistinguishable from the
+    mistake it documents. Terminal; ``reopen`` restores it.
+    """
+    doc = _require_doc(document)
+    entry = _find(doc, id)
+    _guard_not_terminal(entry, force=force)
+    if not (isinstance(reason, str) and reason.strip()):
+        raise OperationError("withdraw requires a non-empty reason")
+    if not rules.is_born_at_head(entry):
+        raise OperationError(
+            f"cannot withdraw {id!r}: it has a real anchored identity "
+            f"({(entry.get('old') or {}).get('qualified')!r}), so it DID exist at the "
+            f"anchor. 'withdrawn' means added in error / never existed — use "
+            f"drop(id, reason) to record that a real declaration is gone at HEAD."
+        )
+    _ensure_old_identity(entry)   # legacy null-old entries get their birth record
+    if not (entry.get("new") or {}).get("qualified"):
+        raise OperationError(
+            f"cannot withdraw {id!r}: it has no new.qualified to record as the name "
+            f"that was added in error"
+        )
+    entry["disposition"] = "withdrawn"
     entry["reason"] = reason
     return doc, [id]
 
@@ -519,6 +572,15 @@ def reopen(document, *, id: str, reason: str) -> tuple[dict, list[str]]:
         raise OperationError(
             f"cannot reopen {id!r}: no prior (old) declaration to revert to"
         )
+    if rules.is_born_at_head(entry):
+        # A born-at-HEAD entry reverts to 'new', not 'pending': 'pending' asserts
+        # the decl existed at the anchor awaiting disposition, which is exactly the
+        # false history 'withdrawn' exists to avoid. Its fields are already correct
+        # (birth old + the added name in new), so this is a pure state flip and a
+        # true round-trip of withdraw.
+        entry["disposition"] = "new"
+        entry["reason"] = reason
+        return doc, [id]
     entry["new"] = _empty_new()
     entry["disposition"] = "pending"
     entry["reason"] = reason
@@ -906,6 +968,7 @@ OPERATIONS = {
     "merge": merge,
     "split": split,
     "drop": drop,
+    "withdraw": withdraw,
     "reopen": reopen,
     "add_new": add_new,
     "remove": remove,

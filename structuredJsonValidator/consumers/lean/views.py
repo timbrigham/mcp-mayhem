@@ -6,17 +6,32 @@ from __future__ import annotations
 from collections import Counter
 from typing import Optional
 
-_DISPOSITIONS = ["pending", "present", "moved", "renamed", "merged", "split", "dropped", "new"]
+_DISPOSITIONS = ["pending", "present", "moved", "renamed", "merged", "split", "dropped",
+                 "withdrawn", "new"]
+
+# Dispositions whose declaration is NOT expected to exist at HEAD. A total that
+# silently includes them overstates the corpus, which is the whole reason the
+# table separates them out rather than just summing rows.
+_NOT_LIVE = ("dropped", "merged", "split", "withdrawn")
 
 
 def status_table(document: dict, **_params) -> str:
-    """A Markdown status table: count of entries per disposition."""
+    """A Markdown status table: count of entries per disposition.
+
+    Reports a LIVE total alongside the raw one. Terminal dispositions name a
+    declaration that is gone (``dropped``), spent into another entry (``merged``/
+    ``split``) or was added in error and never existed (``withdrawn``) — counting
+    those as part of the corpus inflates it.
+    """
     entries = document.get("entries", [])
     counts = Counter(e.get("disposition") for e in entries)
+    retired = sum(counts.get(d, 0) for d in _NOT_LIVE)
     lines = ["| disposition | count |", "|---|---|"]
     for disp in _DISPOSITIONS:
-        lines.append(f"| {disp} | {counts.get(disp, 0)} |")
-    lines.append(f"| **total** | **{len(entries)}** |")
+        marker = " *(not live)*" if disp in _NOT_LIVE else ""
+        lines.append(f"| {disp}{marker} | {counts.get(disp, 0)} |")
+    lines.append(f"| **live total** | **{len(entries) - retired}** |")
+    lines.append(f"| **all entries** | **{len(entries)}** |")
     return "\n".join(lines)
 
 
@@ -124,8 +139,78 @@ def anomaly_table(document: dict, *, count_only: bool = False,
     return "\n".join(lines)
 
 
+_PHANTOM_DEFAULT_LIMIT = 50
+
+
+def phantom_table(document: dict, *, root: str = ".", count_only: bool = False,
+                  limit=None, offset: int = 0, **_params) -> str:
+    """Entries whose ``new.file`` does not resolve on disk — the drift `validate` cannot see.
+
+    ``validate`` and ``verify_integrity`` check internal conformance and hash
+    continuity. Neither resolves anything against the filesystem, so a registry can
+    be green while describing declarations of a file that no longer exists — which
+    is what let a reverted file's entries sit unnoticed. This makes that class
+    mechanically visible instead of depending on someone remembering to look.
+
+    Sibling of the ``anomalies`` view (the tagging worklist); this is the same idea
+    one level down, and it is paged the same way (interop issue #6).
+
+    NEVER A GATE, deliberately: the registry is legitimately edited from machines
+    that may not have the corpus checked out, so a missing file there means "not
+    checked out", not "drift". Pass ``root`` to point at the corpus.
+
+    Scope: only entries expected to still exist AND carrying a HEAD identity. A
+    terminal entry names something that is *supposed* to be gone, and a still-
+    ``pending`` entry's location is an anchor-era path, stale by design.
+
+    For the stronger check — that the declaration is actually DECLARED in the file
+    it names — use the ``check_head`` tool with ``tier='names'``.
+    """
+    from pathlib import Path
+
+    from consumers.lean.rules import effective_qualified
+
+    base = Path(root)
+    rows: list[tuple[str, str, str]] = []
+    checked = 0
+    for entry in document.get("entries", []):
+        group, qualified, present = effective_qualified(entry)
+        if not qualified or not present or group != "new":
+            continue
+        rel = (entry.get("new") or {}).get("file")
+        if not rel:
+            continue
+        checked += 1
+        if not (base / rel).exists():
+            rows.append((entry.get("id", "?"), qualified, rel))
+
+    by_file: Counter = Counter(rel for _, _, rel in rows)
+    total = len(rows)
+    summary = [f"phantom declarations (new.file does not resolve under {base}): "
+               f"**{total}** of {checked} checked", "",
+               "| missing file | entries |", "|---|---|"]
+    for rel, n in sorted(by_file.items()):
+        summary.append(f"| {rel} | {n} |")
+    if not by_file:
+        summary.append("| _(none — every checked new.file resolves)_ | |")
+    if count_only:
+        return "\n".join(summary)
+
+    lim = _PHANTOM_DEFAULT_LIMIT if limit is None else limit
+    window = rows[offset:] if lim in (0, None) else rows[offset:offset + lim]
+    shown = (f"showing {offset + 1}–{offset + len(window)} of {total}"
+             if window else "none in range")
+    lines = summary + ["", f"rows ({shown})", "", "| id | qualified | file |", "|---|---|---|"]
+    for eid, qualified, rel in window:
+        lines.append(f"| {eid} | {qualified} | {rel} |")
+    if not window:
+        lines.append("| _(none)_ | | |")
+    return "\n".join(lines)
+
+
 VIEWS = {
     "status": status_table,
     "domains": domain_table,
     "anomalies": anomaly_table,
+    "phantoms": phantom_table,
 }

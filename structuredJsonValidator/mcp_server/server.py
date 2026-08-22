@@ -152,16 +152,20 @@ def history(id: Optional[str] = None) -> dict:
 
 @mcp.tool()
 def view(kind: str, collection: str = "declarations", count_only: bool = False,
-         limit: Optional[int] = None, offset: int = 0) -> dict:
+         limit: Optional[int] = None, offset: int = 0, root: Optional[str] = None) -> dict:
     """Render a projection view from a collection.
-    declarations: 'status', 'domains', 'anomalies' (anomalies is the tagging
-      worklist — leads with a summary; count_only for just that; limit/offset page).
+    declarations: 'status' (per-disposition counts, with a LIVE total that excludes
+      dropped/merged/split/withdrawn), 'domains', 'anomalies' (the tagging worklist
+      — leads with a summary; count_only for just that; limit/offset page), and
+      'phantoms' (entries whose new.file does not resolve on disk — pass `root` for
+      the corpus checkout; a report, never a gate).
     claims: 'status' (dated status table with derived live-witness counts) and
       'graph' (a deterministic Mermaid claim graph).
     deps: 'cycles' (directed cycles / mutual blocks — informational, not a gate)."""
     try:
+        extra = {} if root is None else {"root": root}
         text = _store().export_view(collection, kind, count_only=count_only,
-                                    limit=limit, offset=offset)
+                                    limit=limit, offset=offset, **extra)
         return {"ok": True, "collection": collection, "kind": kind, "text": text}
     except OperationError as exc:
         return {"ok": False, "error": str(exc)}
@@ -252,9 +256,29 @@ def mark_present(id: str, force: bool = False) -> dict:
 
 @mcp.tool()
 def drop(id: str, reason: str, force: bool = False) -> dict:
-    """Drop a declaration (new.* stays null; reason required). Re-dropping a
-    terminal (dropped/merged) entry is refused unless force=True."""
+    """Record that a declaration that EXISTED at the anchor is gone at HEAD (new.*
+    cleared; reason required). Requires a REAL anchored old identity — an entry
+    added after the baseline never had one, so 'dropped' would be false history
+    there; use `withdraw` (added in error) or `remove` (erase). Re-dropping a
+    terminal entry is refused unless force=True."""
     return _write("declarations", "drop", {"id": id, "reason": reason, "force": force})
+
+
+@mcp.tool()
+def withdraw(id: str, reason: str, force: bool = False) -> dict:
+    """Terminal state for an entry ADDED IN ERROR — the mirror image of `drop`.
+
+    `drop` presupposes a prior identity ("this existed and is now gone"). An entry
+    created by `add_new` for a declaration that was then reverted has none and never
+    existed at HEAD, so it had no legal terminal state. `withdrawn` is that state.
+
+    The two are kept non-overlapping by the old side: `drop` requires a REAL anchored
+    identity, `withdraw` requires there is none — so neither can launder the other,
+    and nobody has to invent provenance to satisfy the validator. new.qualified is
+    KEPT (the name that was added in error is the substance of the record). reason
+    required. Terminal; `reopen` restores it to 'new'. A withdrawn name is treated as
+    GONE, so a deps edge onto it dangles, exactly as for dropped."""
+    return _write("declarations", "withdraw", {"id": id, "reason": reason, "force": force})
 
 
 @mcp.tool()

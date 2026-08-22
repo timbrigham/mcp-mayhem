@@ -165,13 +165,15 @@ def test_merge_born_new_sources(tmp_path):
     assert s.validate() == []
 
 
-def test_drop_a_born_new_entry_tombstones_it(tmp_path):
+def test_drop_a_born_new_entry_is_refused_and_names_withdraw(tmp_path):
+    """`dropped` presupposes a prior identity. A born-at-HEAD entry has none, so
+    dropping it would assert false history — `withdraw` is its terminal state."""
     s = _store(tmp_path)
     _found(s, 1)
     eid = _legacy_born(s)
-    s.apply("declarations", "drop", {"id": eid, "reason": "file reverted"})
-    entry = s.get("declarations", eid)
-    assert entry["disposition"] == "dropped" and entry["new"]["qualified"] is None
+    with pytest.raises(OperationError, match="withdraw"):
+        s.apply("declarations", "drop", {"id": eid, "reason": "file reverted"})
+    assert s.get("declarations", eid)["disposition"] == "new"
     assert s.validate() == []
 
 

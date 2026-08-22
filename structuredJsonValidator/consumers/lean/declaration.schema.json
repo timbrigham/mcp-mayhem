@@ -89,7 +89,8 @@
           }
         },
         "disposition": {
-          "enum": ["pending", "present", "moved", "renamed", "merged", "split", "dropped", "new"]
+          "$comment": "'dropped' and 'withdrawn' are deliberate mirror images and the old side keeps them honest: dropped = existed at the anchor identity, gone at HEAD (requires a REAL anchored old); withdrawn = added to the registry in error, never existed at HEAD (requires NO anchored old). Neither can be used to launder the other.",
+          "enum": ["pending", "present", "moved", "renamed", "merged", "split", "dropped", "withdrawn", "new"]
         },
         "reason": { "type": ["string", "null"] },
         "ontology": {

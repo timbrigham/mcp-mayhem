@@ -14,11 +14,22 @@ OLD_LEAVES = ("qualified", "short", "kind", "file", "line", "prefix")
 NEW_LEAVES = ("qualified", "short", "file", "namespace")
 
 # disposition -> (old_state, new_state, reason_required)
-#   state "set"   => identity leaf (.qualified) is non-null
-#   state "null"  => every leaf in the group is null
-#   state "birth" => a born-at-HEAD entry: either a SYNTHETIC old (the birth
-#                    identity recorded at add_new time — interop #16a) or, for
-#                    entries created before that change, all leaves null.
+#   state "set"      => identity leaf (.qualified) is non-null
+#   state "null"     => every leaf in the group is null
+#   state "birth"    => a born-at-HEAD entry: either a SYNTHETIC old (the birth
+#                       identity recorded at add_new time — interop #16a) or, for
+#                       entries created before that change, all leaves null.
+#   state "anchored" => a REAL prior identity: qualified set AND not synthetic.
+#
+# ``dropped`` and ``withdrawn`` are deliberate mirror images, and the old side is
+# what keeps them honest and non-overlapping:
+#
+#   dropped   — existed at the anchor identity, gone at HEAD.   old ANCHORED.
+#   withdrawn — added to the registry in error, never existed.  old BIRTH (never anchored).
+#
+# So an entry with a real history can only be dropped, and one without can only be
+# withdrawn. Neither can be used to launder the other, and neither requires anyone
+# to invent provenance to satisfy a validator.
 DISPOSITION_RULES: dict[str, tuple[str, str, bool]] = {
     "pending": ("set", "null", False),
     "present": ("set", "set", False),
@@ -26,7 +37,10 @@ DISPOSITION_RULES: dict[str, tuple[str, str, bool]] = {
     "renamed": ("set", "set", True),
     "merged": ("set", "set", True),
     "split": ("set", "set", True),
-    "dropped": ("set", "null", True),
+    "dropped": ("anchored", "null", True),
+    # withdrawn KEEPS new.qualified: the record is "this name was added in error",
+    # so the name it was added under is the substance of the record, not noise.
+    "withdrawn": ("birth", "set", True),
     "new": ("birth", "set", True),
 }
 
@@ -72,10 +86,23 @@ def _check_group(group: dict, leaves: tuple[str, ...], state: str) -> Optional[s
     if state == "birth":
         # A born-at-HEAD entry: a synthetic old (post-#16a) or a fully null one
         # (legacy). What is NOT allowed is a real, anchored old identity — that
-        # would claim the decl existed at the anchor, which 'new' denies.
+        # would claim the decl existed at the anchor, which this disposition denies.
         if _all_null(group, leaves) or group.get("synthetic"):
             return None
-        return "must be null or synthetic (a 'new' entry has no anchored identity)"
+        return ("must be null or synthetic — this disposition means the declaration "
+                "never existed at the anchor, so it cannot carry a real prior identity")
+    if state == "anchored":
+        # A REAL prior identity. Refusing a synthetic one here is what stops the
+        # birth-identity record (interop #16a) being read as evidence that a decl
+        # created after the baseline once existed under a prior name. It did not;
+        # 'withdrawn' is the honest terminal state for those.
+        if not _identity_set(group):
+            return "qualified must be set (non-null)"
+        if group.get("synthetic"):
+            return ("qualified must be a REAL anchored identity, not the synthetic "
+                    "birth record — a declaration that never existed at the anchor is "
+                    "'withdrawn' (added in error), not 'dropped' (existed, now gone)")
+        return None
     raise ValueError(f"unknown state {state!r}")  # programming error, not data error
 
 
@@ -95,6 +122,12 @@ RECONCILE_CLASS: dict[str, tuple[str, bool]] = {
     "dropped": ("old", False),   # source name expected GONE
     "merged": ("old", False),    # merged-source name expected GONE
     "split": ("old", False),     # split-source name expected GONE
+    # withdrawn keeps new.qualified, but that name is expected GONE — the entry
+    # records a declaration that was added in error and is not at HEAD. Being in
+    # the expected-gone class is what gives it dropped's downstream behaviour for
+    # free: it is excluded from the live-name uniqueness gate, a deps edge onto it
+    # dangles, and a re-scan finding the name back flags a resurrection.
+    "withdrawn": ("new", False),
 }
 
 
