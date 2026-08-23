@@ -78,7 +78,7 @@ def render_inventory(inv: dict) -> str:
     if inv.get("complete"):
         return "\n".join(lines)
 
-    for status in ("MISSING", "STALE", "UNDECIDED", "FAIL"):
+    for status in ("MISSING", "STALE", "LEGACY_IDENTITY", "UNDECIDED", "FAIL"):
         rows = [r for r in inv.get("rows", []) if r.get("status") == status and r.get("gating")]
         if not rows:
             continue
@@ -91,6 +91,8 @@ def render_inventory(inv: dict) -> str:
             remedy = {"MISSING": ("python tools/verify/batch.py precommit"
                                   if family == "mechanical" else "that is an agent round"),
                       "STALE": "re-run — recorded against different bytes",
+                      "LEGACY_IDENTITY": ("re-record — written under the superseded "
+                                          "`sha256` subject scheme, not comparable"),
                       "UNDECIDED": "the ledger could not judge it — investigate",
                       "FAIL": "fix it"}[status]
             lines.append(f"  {status:9} {family:10} {', '.join(names)}"

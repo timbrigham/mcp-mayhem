@@ -52,10 +52,10 @@ def structural(record: dict) -> list[str]:
         out.append("subjects must be an array")
     else:
         for i, s in enumerate(subjects):
-            if not isinstance(s, dict) or not s.get("blob") or not s.get("path"):
-                out.append(f"subjects[{i}] needs both blob and path")
+            if not isinstance(s, dict) or not s.get("git_blob_id") or not s.get("path"):
+                out.append(f"subjects[{i}] needs both git_blob_id and path")
                 continue
-            bad = _not_a_blob_id(s["blob"], s.get("path"))
+            bad = _not_a_blob_id(s["git_blob_id"], s.get("path"))
             if bad:
                 out.append(f"subjects[{i}] {bad}")
 
@@ -247,7 +247,7 @@ def _object_hex_len() -> int | None:
 def _not_a_blob_id(value, path) -> str | None:
     """⚠⚠ CATCHES THE 2026-08-23 DEFECT AT THE DOOR.
 
-    `subjects[].blob` must carry GIT'S BLOB ID -- the value `git ls-tree` prints and
+    `subjects[].git_blob_id` must carry GIT'S BLOB ID -- the value `git ls-tree` prints and
     the only thing `inventory` compares against. The field used to be named `sha256`,
     so a client computed a sha256 digest of the file bytes. That is a different hash
     function over a different byte string (git prefixes ``b"blob <len>\0"``), so it
@@ -260,23 +260,27 @@ def _not_a_blob_id(value, path) -> str | None:
     rendering as success.
     """
     if not isinstance(value, str):
-        return "blob must be a string"
+        return "git_blob_id must be a string"
     v = value.strip()
     if v != value or not v:
-        return "blob must not carry surrounding whitespace"
+        return "git_blob_id must not carry surrounding whitespace"
     if v != v.lower() or any(c not in "0123456789abcdef" for c in v):
-        return f"blob {v!r} is not lowercase hex; git object ids are"
+        return f"git_blob_id {v!r} is not lowercase hex; git object ids are"
 
-    want = _object_hex_len()
-    if want is None or len(v) == want:
+    # ⚠ FAIL CLOSED. An unresolvable repo used to SKIP this check, which is the
+    # fail-open shape the whole server exists to end: the one environment where the
+    # format is unknown is exactly where a wrong value would go unnoticed. 40 is
+    # git's default object format; a sha256 repo overrides it when it can be read.
+    want = _object_hex_len() or 40
+    if len(v) == want:
         return None
     if want == 40 and len(v) == 64:
-        return (f"blob for {path!r} is 64 hex characters, but this repository's git "
+        return (f"git_blob_id for {path!r} is 64 hex characters, but this repository's git "
                 f"object ids are 40. This is almost certainly a sha256 of the file "
                 f"contents -- git's blob id is SHA-1 over b'blob <len>\\0' + data, a "
                 f"different hash over different bytes, and it can NEVER match. Use "
                 f"client.record.blob_id(path) or column 3 of `git ls-tree -r <ref>`. "
                 f"Refused rather than appended, because such a record reads STALE "
                 f"forever and looks like a staleness bug.")
-    return (f"blob for {path!r} is {len(v)} hex characters; this repository's git "
+    return (f"git_blob_id for {path!r} is {len(v)} hex characters; this repository's git "
             f"object ids are {want}")

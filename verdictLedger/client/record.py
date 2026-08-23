@@ -85,23 +85,53 @@ def _call(tool: str, arguments: dict):
 # -- the subject identity ------------------------------------------------------
 
 def blob_id(path: str, *, repo: str = ".") -> str:
-    """The GIT BLOB ID for a working-tree file — what `subjects[].blob` must carry.
+    """The GIT BLOB ID for a working-tree file — what `subjects[].git_blob_id` holds.
 
-    ⚠⚠ USE THIS. DO NOT COMPUTE A sha256 OF THE FILE. The ledger matches a subject
-    against the value `git ls-tree` prints, which is git's own object id: SHA-1 over
-    the bytes ``b"blob %d\0" % len(data) + data``. A plain sha256 of the same file is
-    a different hash function over a different byte string, so it can never match --
-    the record appends cleanly, then reads STALE forever, which looks exactly like a
-    staleness bug and is not one. Measured 2026-08-23; it cost an afternoon of
-    (correctly) verifying that the sha256 matched disk byte-for-byte.
+    ⚠⚠ DELEGATES TO GIT ON PURPOSE. A blob id is not a hash of the bytes on disk.
+    It is sha1("blob " + len + NUL + CONTENT AS GIT STORED IT), and `git add` applies
+    the repo's filters (`text=auto eol=lf`) when writing the object. On a CRLF
+    checkout the stored object and the working bytes differ, so hashing the file
+    directly yields a value that is right on one machine and silently wrong on
+    another — the worst shape of defect, since it passes wherever it is developed.
 
-    Tim's rule, and the reason the field is `blob`: exactly one hash is in use in
-    this system and it is git's.
+    An earlier build of this helper did exactly that. It agreed with git only because
+    the file under test was already LF.
+
+    ⚠ DO NOT COMPUTE A sha256 OF THE FILE either. The ledger compares against what
+    `git ls-tree` prints; a content digest is a different hash over a different byte
+    string, appends cleanly, and then reads STALE forever — which looks exactly like
+    a staleness bug and is not one. Measured 2026-08-23; it cost an afternoon.
     """
-    import hashlib
-    import pathlib
-    data = (pathlib.Path(repo) / path).read_bytes()
-    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    import subprocess
+    proc = subprocess.run(["git", "hash-object", "--", path], cwd=repo,
+                          capture_output=True, text=True, encoding="utf-8")
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"git hash-object failed for {path!r}: "
+                           f"{(proc.stderr or '').strip()}")
+    return out
+
+
+def blobs_staged(*, repo: str = ".") -> dict:
+    """path -> blob id for the INDEX — the content a commit would actually record.
+
+    ⚠ 12-0-quater: a blob id names the STAGED object, while `batch.py precommit`
+    scans the working tree. Stage a file, edit it further without staging, and those
+    are different byte sequences. Use this when the verdict must describe what will
+    be committed rather than what happens to be on disk.
+    """
+    import subprocess
+    out = {}
+    proc = subprocess.run(["git", "ls-files", "-s"], cwd=repo, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    for line in proc.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3:
+            out[path.strip()] = parts[1]
+    return out
 
 
 def blobs_at(ref: str, *, repo: str = ".") -> dict:
@@ -126,7 +156,7 @@ def emit(step, tier, verdict, subjects, basis, reason=None,
          inputs=(), decided=None, cost=None, revision=0):
     """Append one record. Returns its id, or None if refused or unreachable.
 
-    `subjects` is a list of {"path", "blob"} — WHAT THIS VERDICT IS ABOUT, not
+    `subjects` is a list of {"path", "git_blob_id"} — WHAT THIS VERDICT IS ABOUT, not
     everything the step glanced at. A step that examined forty files and failed on
     one emits a PASS over the thirty-nine and a FAIL over the one; that is what
     keeps coverage exact and makes repeat-subject a hash count rather than a grep

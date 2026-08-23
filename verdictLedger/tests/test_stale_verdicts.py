@@ -33,7 +33,7 @@ from core import inventory as inventory_mod
 def _rec(step, sha, verdict, rid=None):
     return {"id": rid or f"{step}@{sha}#0", "step": step, "verdict": verdict,
             "revision": 0, "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
-            "subjects": [{"path": "README.md", "blob": sha}],
+            "subjects": [{"path": "README.md", "git_blob_id": sha}],
             "basis": {"kind": "tree", "value": sha}}
 
 
@@ -92,11 +92,11 @@ def test_a_covering_record_wins_over_a_stale_one(ledger):
     records = [
         {"id": "check_prose@old#0", "step": "check_prose", "verdict": "FAIL", "revision": 0,
          "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
-         "subjects": [{"path": "README.md", "blob": "old"}],
+         "subjects": [{"path": "README.md", "git_blob_id": "old"}],
          "basis": {"kind": "tree", "value": "old"}},
         {"id": "check_prose@new2#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
          "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
-         "subjects": [{"path": "GUIDE.md", "blob": "new2"}],
+         "subjects": [{"path": "GUIDE.md", "git_blob_id": "new2"}],
          "basis": {"kind": "tree", "value": "new2"}},
     ]
     row = next(r for r in _build(ledger, records, files)["rows"] if r["step"] == "check_prose")

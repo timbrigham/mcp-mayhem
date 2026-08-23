@@ -113,7 +113,7 @@ def payload(record: dict) -> dict:
         "reason": record.get("reason"),
         "tier": record.get("tier"),
         "subjects": sorted(
-            ((s.get("path"), s.get("blob")) for s in record.get("subjects") or []),
+            ((s.get("path"), s.get("git_blob_id")) for s in record.get("subjects") or []),
             key=lambda t: (t[0] or "", t[1] or "")),
         "decided": record.get("decided"),
         "inputs": sorted(record.get("inputs") or []),

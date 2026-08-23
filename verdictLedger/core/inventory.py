@@ -8,7 +8,7 @@ records are checked against it, never the other way round.
 
 ⚠ IDENTITY IS NOT SATISFACTION. A record is IDENTIFIED by `(step, basis, verdict,
 reason, subjects, revision)`, but it SATISFIES a key while the content it examined
-is unchanged — matched on `subjects[].blob`, never on basis. Matching on basis
+is unchanged — matched on `subjects[].git_blob_id`, never on basis. Matching on basis
 would make every record die on every commit: 40 files, 14 checks recorded against
 tree X, one unrelated file changes, and the whole pipeline re-runs including the
 paid review rounds. "Re-run everything, always" wears the costume of rigour.
@@ -24,17 +24,27 @@ import fnmatch
 from typing import Optional
 
 
-def _subject_index(records) -> dict:
-    """path -> the tip record that most recently examined it, per step."""
+def _subject_index(records) -> tuple:
+    """(tips, legacy): path -> the tip record that most recently examined it, per step.
+
+    ⚠⚠ LEGACY IS SEPARATED ON PURPOSE. Records written before 2026-08-23 carry a
+    64-hex sha256 under `sha256` instead of a git blob id. Left in the main index they
+    compare unequal to every blob id and render as STALE -- and "the content moved"
+    and "recorded under a superseded identity scheme" are different facts with
+    different remedies. Re-running a checker fixes the first and does nothing for the
+    second.
+    """
     out: dict = {}
+    legacy: dict = {}
     for r in records:
         step = r.get("step")
         for s in r.get("subjects") or []:
             key = (step, s.get("path"))
-            prior = out.get(key)
+            target = out if s.get("git_blob_id") else legacy
+            prior = target.get(key)
             if prior is None or r.get("revision", 0) >= prior[0].get("revision", 0):
-                out[key] = (r, s.get("blob"))
-    return out
+                target[key] = (r, s.get("git_blob_id"))
+    return out, legacy
 
 
 def build(*, config, records, action: str, files: dict,
@@ -63,7 +73,7 @@ def build(*, config, records, action: str, files: dict,
     as an empty one and must never read as satisfied — see `admission_state`.
     """
     reqs = config.requirements(action)
-    tips = _subject_index(records)
+    tips, legacy_tips = _subject_index(records)
 
     rows = []
     how_counts: dict = {}
@@ -101,9 +111,19 @@ def build(*, config, records, action: str, files: dict,
                 stale += 1
                 stale_rec = stale_rec or rec
         record = covered_rec or stale_rec
+        legacy_hit = next((legacy_tips[(step, p)] for p in files
+                           if (step, p) in legacy_tips), None)
 
         why = None
-        if covered == 0 and stale == 0:
+        if covered == 0 and stale == 0 and legacy_hit is not None:
+            # ⚠ NOT stale, and NOT missing. The step DID examine this path; the record
+            # is simply unusable, and the remedy is to re-record rather than to re-run
+            # or to run at all.
+            status = "LEGACY_IDENTITY"
+            record = legacy_hit[0]
+            why = ("recorded under the superseded `sha256` subject scheme and cannot be "
+                   "compared to a git blob id; re-record it (or let it age out)")
+        elif covered == 0 and stale == 0:
             status = "MISSING"
         elif covered and covered_rec.get("verdict") == "FAIL":
             status = "FAIL"
@@ -169,7 +189,8 @@ def build(*, config, records, action: str, files: dict,
     else:
         state = "SET"
         complete = (n("MISSING") == 0 and n("STALE") == 0
-                    and n("UNDECIDED") == 0 and n("FAIL") == 0)
+                    and n("UNDECIDED") == 0 and n("FAIL") == 0
+                    and n("LEGACY_IDENTITY") == 0)
 
     return {
         "ref": ref, "action": action,
@@ -177,6 +198,7 @@ def build(*, config, records, action: str, files: dict,
         "admitted": sorted(admitted) if admitted is not None else None,
         "required": required, "satisfied": satisfied,
         "missing": n("MISSING"), "stale": n("STALE"),
+        "legacy_identity": n("LEGACY_IDENTITY"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),
         "not_applicable": sum(1 for r in rows if r["status"] == "NOT_APPLICABLE"),
         # gitRobot's rule is that these are all zero. The ledger COMPUTES; the
