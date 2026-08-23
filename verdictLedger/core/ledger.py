@@ -202,7 +202,14 @@ class Ledger:
             "config_error": self.config_error,
             "policy_sha": self.config.policy_sha if self.config else None,
             "undecided_steps": sorted(s for s in undecided_steps if s),
+            # ⚠ NAME THE SOURCE. This is derived from the genesis RECORD in the
+            # stream, never from config -- and rendering it without saying so read as
+            # "a floor is configured" to a caller who had just seen
+            # `policy.genesis.commit: None`. Measured 2026-08-23: it misled the other
+            # session for a minute, which is a minute more than a status line is worth.
             "genesis": (f"records begin at {genesis['basis']['value']}; "
-                        f"nothing before it is claimed") if genesis else
+                        f"nothing before it is claimed "
+                        f"(from the genesis RECORD, seeded {genesis['run'].get('started')}; "
+                        f"the floor is not a config value)") if genesis else
                        "NO GENESIS RECORD — crossref cannot bound its history",
         }

@@ -142,7 +142,20 @@ class Config:
 
     @property
     def genesis(self) -> Optional[str]:
-        return (self.policy.get("genesis") or {}).get("commit")
+        """⛔ REMOVED AS A CONFIG VALUE — always None, and callers must not add one.
+
+        The floor is a claim about WHEN RECORDING BEGAN, so it belongs in the
+        append-only, validated, attributable stream, not in a file anyone can edit
+        without a trace. `crossref` has always read it from the genesis RECORD; this
+        accessor read `policy.genesis.commit` and was called by nothing, while the
+        policy comment instructed readers to set exactly that. A config value that
+        looks authoritative, is documented as authoritative, and is consumed by
+        nothing is the two-copies defect with the weaker copy being the one a reader
+        is told to edit.
+
+        Seed the floor with `zpledger genesis <sha>`.
+        """
+        return None
 
     @property
     def signals(self) -> dict:

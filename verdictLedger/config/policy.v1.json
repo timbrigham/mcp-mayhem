@@ -1,35 +1,31 @@
 {
   "schema": "zp.policy.v1",
   "_comment": "CONFIG, NOT CONSTANTS. If changing a policy means editing logic, it is in the wrong place. Every value the process compares against lives here; how it compares lives in code. A malformed file makes the ledger serve UNDECIDED and refuse every gated action -- it must never fall back to a built-in default, because a built-in default is a second copy of the policy and the weaker one is the copy nobody notices.",
-
   "agreement": {
     "_comment": "V3 says agreed == passes AND passes >= min_passes. Three was a decision, not a law, so it lives here. Change it and the verdict changes with no restart and no code edit -- that is the behavioural proof the threshold is data.",
     "min_passes": 3
   },
-
   "supersede": {
     "_comment": "V13. `revision` is an ordinal scoped to one (step, basis); a chain never crosses bases. At the cap, refuse AND surface it: regraded to the cap means the step or the subject needs fixing, not another regrade.",
     "max_depth": 5
   },
-
   "lock": {
     "_comment": "The bounded wait. Appends are sub-millisecond, so crossing soft can only mean a stuck writer or a stalled fsync, never contention. WARNING: hard_seconds is the process supervisor's poll interval, and a wait that long is safe ONLY because every MCP tool is async-offloaded so the health endpoint keeps answering. Make one tool a plain def and this trips the supervisor precisely.",
     "soft_seconds": 5,
     "hard_seconds": 30
   },
-
-  "actions": ["commit", "push", "tag"],
-
+  "actions": [
+    "commit",
+    "push",
+    "tag"
+  ],
   "signals": {
     "never_fired_runs": 50,
     "disagreement_low": 0.05,
-    "disagreement_high": 0.30,
+    "disagreement_high": 0.3,
     "repeat_subject_rounds": 3
   },
-
   "genesis": {
-    "_comment": "Set this to the commit from which crossref claims anything. It is a fact about when RECORDING began -- never a claim that earlier work was verified. Without it every prior commit is a permanent P1 orphan, and a warning nobody can act on is one people learn to scroll past. Seed it with: zpledger genesis <sha>",
-    "commit": null,
-    "note": "records begin here; nothing before it is claimed"
+    "_comment": "THE FLOOR IS NOT SET HERE. It lives in the stream as a `genesis` RECORD, seeded with `zpledger genesis <sha>`, because it is a claim about when RECORDING began and belongs somewhere append-only, validated and attributable -- not in a file anyone can edit without a trace. An earlier version of this block told readers to set `commit` here and nothing consumed it. It is a fact about when recording began, NEVER a claim that earlier work was verified."
   }
 }

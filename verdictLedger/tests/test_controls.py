@@ -909,3 +909,37 @@ def test_check_hashes_declares_the_switch_it_records(ledger):
     rather than theirs."""
     assert ledger.config.requirements("commit")["check_hashes"]["switches"] == [
         "tools/verify/shared_build_baseline.txt"]
+
+
+def test_status_names_where_the_genesis_floor_came_from(ledger):
+    """⚠ ZeroParadox read `status` saying "records begin at 244ead83…" beside
+    `policy.genesis.commit: None` and took it as a configured floor. It is derived from
+    the genesis RECORD, and rendering it without saying so made a stream fact look like
+    a config fact — the two readings differ exactly when it matters."""
+    ledger.seed_genesis("a" * 40, note="probe")
+    line = ledger.status()["genesis"]
+    assert "genesis RECORD" in line
+    assert "not a config value" in line
+
+
+def test_an_unseeded_stream_does_not_claim_a_floor(ledger):
+    """⚠ …and absence must read as absence. "No floor" and "a floor at X" are the two
+    readings that must never render alike."""
+    line = ledger.status()["genesis"]
+    assert "records begin at" not in line
+
+
+def test_the_genesis_config_value_is_dead_and_stays_dead(ledger):
+    """⛔ `Config.genesis` read `policy.genesis.commit` and was called by NOTHING, while
+    the policy comment instructed readers to set exactly that. A config value that looks
+    authoritative, is documented as authoritative, and is consumed by nothing is the
+    two-copies defect with the weaker copy being the one a reader is told to edit.
+
+    The floor belongs in the append-only stream. This asserts the accessor cannot be
+    quietly re-wired to config without the test failing."""
+    assert ledger.config.genesis is None      # a @property, not a method
+    import pathlib
+    policy = json.loads((pathlib.Path(__file__).resolve().parents[1] /
+                         "config" / "policy.v1.json").read_text(encoding="utf-8-sig"))
+    assert "commit" not in policy.get("genesis", {}), (
+        "the dead config field is back; the floor has two sources again")
