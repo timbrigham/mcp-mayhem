@@ -650,7 +650,13 @@ def test_the_shipped_scopes_match_what_was_measured(ledger):
     # `check_pov` likewise: its property is ".md only where a same-stem .lean exists",
     # which is a sibling test, not a path pattern. Measured: 69 .md, 28 paired, 41 not.
     assert reqs["check_pov"]["scope"] is None
-    assert reqs["check_hashes"]["scope"] == ["register.md", "scripts/*"]
+    # ⚠ `scripts/*` was too broad and ZeroParadox corrected it themselves: fnmatch's
+    # `*` crosses `/`, so it swept in the fonts, scan_pdfs.py and the private-only
+    # scripts. `zp_utils.py` is in scope because check_shared_build() verifies it —
+    # it was inside the property and NOT a subject, so editing the module every build
+    # script imports left the record SATISFIED.
+    assert reqs["check_hashes"]["scope"] == [
+        "register.md", "scripts/build_*.py", "scripts/zp_utils.py"]
 
 
 # -- ⭐ a type may be RECORDABLE without being REQUIRED ----------------------

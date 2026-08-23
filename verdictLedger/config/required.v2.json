@@ -87,9 +87,10 @@
       "family": "mechanical",
       "scope": [
         "register.md",
-        "scripts/*"
+        "scripts/build_*.py",
+        "scripts/zp_utils.py"
       ],
-      "reason": "hashes the register plus the script bundle; measured 40 paths = 1 + 39"
+      "reason": "fingerprints the register, the 39 build scripts, and zp_utils.py -- the module every build script imports, verified against shared_build_baseline.txt. `scripts/*` was too broad: fnmatch's * crosses /, so it swept in the fonts, scan_pdfs.py and the private-only scripts, none of which the property covers"
     },
     "check_moved": {
       "family": "mechanical"
