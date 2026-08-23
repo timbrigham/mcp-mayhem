@@ -129,10 +129,20 @@ def check(*, records: list, config, repo: Optional[str] = None,
             continue
         inv = inventory_mod.build(config=config, records=records, action=action,
                                   files=files, ref=commit, admission=admission)
-        # "Did anything examine this content?" is independent of what would have
-        # been SUFFICIENT — a row in any non-MISSING state means some step looked.
+        # "Did anything examine THIS CONTENT?" is independent of what would have
+        # been SUFFICIENT.
+        #
+        # ⚠⚠ STALE IS NOT EXAMINED. It used to count here, and that inverted the
+        # audit's headline question. STALE means a step examined DIFFERENT bytes; for
+        # the bytes in this commit it did not run at all. Counting it as examined let
+        # a commit nothing had ever looked at report `examined_by=3` and escape the
+        # NOT_RUN finding -- the single finding this whole audit exists to produce.
+        #
+        # Measured 2026-08-23: three probe records against a throwaway tree made all
+        # eight audited commits look examined. The bypass detector was reporting
+        # coverage it did not have.
         examined = [r for r in inv["rows"]
-                    if r["status"] in ("SATISFIED", "STALE", "FAIL", "UNDECIDED")]
+                    if r["status"] in ("SATISFIED", "FAIL", "UNDECIDED")]
         subject = {"commit": commit, "tree": tree,
                    "subject": _git(repo, "log", "-1", "--pretty=%s", commit)[:80],
                    "examined_by": len(examined),

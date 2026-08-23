@@ -76,26 +76,48 @@ def build(*, config, records, action: str, files: dict,
                          "subjects_covered": 0})
             continue
 
-        covered, stale, record = 0, 0, None
+        # ⚠⚠ THE VERDICT MUST COME FROM A RECORD THAT EXAMINED *THESE* BYTES.
+        # Keeping one `record` for both covered and stale hits let a stale record
+        # supply the verdict for a step that also had a covering one -- whichever
+        # path happened to be iterated first won.
+        covered, stale = 0, 0
+        covered_rec, stale_rec = None, None
         for path, sha in files.items():
             hit = tips.get((step, path))
             if hit is None:
                 continue
             rec, recorded_sha = hit
-            record = record or rec
             if recorded_sha == sha:
                 covered += 1
+                covered_rec = covered_rec or rec
             else:
                 stale += 1
+                stale_rec = stale_rec or rec
+        record = covered_rec or stale_rec
 
+        why = None
         if covered == 0 and stale == 0:
             status = "MISSING"
-        elif record is not None and record.get("verdict") == "FAIL":
+        elif covered and covered_rec.get("verdict") == "FAIL":
             status = "FAIL"
-        elif record is not None and record.get("verdict") == "UNDECIDED":
+        elif covered and covered_rec.get("verdict") == "UNDECIDED":
             status = "UNDECIDED"
         elif stale:
+            # ⚠⚠ A FAIL AGAINST OTHER BYTES DEMOTES TO STALE LIKE ANY OTHER VERDICT.
+            # It used to stay FAIL forever: the FAIL branch ran before this one, so a
+            # PASS recorded against moved content was correctly demoted while a FAIL
+            # was not. One probe FAIL therefore condemned every commit in the audit,
+            # and no amount of re-running could clear it except a PASS on the exact
+            # sha. That is an audit that cries wolf on every run -- which trains a
+            # reader to ignore it, the precise failure this system exists to prevent.
+            #
+            # This weakens NO gate: `complete` already requires stale == 0 as well as
+            # failed == 0, so the action is refused either way. It changes only what
+            # the reader is TOLD, from "it failed" to "it was never run on this".
             status = "STALE"
+            if stale_rec is not None and stale_rec.get("verdict") in ("FAIL", "UNDECIDED"):
+                why = (f"last verdict was {stale_rec['verdict']} but against different "
+                       f"bytes ({stale_rec['id']}) -- it does not judge this content")
         else:
             status = "SATISFIED"
 
@@ -106,7 +128,7 @@ def build(*, config, records, action: str, files: dict,
         rows.append({"step": step, "family": family, "status": status,
                      "record_id": (record or {}).get("id"),
                      "subjects_covered": covered, "subjects_stale": stale,
-                     "why": None})
+                     "why": why})
 
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.
