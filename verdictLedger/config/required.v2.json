@@ -19,25 +19,48 @@
       "reason": "stub-first commits sorry-stubbed files on purpose, and CI at the PR owns build state; only a release asserts the corpus builds"
     },
     "check_encoding": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/encoding_whitelist.txt"
+      ]
     },
     "check_paths": {
       "family": "mechanical"
     },
     "check_frozen": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/class_baseline.txt",
+        "tools/verify/figures_baseline.txt",
+        "tools/verify/modal_baseline.txt",
+        "tools/verify/negatives_baseline.txt",
+        "tools/verify/pov_baseline.txt",
+        "tools/verify/prose_baseline.txt"
+      ]
     },
     "check_prose": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/prose_baseline.txt"
+      ]
     },
     "check_pov": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/pov_baseline.txt"
+      ]
     },
     "check_modal": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/modal_baseline.txt"
+      ]
     },
     "check_classes": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/class_baseline.txt"
+      ]
     },
     "check_invariants": {
       "family": "mechanical"
@@ -108,5 +131,6 @@
       "_why": "check_frozen demands it when a BASELINE ENTRY IS REMOVED -- the fail-closed record that an unexamined site had its liability discharged. With no type, deleting a baseline entry becomes free, which is a suppression mechanism losing its price.",
       "_emitter_contract": "MUST be recorded on EVERY run, not only when a baseline entry is removed: PASS when none was, and the discharge record when one was. A key that appears only sometimes is indistinguishable from a key nobody ran -- which is the enumerator-found-nothing defect, and the registry has no way to express 'conditional on an event' (its `when` is a PATH glob)."
     }
-  }
+  },
+  "_switches_v15": "A subject set is everything the verdict DEPENDS ON, not merely everything the checker read. Found by ZeroParadox 2026-08-23: check_pov recorded 291 subjects and NOT pov_baseline.txt, so grandfathering a violation into that baseline left the record reading SATISFIED -- every file it named was unchanged. V15 refuses a record that omits a declared switch, which turns a convention into a contract: with the switch as a subject, editing a baseline moves a blob the record names, the key goes STALE, and the checker re-runs. Declaring switches is NOT a narrowing and costs no reason -- it makes a type stricter."
 }

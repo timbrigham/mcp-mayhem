@@ -11,6 +11,8 @@ validator to return ok unconditionally and every probe must go red. Any probe th
 stays green was testing a proxy rather than the rule.
 """
 
+import json
+
 import pytest
 
 from conftest import good, set_policy
@@ -177,10 +179,10 @@ def test_v13_depth_cap_and_it_is_config(ledger, tmp_path, config_dir):
 def test_v12_cannot_override_your_own_prior_decision(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
     subj = [{"git_blob_id": "b" * 40, "path": "docs/x.md"}]
-    ledger.sign(step="check_prose", subjects=subj, who="tim",
+    ledger.sign(step="check_paths", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
     with pytest.raises(ValidationFailure) as exc:
-        ledger.override(step="check_prose", subjects=subj, who="tim",
+        ledger.override(step="check_paths", subjects=subj, who="tim",
                         reason="actually a false positive", basis=base)
     assert any(e.startswith("V12") for e in exc.value.violations)
 
@@ -188,9 +190,9 @@ def test_v12_cannot_override_your_own_prior_decision(ledger):
 def test_v12_a_different_person_may_override(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
     subj = [{"git_blob_id": "b" * 40, "path": "docs/x.md"}]
-    ledger.sign(step="check_prose", subjects=subj, who="tim",
+    ledger.sign(step="check_paths", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
-    out = ledger.override(step="check_prose", subjects=subj, who="reviewer-2",
+    out = ledger.override(step="check_paths", subjects=subj, who="reviewer-2",
                           reason="the gate was wrong", basis=base)
     assert out["appended"] is True
 
@@ -206,7 +208,7 @@ def test_the_key_is_readable_and_carries_no_second_hash(ledger):
     """
     out = ledger.append(good(verdict="FAIL", reason="check took 1.4s on host xyz"))
     assert out["appended"] is True
-    assert out["id"] == f"check_prose@{'a' * 40}#0"
+    assert out["id"] == f"check_paths@{'a' * 40}#0"
 
 
 @pytest.mark.parametrize("reason", [
@@ -224,7 +226,7 @@ def test_the_only_hash_in_a_record_is_gits(ledger):
     ledger contributes none of its own."""
     ledger.append(good())
     rec = ledger.store.records()[0]
-    assert rec["id"] == f"check_prose@{'a' * 40}#0"
+    assert rec["id"] == f"check_paths@{'a' * 40}#0"
     assert len(rec["id"]) < 64, "an opaque digest would have crept back in"
 
 
@@ -269,3 +271,79 @@ def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
         assert remaining == [], (
             f"probe still red with the rules neutered: {remaining} — it was "
             f"testing a proxy, not the rule")
+
+
+# -- ⭐ V15: a subject set is everything the verdict DEPENDS ON ---------------
+
+def _switched(config_dir, tmp_path, switches=("tools/verify/prose_baseline.txt",)):
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", "switches": list(switches)}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    return Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json")
+
+
+def test_v15_a_record_omitting_its_switch_is_refused(tmp_path, config_dir):
+    """⭐⭐ FOUND BY ZEROPARADOX 2026-08-23. `check_pov` recorded 291 subjects and NOT
+    `pov_baseline.txt`. Grandfather a new violation into that baseline and the record
+    still reads SATISFIED, because every file it names is unchanged. The verdict
+    changed; the record could not tell.
+
+    That is the exemption-switch fail-open arriving through the SUBJECT LIST rather
+    than through the gate — and it was a hole already, with no optimisation in play.
+    It becomes far worse under a skip-if-unchanged hook: the checker never re-runs, so
+    the suppression lands unverified.
+    """
+    led = _switched(config_dir, tmp_path)
+    with pytest.raises(ValidationFailure) as exc:
+        led.append(good(step="check_prose",
+                        subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"}]))
+    assert "V15" in str(exc.value)
+    assert "prose_baseline.txt" in str(exc.value)
+
+
+def test_v15_naming_the_switch_validates(tmp_path, config_dir):
+    led = _switched(config_dir, tmp_path)
+    out = led.append(good(
+        step="check_prose",
+        subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"},
+                  {"git_blob_id": "c" * 40, "path": "tools/verify/prose_baseline.txt"}]))
+    assert out["id"].startswith("check_prose@")
+
+
+def test_v15_makes_editing_a_baseline_go_STALE(tmp_path, config_dir):
+    """⭐ THE POINT OF THE RULE, not just its refusal. With the switch as a subject,
+    editing the baseline moves a blob the record NAMES — so the key goes stale and the
+    checker re-runs. The dependency becomes mechanical instead of remembered."""
+    from core import inventory as inventory_mod
+    led = _switched(config_dir, tmp_path)
+    led.append(good(
+        step="check_prose",
+        subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"},
+                  {"git_blob_id": "c" * 40, "path": "tools/verify/prose_baseline.txt"}]))
+    recs = led.store.records()
+
+    before = inventory_mod.build(
+        config=led.config, records=recs, action="commit",
+        files={"docs/x.md": "b" * 40, "tools/verify/prose_baseline.txt": "c" * 40},
+        ref="t", admission=["check_prose"])
+    after = inventory_mod.build(          # the baseline is edited, nothing else
+        config=led.config, records=recs, action="commit",
+        files={"docs/x.md": "b" * 40, "tools/verify/prose_baseline.txt": "d" * 40},
+        ref="t", admission=["check_prose"])
+
+    assert next(r for r in before["rows"]
+                if r["step"] == "check_prose")["status"] == "SATISFIED"
+    assert next(r for r in after["rows"]
+                if r["step"] == "check_prose")["status"] == "STALE"
+    assert after["complete"] is False
+
+
+def test_v15_declaring_switches_needs_no_reason(tmp_path, config_dir):
+    """⚠ `switches` is NOT a narrowing — it makes a type STRICTER. The
+    reason-less-narrowing rule exists to stop silent WEAKENING, and pricing the safe
+    direction the same as the dangerous one would just discourage the safe one."""
+    led = _switched(config_dir, tmp_path)          # no `reason` anywhere
+    reqs = led.config.requirements("commit")
+    assert reqs["check_prose"]["required"] is True
+    assert reqs["check_prose"]["switches"] == ["tools/verify/prose_baseline.txt"]

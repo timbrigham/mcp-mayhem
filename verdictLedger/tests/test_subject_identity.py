@@ -91,7 +91,7 @@ def test_blobs_at_agrees_with_blob_id(tmp_path):
 def test_a_sha256_subject_is_refused_not_appended(ledger):
     """⭐⭐ THE HEADLINE REGRESSION. Before this, the record appended and rotted."""
     with pytest.raises(ValidationFailure) as exc:
-        ledger.append({"schema": "zp.record.v1", "step": "check_prose", "verdict": "PASS",
+        ledger.append({"schema": "zp.record.v1", "step": "check_paths", "verdict": "PASS",
                        "tier": "M", "basis": {"kind": "tree", "value": "a" * 40,
                                               "resolved_from": "explicit"},
                        "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
@@ -106,13 +106,13 @@ def test_a_sha256_subject_is_refused_not_appended(ledger):
 
 
 def test_a_real_blob_id_validates(ledger):
-    out = ledger.append({"schema": "zp.record.v1", "step": "check_prose", "verdict": "PASS",
+    out = ledger.append({"schema": "zp.record.v1", "step": "check_paths", "verdict": "PASS",
                          "tier": "M", "basis": {"kind": "tree", "value": "a" * 40,
                                                 "resolved_from": "explicit"},
                          "decided": {"how": "signature", "who": "t", "passes": 1,
                                      "agreed": 1},
                          "subjects": [_subject(GIT_BLOB)], "run": {"id": "r"}})
-    assert out["id"].startswith("check_prose@")
+    assert out["id"].startswith("check_paths@")
 
 
 @pytest.mark.parametrize("bad,why", [
@@ -123,7 +123,7 @@ def test_a_real_blob_id_validates(ledger):
 ])
 def test_malformed_blob_ids_are_refused(ledger, bad, why):
     with pytest.raises(ValidationFailure):
-        ledger.append({"schema": "zp.record.v1", "step": "check_prose", "verdict": "PASS",
+        ledger.append({"schema": "zp.record.v1", "step": "check_paths", "verdict": "PASS",
                        "tier": "M", "basis": {"kind": "tree", "value": "a" * 40,
                                               "resolved_from": "explicit"},
                        "decided": {"how": "signature", "who": "t", "passes": 1,
@@ -142,7 +142,7 @@ def test_an_unresolvable_repo_fails_CLOSED_not_open(ledger, monkeypatch):
     """
     monkeypatch.setattr(validate_mod, "_OBJECT_FORMAT", 0)
     with pytest.raises(ValidationFailure):
-        ledger.append({"schema": "zp.record.v1", "step": "check_prose",
+        ledger.append({"schema": "zp.record.v1", "step": "check_paths",
                        "verdict": "PASS", "tier": "M",
                        "basis": {"kind": "tree", "value": "a" * 40,
                                  "resolved_from": "explicit"},
@@ -187,15 +187,15 @@ def test_a_legacy_sha256_record_reads_LEGACY_IDENTITY_not_stale(ledger):
     informative.
     """
     from core import inventory as inventory_mod
-    legacy = [{"id": "check_prose@old#0", "step": "check_prose", "verdict": "PASS",
+    legacy = [{"id": "check_paths@old#0", "step": "check_paths", "verdict": "PASS",
                "revision": 0,
                "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
                "subjects": [{"path": "x.lean", "sha256": "b" * 64}],
                "basis": {"kind": "tree", "value": "a" * 40}}]
     inv = inventory_mod.build(config=ledger.config, records=legacy, action="push",
                               files={"x.lean": "c" * 40}, ref="deadbeef",
-                              admission=["check_prose"])
-    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+                              admission=["check_paths"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_paths")
     assert row["status"] == "LEGACY_IDENTITY"
     assert row["status"] != "STALE"
     assert "superseded" in row["why"]
@@ -205,28 +205,28 @@ def test_a_legacy_record_still_blocks_the_gate(ledger):
     """⚠ Distinguishing it must not EXCUSE it. An unusable record is not a passing
     one, and `complete` has to stay false."""
     from core import inventory as inventory_mod
-    legacy = [{"id": "check_prose@old#0", "step": "check_prose", "verdict": "PASS",
+    legacy = [{"id": "check_paths@old#0", "step": "check_paths", "verdict": "PASS",
                "revision": 0,
                "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
                "subjects": [{"path": "x.lean", "sha256": "b" * 64}],
                "basis": {"kind": "tree", "value": "a" * 40}}]
     inv = inventory_mod.build(config=ledger.config, records=legacy, action="push",
                               files={"x.lean": "c" * 40}, ref="deadbeef",
-                              admission=["check_prose"])
+                              admission=["check_paths"])
     assert inv["complete"] is False
     assert inv["legacy_identity"] == 1
 
 
 def test_the_legacy_remedy_says_re_record_not_re_run(ledger):
     from core import inventory as inventory_mod, render as render_mod
-    legacy = [{"id": "check_prose@old#0", "step": "check_prose", "verdict": "PASS",
+    legacy = [{"id": "check_paths@old#0", "step": "check_paths", "verdict": "PASS",
                "revision": 0,
                "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
                "subjects": [{"path": "x.lean", "sha256": "b" * 64}],
                "basis": {"kind": "tree", "value": "a" * 40}}]
     inv = inventory_mod.build(config=ledger.config, records=legacy, action="push",
                               files={"x.lean": "c" * 40}, ref="deadbeef",
-                              admission=["check_prose"])
+                              admission=["check_paths"])
     line = render_mod.render_inventory(inv)
     assert "LEGACY_IDENTITY" in line
     assert "re-record" in line

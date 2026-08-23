@@ -85,6 +85,30 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     verdict = record.get("verdict")
     how = decided.get("how")
 
+    # V15 — ⭐⭐ A SUBJECT SET IS EVERYTHING THE VERDICT DEPENDS ON, not merely
+    # everything the checker read. Measured by ZeroParadox 2026-08-23: `check_pov`
+    # recorded 291 subjects and NOT `pov_baseline.txt`, so grandfathering a new
+    # violation into that baseline left the record reading SATISFIED -- every file it
+    # named was unchanged. The verdict changed; the record could not tell.
+    #
+    # A convention cannot hold this: a record missing its switch looks perfectly
+    # healthy and simply never goes stale, so the next checker to forget reintroduces
+    # the hole invisibly. With the switch as a subject, editing a baseline moves a blob
+    # the record names, the key goes STALE, and the checker re-runs.
+    step_name = record.get("step")
+    spec = (config.requirements() or {}).get(step_name) if step_name else None
+    declared = list((spec or {}).get("switches") or [])
+    if declared:
+        named = {s.get("path") for s in (record.get("subjects") or [])
+                 if isinstance(s, dict)}
+        absent = [p for p in declared if p not in named]
+        if absent:
+            out.append(
+                f"V15: step {step_name!r} declares switches {absent} that are not among "
+                f"its subjects. A verdict that depends on an exemption list must NAME "
+                f"it, or editing that list cannot make the key stale and a suppression "
+                f"lands unverified.")
+
     # V1 — a silent fallback to a permissive basis is FRZ-4. Recording it as
     # FALLBACK is what makes basis drift visible without probing for it.
     if basis.get("resolved_from") not in schema.RESOLVED_FROM:

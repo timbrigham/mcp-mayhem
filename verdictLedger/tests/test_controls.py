@@ -88,10 +88,16 @@ def test_a_minimal_entry_is_required_for_every_action(ledger):
     """⚠ `check_prose`, not `build`. build carries an actions:["tag"] narrowing now,
     so it is no longer a MINIMAL entry and asserting on it would test the narrowing
     while claiming to test the default. A minimal entry is `{"family": ...}` alone."""
-    minimal = "check_prose"
-    assert set(ledger.config.required["types"][minimal]) == {"family"}, (
-        f"{minimal} is no longer a minimal entry; this control needs a type with no "
-        f"`actions` and no `when`, or it stops testing required-by-default")
+    minimal = "check_paths"
+    # ⚠ Test the PROPERTY, not the key set. `switches` is not a narrowing — it makes a
+    # type stricter — so its presence must not disqualify a type from being minimal
+    # here. An exact-equality assertion said otherwise and would have pushed the next
+    # reader to drop a switch to keep a test green.
+    narrowings = {"actions", "when", "scope"} & set(
+        ledger.config.required["types"][minimal])
+    assert not narrowings, (
+        f"{minimal} now carries {narrowings}; this control needs a type with no "
+        f"narrowing, or it stops testing required-by-default")
     reqs = {a: ledger.config.requirements(a) for a in ledger.config.actions}
     for action, r in reqs.items():
         assert r[minimal]["required"] is True, f"{minimal} not required for {action}"
@@ -135,7 +141,7 @@ def _basis(v="a" * 40):
 
 
 def test_stale_never_collapses_into_satisfied(ledger):
-    ledger.append(good(step="check_prose",
+    ledger.append(good(step="check_paths",
                        subjects=[{"git_blob_id": "b" * 40, "path": "x.lean"}]))
     recs = ledger.store.records()
     fresh = inventory_mod.build(config=ledger.config, records=recs, action="commit",
@@ -143,8 +149,8 @@ def test_stale_never_collapses_into_satisfied(ledger):
     moved = inventory_mod.build(config=ledger.config, records=recs, action="commit",
                                 files={"x.lean": "c" * 40})
     assert next(r for r in fresh["rows"]
-                if r["step"] == "check_prose")["status"] == "SATISFIED"
-    stale = next(r for r in moved["rows"] if r["step"] == "check_prose")
+                if r["step"] == "check_paths")["status"] == "SATISFIED"
+    stale = next(r for r in moved["rows"] if r["step"] == "check_paths")
     # ⚠ STALE, not MISSING and never SATISFIED: the step DID examine this path, the
     # content moved underneath it. Re-run, versus run-at-all — different remedies.
     assert stale["status"] == "STALE"

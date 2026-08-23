@@ -145,7 +145,12 @@ class Config:
         out: dict[str, dict] = {}
         for name, spec in self.types.items():
             entry = {"family": spec["family"], "required": True,
-                     "when": None, "scope": None, "reason": None, "narrowed": False}
+                     "when": None, "scope": None, "reason": None, "narrowed": False,
+                     # ⚠ NOT a narrowing: `switches` makes a type STRICTER, so it
+                     # costs no stated reason. The reason-less-narrowing rule exists to
+                     # stop silent WEAKENING; requiring one here would price the safe
+                     # direction the same as the dangerous one.
+                     "switches": list(spec.get("switches") or [])}
             reason = spec.get("reason")
             actions = spec.get("actions")
             when = spec.get("when")
