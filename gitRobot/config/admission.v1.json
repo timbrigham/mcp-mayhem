@@ -16,7 +16,6 @@
       "check_classes",
       "check_encoding",
       "check_figures",
-      "check_frozen",
       "check_hashes",
       "check_invariants",
       "check_modal",
@@ -37,7 +36,6 @@
       "check_classes",
       "check_encoding",
       "check_figures",
-      "check_frozen",
       "check_hashes",
       "check_invariants",
       "check_modal",
@@ -61,7 +59,6 @@
       "check_classes",
       "check_encoding",
       "check_figures",
-      "check_frozen",
       "check_hashes",
       "check_invariants",
       "check_modal",
@@ -81,5 +78,6 @@
       "claim_review"
     ]
   },
-  "_req2_2026_08_23": "rely and claim_review admitted at every action on ZeroParadox's request. Both were live push-blocking properties whose ONLY representation was a *_cleared.txt file, so retiring the signal path without them would have deleted coverage rather than migrated it. cr_cleared.txt is the sharper loss: without a claim_review type, deleting a check_frozen baseline entry becomes free."
+  "_req2_2026_08_23": "rely and claim_review admitted at every action on ZeroParadox's request. Both were live push-blocking properties whose ONLY representation was a *_cleared.txt file, so retiring the signal path without them would have deleted coverage rather than migrated it. cr_cleared.txt is the sharper loss: without a claim_review type, deleting a check_frozen baseline entry becomes free.",
+  "_check_frozen_retired_2026_08_23": "REMOVED from every action, mirroring the registry's actions:[] narrowing -- the same shape as `genesis`, which is admitted by nothing because the registry narrows it with a reason. The REASON lives in required.v2.json and not here: a list of names cannot explain itself, and a gate that vanished from a list nobody diffed is how a bar drops silently. check_frozen remains REGISTERED and its records remain valid; it simply no longer gates."
 }

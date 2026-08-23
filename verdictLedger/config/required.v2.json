@@ -45,7 +45,8 @@
         "tools/verify/pov_baseline.txt",
         "tools/verify/prose_baseline.txt"
       ],
-      "reason": "its property is about the accepted-defect baselines, nothing else"
+      "reason": "superseded by the independent-git-spaces rewrite; the frozen baselines describe a topology that no longer exists, so the freeze comparison cannot succeed and never will. STILL REGISTERED on purpose -- Tim, 2026-08-23: 'I have no problem if you want to still allow it to be submitted, it just shouldn't be required in order to pass.' Recording stays valid; gating stops.",
+      "actions": []
     },
     "check_prose": {
       "family": "mechanical",

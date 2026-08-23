@@ -632,3 +632,52 @@ def test_the_shipped_scopes_match_what_was_measured(ledger):
     assert reqs["claim_review"]["scope"] == six
     assert reqs["guards"]["scope"] is None, "guards was scoped on an inference"
     assert reqs["check_hashes"]["scope"] is None
+
+
+# -- ⭐ a type may be RECORDABLE without being REQUIRED ----------------------
+
+def test_check_frozen_records_but_does_not_gate(ledger):
+    """⭐ THE TWO LISTS EARNING THEIR KEEP. Tim, 2026-08-23: "I have no problem if you
+    want to still allow it to be submitted.. it just shouldn't be required in order to
+    pass." That is exactly the registry/admission split — what may be RECORDED versus
+    what must PASS — and it is the first time the distinction has been used for its
+    stated purpose rather than argued about.
+
+    `check_frozen` is from a topology that no longer exists (the independent-git-spaces
+    rewrite), so its freeze comparison cannot succeed and never will. Registering it
+    keeps its records valid and its history readable; narrowing it stops a permanently
+    impossible check from blocking every action.
+    """
+    assert ledger.config.is_registered("check_frozen"), "records must stay valid"
+    for action in ("commit", "push", "tag"):
+        row = ledger.config.requirements(action)["check_frozen"]
+        assert row["required"] is False, f"still gating {action}"
+        assert "topology that no longer exists" in (row["reason"] or "")
+
+
+def test_a_failing_check_frozen_no_longer_blocks(ledger):
+    """⚠ THE PROPERTY, not just the config. A FAIL record for a narrowed type must not
+    reach the gating set at all — otherwise the retirement is cosmetic."""
+    ledger.append(good(step="check_frozen", verdict="FAIL",
+                       reason="a frozen baseline grew",
+                       subjects=[{"git_blob_id": "b" * 40,
+                                  "path": "tools/verify/" + f + "_baseline.txt"}
+                                 for f in ("class", "figures", "modal", "negatives",
+                                           "pov", "prose")]))
+    inv = inventory_mod.build(
+        config=ledger.config, records=ledger.store.records(), action="push",
+        files={"tools/verify/class_baseline.txt": "b" * 40}, ref="t",
+        admission=["check_frozen"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_frozen")
+    assert row["status"] == "NOT_APPLICABLE"
+    assert row["gating"] is False
+    assert inv["failed"] == 0, "a retired type still counted toward failure"
+
+
+def test_the_reason_lives_in_the_registry_not_the_admission_set(ledger):
+    """⚠ §12-0-ter: "Admission should never carry a policy exception; it is a list of
+    names, and a list of names cannot explain itself." A gate that vanished from a
+    list nobody diffed is how a bar drops silently."""
+    reason = ledger.config.requirements("push")["check_frozen"]["reason"]
+    assert reason and len(reason) > 40
+    assert "Tim" in reason, "the decision is unattributed"
