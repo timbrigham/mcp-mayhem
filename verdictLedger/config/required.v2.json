@@ -90,7 +90,12 @@
         "scripts/build_*.py",
         "scripts/zp_utils.py"
       ],
-      "reason": "fingerprints the register, the 39 build scripts, and zp_utils.py -- the module every build script imports, verified against shared_build_baseline.txt. `scripts/*` was too broad: fnmatch's * crosses /, so it swept in the fonts, scan_pdfs.py and the private-only scripts, none of which the property covers"
+      "reason": "fingerprints the register, the build scripts it names, and zp_utils.py -- the module every build script imports, verified against shared_build_baseline.txt. The three excluded builders render GENERATED markdown (BOTTOMELEMENT.md, SNAP.md, MANIFEST.md) which carries no register row, so no fingerprint is owed; they are named individually rather than matched so a fourth such builder re-arms the warning instead of inheriting the exemption.",
+      "scope_exclude": [
+        "scripts/build_dictionary_map.py",
+        "scripts/build_manifest.py",
+        "scripts/build_snap_map.py"
+      ]
     },
     "check_moved": {
       "family": "mechanical"

@@ -805,3 +805,22 @@ def test_a_star_glob_crosses_slashes_and_double_star_does_not(ledger):
     assert fnmatch.fnmatch("README.md", "**/*") is False
     assert fnmatch.fnmatch("a.pdf", "**/*.pdf") is False
     assert fnmatch.fnmatch("a.pdf", "*.pdf") is True
+
+
+def test_exclusions_are_named_individually_not_matched(ledger):
+    """⭐ THE DIRECTION AN EXCLUSION MUST FAIL IN. `check_hashes` excludes three
+    generated-doc builders that render markdown carrying no register row, so no
+    fingerprint is owed. They are listed BY NAME rather than matched with something
+    like `scripts/build_*_map.py`, because a pattern would silently hand the exemption
+    to a fourth such builder added later — and an exemption nobody chose is exactly
+    what `subjects_unexamined` exists to surface.
+
+    Three names cost one line each and re-arm the warning the day a new one appears.
+    """
+    excl = ledger.config.requirements("commit")["check_hashes"]["scope_exclude"]
+    assert excl == ["scripts/build_dictionary_map.py",
+                    "scripts/build_manifest.py",
+                    "scripts/build_snap_map.py"]
+    assert not any("*" in e or "?" in e for e in excl), (
+        "an exclusion became a pattern; a builder added later would inherit the "
+        "exemption silently")
