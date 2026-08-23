@@ -347,3 +347,46 @@ def test_v15_declaring_switches_needs_no_reason(tmp_path, config_dir):
     reqs = led.config.requirements("commit")
     assert reqs["check_prose"]["required"] is True
     assert reqs["check_prose"]["switches"] == ["tools/verify/prose_baseline.txt"]
+
+
+# -- ⭐ the REVIEW record shape, pinned so the answer cannot drift -------------
+
+def test_a_single_pass_agent_verdict_cannot_wear_an_agreement_badge(ledger):
+    """⭐ THE RULE THAT MAKES `agreement` MEAN SOMETHING. ZeroParadox is building the
+    emitter that lets review gates write records instead of `*_cleared.txt`, and asked
+    for this shape rather than probing it — because a probe record for `editorial`
+    would, if accepted, SATISFY A GATE NO REVIEW RAN."""
+    with pytest.raises(ValidationFailure, match="V3"):
+        ledger.append(good(step="check_paths", verdict="PASS",
+                           decided={"how": "agreement", "passes": 1, "agreed": 1,
+                                    "who": None}))
+
+
+def test_agreement_requires_unanimity_not_just_a_quorum(ledger):
+    with pytest.raises(ValidationFailure, match="agreed == passes"):
+        ledger.append(good(step="check_paths", verdict="PASS",
+                           decided={"how": "agreement", "passes": 3, "agreed": 2,
+                                    "who": None}))
+
+
+def test_a_genuine_agreement_round_validates_without_who(ledger):
+    """⚠ `who` is enforced by HOW, never by family. For an agreement record the
+    accountability is `passes >= 3` plus `run.id`; forcing `who` would produce
+    placeholder attribution, which is worse than an honest absence."""
+    out = ledger.append(good(step="check_paths", verdict="PASS",
+                             decided={"how": "agreement", "passes": 3, "agreed": 3,
+                                      "who": None}))
+    assert out["id"]
+
+
+def test_a_review_family_step_may_legitimately_record_mechanically(ledger):
+    """⭐ WHY FAMILY CANNOT BE THE TRIGGER FOR REQUIRING `who`. `claim_review` is
+    review-family, and its PASS — "no baseline entry was removed" — genuinely IS a
+    computation. A rule keyed on family would refuse the one review-family record that
+    already works, and would have been added on the way to answering a question about
+    the four that do not exist yet."""
+    assert ledger.config.requirements("push")["claim_review"]["family"] == "review"
+    out = ledger.append(good(step="claim_review", tier="H", verdict="PASS",
+                             decided={"how": "mechanical", "passes": 1, "agreed": 1,
+                                      "who": None}))
+    assert out["id"].startswith("claim_review@")

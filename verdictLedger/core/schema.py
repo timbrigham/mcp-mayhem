@@ -34,6 +34,38 @@ TIERS = ("M", "A", "H")
 VERDICTS = ("PASS", "FAIL", "UNDECIDED")
 BASIS_KINDS = ("range", "ref", "scope", "tree")
 RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
+# ⚠⚠ HOW A VERDICT WAS REACHED — and for a REVIEW-family step this field is the whole
+# difference between a record that means a review happened and one that means nothing.
+# Written here rather than in a thread because ZeroParadox asked (REQ-21) and correctly
+# refused to determine it by experiment: emitting a probe `editorial` record to see
+# whether the shape is accepted would, if accepted, SATISFY A GATE NO REVIEW RAN.
+#
+#   mechanical   a computation. Right for checkers. Also right for `claim_review`,
+#                whose PASS ("no baseline entry was removed") genuinely is computed —
+#                which is why FAMILY cannot be what decides this field.
+#   agreement    an agent round that actually executed. V3: a PASS requires
+#                `agreed == passes` and `passes >= policy.agreement.min_passes` (3),
+#                so a single-pass LLM verdict cannot wear an agreement badge.
+#   signature    a human accepting without the round being run. V5 requires a non-null
+#                `who`: an anonymous human pass is the *_cleared.txt hole with extra
+#                steps. This is the sanctioned cheap route while emitters are landing —
+#                a human accepting a key is attributable; a key that never had to exist
+#                is not.
+#   override     a REGRADE: "the gate erred", the opposite signal to `signature`, which
+#                is an ACCEPT of a standing FAIL as carried debt. V12 requires `who` and
+#                forbids overriding your own prior decision.
+#
+# ⚠ `who` is enforced by HOW, never by family — signature and override require it,
+# mechanical and agreement do not. For an `agreement` record the accountability is
+# `passes >= 3` plus `run.id`; setting `who` to name the panel is good practice and is
+# deliberately NOT a rule, because a forced field produces placeholder values and a
+# placeholder attribution is worse than an honest absence.
+#
+# ⚠ NOTHING SIGNS A RECORD CRYPTOGRAPHICALLY. `Ledger.sign()` is a verb, not a
+# signature: its authority is that the stream is append-only, validated, and binds the
+# verdict to content by git blob id. §2 rules a key out — a local key is readable by
+# the actor it defends against, and the value here is capability removal and
+# auditability, not authentication.
 DECIDED_HOW = ("mechanical", "agreement", "signature", "override")
 
 # The primary key. Everything else in the record is payload determined by it.
