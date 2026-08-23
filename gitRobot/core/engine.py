@@ -202,7 +202,7 @@ class GitRobot:
                                                 ledger_client.admission_for("push"))
             if inventory.get("admission_state") in ("EMPTY", "UNSET"):
                 blockers.append("nothing gates a push: the admission set for 'push' is "
-                                "empty, so promote a verdict type in config/admission.json")
+                                "empty, so promote a verdict type in config/admission.v1.json")
             elif not inventory.get("complete"):
                 blockers.append(f"verdictLedger: {inventory.get('satisfied')}/"
                                 f"{inventory.get('required')} admission keys satisfied "
@@ -551,7 +551,7 @@ class GitRobot:
             raise self._refuse(
                 "push", args, f"the admission set could not be read: {exc}",
                 "gitRobot refuses rather than guessing what should gate a push — an "
-                "absent list is not an empty one. Fix config/admission.json.",
+                "absent list is not an empty one. Fix config/admission.v1.json.",
                 reason=reason, target=target)
 
         # ⚠⚠ AN EMPTY ADMISSION SET REFUSES. It does NOT allow-with-a-warning.
@@ -563,7 +563,7 @@ class GitRobot:
         # fail-closed — a warning nobody is obliged to act on gates nothing.
         #
         # This blocks main-repo pushes until at least one type is promoted in
-        # config/admission.json AND a checker records verdicts. That is the point:
+        # config/admission.v1.json AND a checker records verdicts. That is the point:
         # the system should be unusable in exactly the state where it cannot tell
         # you whether anything was checked. `.claude-local` is unaffected — it never
         # reaches here.
@@ -578,7 +578,7 @@ class GitRobot:
                 f"asked to certify {head[:12]} against zero requirements. A push "
                 f"admitted against zero requirements is not a checked push; it is an "
                 f"unchecked one with a receipt.",
-                f"Promote at least one verdict type into config/admission.json under "
+                f"Promote at least one verdict type into config/admission.v1.json under "
                 f"'push', and make sure a checker actually records that type against "
                 f"the hash being pushed. The ledger has {len(not_gating)} registered "
                 f"type(s) available to promote: {named}. Registering a type is free; "

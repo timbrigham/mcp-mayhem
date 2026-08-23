@@ -95,7 +95,7 @@ def test_an_empty_admission_set_refuses_rather_than_warning(robot, repo, tmp_pat
 
     assert "NOTHING GATES THIS PUSH" in str(exc.value)
     # ⚠ It must name the way OUT, or the only discoverable fix is to delete the gate.
-    assert "config/admission.json" in exc.value.alternative
+    assert "config/admission.v1.json" in exc.value.alternative
     assert "build" in exc.value.alternative          # a type available to promote
     remote = robot.read("log", ["origin/illustrated", "--oneline"])["output"]
     assert len(remote.splitlines()) == 1        # still only the initial commit
@@ -211,7 +211,7 @@ def test_a_down_ledger_never_falls_back_to_the_exit_code_path(robot, repo, tmp_p
 def test_registering_a_type_does_not_gate_a_push(tmp_path):
     """⭐ THE 20-EXPERIMENTAL-GATES CASE. Registering is free; gating is a
     deliberate promotion."""
-    cfg = tmp_path / "admission.json"
+    cfg = tmp_path / "admission.v1.json"
     cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
                                "actions": {"commit": [], "push": [], "tag": []}}),
                    encoding="utf-8")
@@ -219,7 +219,7 @@ def test_registering_a_type_does_not_gate_a_push(tmp_path):
 
 
 def test_promotion_binds_immediately(tmp_path):
-    cfg = tmp_path / "admission.json"
+    cfg = tmp_path / "admission.v1.json"
     cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
                                "actions": {"commit": [], "push": ["build"], "tag": []}}),
                    encoding="utf-8")
@@ -238,7 +238,7 @@ def test_a_missing_admission_set_refuses_rather_than_assuming_empty(robot, repo,
 
 
 def test_an_unnamed_action_refuses(tmp_path):
-    cfg = tmp_path / "admission.json"
+    cfg = tmp_path / "admission.v1.json"
     cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
                                "actions": {"commit": []}}), encoding="utf-8")
     with pytest.raises(GitRobotError, match="names no entry for action"):

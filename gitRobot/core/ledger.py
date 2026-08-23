@@ -5,9 +5,11 @@ ALLOWED — 19 blocking checks green, preflight passed, audited, pushed — whil
 ledger's inventory for that exact hash reported `0/19 keys, complete: false`. Two
 systems, opposite answers, and the enforcement point never asked.
 
-`push` requires a passing `preflight()`, `preflight` runs `hooks.py pre-push`, and
-that reads exit codes and `*_cleared.txt`. **The ledger was never consulted.** This
-module is that wire.
+`push` REQUIRED a passing `preflight()`, `preflight` ran `hooks.py pre-push`, and
+that read exit codes and `*_cleared.txt`. **The ledger was never consulted.** This
+module is that wire, and the preflight precondition is gone -- it was a second
+answer to the same question, and the weaker of two answers is the one that lets
+things through.
 
 ⚠ TWO LISTS, NOT TWO COPIES. The ledger owns the REGISTRY (what may be recorded,
 how `complete` is computed, every threshold). gitRobot owns only the ADMISSION SET
@@ -96,16 +98,21 @@ def call(tool: str, arguments: dict) -> dict:
 
 # -- the admission set ---------------------------------------------------------
 
-DEFAULT_ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.json"
+DEFAULT_ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 
 
 def admission_for(action: str, path=None) -> list:
     """Which registered types must be green to let `action` through.
 
-    ⚠ EXPLICIT, NEVER DEFAULTED. A type gates because it was named, not because it
-    exists — otherwise a correct implementation blocks every push until every
-    registered type has an emitter, and a model whose correct implementation bricks
-    the system is describing the wrong system.
+    ⚠ EXPLICIT, NEVER DEFAULTED. A type gates because it was NAMED here, not because
+    it exists in the registry. Defaulting to "every registered type gates" would brick
+    the push path with checks nobody chose.
+
+    ⚠⚠ BUT AN EMPTY LIST IS NOT A RESTING STATE. `push` refuses outright when this
+    returns [] for the main repo (see engine._require_inventory). Those two rules are
+    not in tension: the first says WHICH types gate, the second says the list may not
+    be empty. An empty set means the action would be certified against zero
+    requirements, which is an unchecked push with a receipt.
 
     ⚠ The cost of an explicit list is that a finished gate nobody promotes never
     gates, silently. That is paid for by the ledger printing the
