@@ -113,6 +113,13 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                              if r["gating"] and r["status"] == "LEGACY_IDENTITY"),
             "admission_state": inv.get("admission_state"),
             "not_gating": inv.get("registered_not_admitting") or [],
+            # the thinnest gating step at this commit, so a green key over a narrow
+            # scope is visible on THE PUSH PATH and not only in `inventory`
+            "thinnest": min(
+                ((r["step"], r["scope"] - r["subjects_unexamined"], r["scope"])
+                 for r in inv["rows"]
+                 if r.get("gating") and r.get("subjects_unexamined")),
+                key=lambda t: t[1] / t[2] if t[2] else 1, default=None),
         })
 
     # ⚠ An EMPTY range is not a satisfied one. Pushing nothing is legitimate, but it
@@ -170,6 +177,15 @@ def render(result: dict) -> str:
     lines = [f"{'ALLOWED' if result['allowed'] else 'REFUSED'}  push  "
              f"{result['blocking_count']}/{result['commits_in_range']} commit(s) short"
              f"  @ {result['range']}"]
+
+    # ⚠⭐ NARROWED COVERAGE, ON THE PUSH PATH. Measured 2026-08-23: a step that
+    # examined one file of 201 read SATISFIED. `inventory` names it; without this the
+    # push path -- the one that matters -- would still be silent.
+    thin = [r["thinnest"] for r in result.get("commits") or [] if r.get("thinnest")]
+    if thin:
+        step, seen, scope = min(thin, key=lambda t: t[1] / t[2] if t[2] else 1)
+        lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
+                     f"{seen}/{scope} in-scope paths (reported, not blocking)")
 
     if result.get("admission_state") in ("EMPTY", "UNSET"):
         lines.append("  ⚠⚠ NOTHING GATES THIS PUSH — the admission set is "
