@@ -81,10 +81,18 @@ def test_a_subcommand_string_with_arguments_is_rejected(robot):
 
 
 def test_status_reports_what_would_block_a_push(robot):
+    """⚠ `would_block_push` must be answered by THE THING THAT BLOCKS.
+
+    It used to report a preflight bit while push refused on something else entirely.
+    A status that says "clear" over a push that refuses is worse than no status,
+    because it sends the reader hunting for a bug in the wrong system. With no ledger
+    reachable (the suite default) the honest answer is that push WILL refuse — not
+    that nothing is known and therefore nothing is wrong.
+    """
     result = robot.status()
-    assert result["preflight_ok"] is False
-    assert any("preflight" in b for b in result["would_block_push"])
+    assert any("verdictLedger unreachable" in b for b in result["would_block_push"])
     assert any("gate pipeline is missing" in b for b in result["would_block_push"])
+    assert result["inventory"] is None
 
 
 def test_reads_work_with_no_gate_pipeline_present(robot):

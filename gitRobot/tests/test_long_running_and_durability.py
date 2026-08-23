@@ -48,14 +48,19 @@ def test_the_verdict_lands_afterwards_and_authorises_a_push(robot, repo, tmp_pat
 
     robot.preflight(wait=True)
     assert robot.preflight_status()["state"] == "passed"
+    # ⚠ the push is authorised by the LEDGER (ledger_ok), not by the preflight
+    # above — which is now only a way to RUN the checks, never to certify them.
     assert robot.push("illustrated", reason="shipping")["decision"] == "allowed"
 
 
-def test_a_running_preflight_is_not_a_verdict(robot, repo, fake_gate):
-    """An in-flight run must not satisfy push's precondition."""
+def test_a_running_preflight_is_not_a_verdict(robot, repo, fake_gate, ledger_refuses):
+    """An in-flight run must not authorise a push — and now it CANNOT, because a
+    preflight no longer authorises anything at all. Kept as a control rather than
+    deleted: the property is what matters, and a future refactor could reintroduce
+    the shortcut it names."""
     fake_gate(0)
     robot.preflight()
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+    with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="too early")
 
 
@@ -67,6 +72,7 @@ def test_a_second_preflight_is_refused_while_one_runs(robot, fake_gate):
 
 
 def test_an_interrupted_run_reports_died_not_silence(robot, repo, fake_gate):
+    from core import ledger as ledger_client
     """THE defect. A run killed mid-flight left no trace at all, so it was
     indistinguishable from never having been attempted. It must now be nameable."""
     fake_gate(0)
@@ -87,7 +93,7 @@ def test_an_interrupted_run_reports_died_not_silence(robot, repo, fake_gate):
     assert state["run_id"] == "deadrun"
     assert "interrupted" in state["note"]
     # and it still does not authorise a push
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+    with pytest.raises(ledger_client.LedgerUnreachable):
         robot.push("illustrated", reason="shipping on a corpse")
 
 

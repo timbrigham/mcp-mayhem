@@ -76,6 +76,49 @@ def test_the_refusal_is_audited_like_any_other(robot, repo, tmp_path, fake_gate,
     assert "admission set" in record["detail"]
 
 
+# -- ⭐ AN EMPTY ADMISSION SET REFUSES ----------------------------------------
+
+def test_an_empty_admission_set_refuses_rather_than_warning(robot, repo, tmp_path,
+                                                            fake_gate, ledger_empty):
+    """⭐⭐ THE SECOND HALF OF THE 2026-08-23 FAILURE, and the subtler half.
+
+    Tim: "It should have been impossible to push without having the preset of
+    requirements from verdictLedger created." An EMPTY admission set is that preset
+    not existing. The first build of this gate rendered it as ALLOWED with a loud
+    capitalised warning — which is fail-OPEN in the costume of fail-closed, because
+    a warning nobody is obliged to act on gates nothing at all.
+    """
+    fake_gate(0)
+    _commit(robot, repo, tmp_path)
+    with pytest.raises(RefusalError) as exc:
+        robot.push("illustrated", reason="shipping")
+
+    assert "NOTHING GATES THIS PUSH" in str(exc.value)
+    # ⚠ It must name the way OUT, or the only discoverable fix is to delete the gate.
+    assert "config/admission.json" in exc.value.alternative
+    assert "build" in exc.value.alternative          # a type available to promote
+    remote = robot.read("log", ["origin/illustrated", "--oneline"])["output"]
+    assert len(remote.splitlines()) == 1        # still only the initial commit
+
+
+def test_the_empty_refusal_distinguishes_empty_from_unsatisfied(robot, repo, tmp_path,
+                                                                fake_gate, ledger_empty):
+    """"Nothing was required" and "requirements failed" have different remedies —
+    promote a type vs. fix the code. Reporting one as the other sends the reader to
+    the wrong system."""
+    fake_gate(0)
+    _commit(robot, repo, tmp_path)
+    with pytest.raises(RefusalError) as exc:
+        robot.push("illustrated", reason="shipping")
+    assert "admission set is not satisfied" not in str(exc.value)
+
+
+def test_status_names_the_empty_set_as_a_blocker(robot, ledger_empty):
+    """⚠ A status that says "clear" over a push that refuses is worse than no status."""
+    blockers = robot.status()["would_block_push"]
+    assert any("nothing gates a push" in b for b in blockers)
+
+
 # -- the inventory is consulted at PUSH, over the pushed hash, every time -----
 
 def test_the_inventory_is_asked_for_the_current_head(robot, repo, tmp_path,
@@ -91,8 +134,8 @@ def test_the_inventory_is_asked_for_the_current_head(robot, repo, tmp_path,
     def spy(ref, action, admission=None):
         seen.append((ref, action))
         return {"ok": True, "complete": True, "ref": ref, "action": action,
-                "admitted": [], "admission_state": "EMPTY", "policy_sha": "p",
-                "required": 0, "satisfied": 0, "line": "ALLOWED"}
+                "admitted": ["build"], "admission_state": "SET", "policy_sha": "p",
+                "required": 1, "satisfied": 1, "line": "ALLOWED"}
 
     monkeypatch.setattr(ledger_client, "inventory", spy)
     robot.push("illustrated", reason="shipping")

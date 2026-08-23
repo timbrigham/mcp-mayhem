@@ -9,7 +9,11 @@
 
   "_the_cost_and_its_control": "An explicit list reintroduces the hazard the registry header warns about: a finished gate nobody promotes never gates, silently. That is paid for by the ledger printing `registered_not_admitting` on EVERY allow and EVERY refusal, so a promotion gap is visible on every run rather than discovered a year later. Same principle as a downgraded gate having to get louder.",
 
-  "_empty_is_legitimate_but_loud": "These lists start EMPTY on purpose: as of 2026-08-23 no ZeroParadox checker calls record.py, so every key would be MISSING and any non-empty set would brick the push path. An empty set means the action is admitted WITHOUT any verdict gating it, and `render_inventory` says exactly that in capitals. Promote a type here the moment its emitter lands -- promotion binds immediately.",
+  "_empty_REFUSES_it_is_not_legitimate": "An EMPTY list for an action REFUSES that action on the main repo. It does not allow-with-a-warning. This was the second half of the 2026-08-23 failure and the subtler half: the first build of this gate rendered EMPTY as ALLOWED plus a loud capitalised warning, which is fail-OPEN in the costume of fail-closed -- a warning nobody is obliged to act on gates nothing. Tim: \"It should have been impossible to push without having the preset of requirements from verdictLedger created.\" An empty set IS that preset not existing.",
+
+  "_the_consequence_is_intended": "As of 2026-08-23 no ZeroParadox checker calls record.py, so `push` on the main repo is BLOCKED until a type is promoted here AND something records it. That is the point: the system should be unusable in exactly the state where it cannot tell you whether anything was checked. The refusal names the registered types available to promote, so the way out is discoverable without reading this file. `.claude-local` is unaffected -- it has no pipeline and never reaches the gate.",
+
+  "_which_is_still_explicit_not_defaulted": "Note this does NOT mean every registered type gates by default. A type gates because it is NAMED here. The empty-set refusal is a floor on the LIST BEING EMPTY, not an implicit promotion of everything in the registry -- those are different, and conflating them would brick the push path with checks nobody chose.",
 
   "actions": {
     "commit": [],

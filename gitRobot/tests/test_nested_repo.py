@@ -3,9 +3,9 @@
 The same verbs apply to it — stage, commit, push — they simply must not overlap
 with the production repo. Two rules follow, and both are asserted here:
 
-  * it has **no gate pipeline of its own**, so `push` there requires no preflight.
-    Demanding a verdict from a pipeline that does not exist would make the
-    operation permanently unreachable rather than safe.
+  * it has **no gate pipeline of its own** and no verdicts in the ledger, so `push`
+    there requires no inventory. Demanding a verdict from a pipeline that does not
+    exist would make the operation permanently unreachable rather than safe.
   * its contents must **never enter the production repo**. Prod ignores the
     directory, but a refusal that says *why* beats a git error that says
     "ignored".
@@ -36,9 +36,11 @@ def test_stage_commit_push_all_work_on_the_nested_repo(robot, nested_local, tmp_
     assert pushed["decision"] == "allowed" and pushed["ok"]
 
 
-def test_push_there_needs_no_preflight(robot, nested_local, tmp_path):
-    """The main repo refuses without one; this repo has no pipeline to run."""
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+def test_push_there_needs_no_verdict(robot, nested_local, tmp_path, ledger_refuses):
+    """The main repo refuses without a satisfied admission set; this repo has no
+    pipeline, no verdicts and nothing to record them against. Demanding an inventory
+    here would make the operation permanently unreachable rather than safe."""
+    with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="main needs a verdict")
     assert robot.push("master", reason="local does not",
                       repo_mode=LOCAL)["decision"] == "allowed"

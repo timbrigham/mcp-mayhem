@@ -77,6 +77,26 @@ def fake_gate(repo):
     return _set
 
 
+@pytest.fixture(autouse=True)
+def _never_a_live_ledger(monkeypatch):
+    """⚠ NO TEST MAY REACH THE RUNNING LEDGER ON :8011.
+
+    `status()` and `push()` both consult it now, so without this a suite run would
+    silently depend on whatever a real server happened to answer that day — and
+    would pass or fail based on the state of the actual ZeroParadox repo. The
+    default is UNREACHABLE, which is the fail-closed answer; tests that need a
+    verdict opt in explicitly via ledger_ok / ledger_refuses / ledger_down, whose
+    monkeypatch of the same attribute lands after this one and wins.
+    """
+    from core import ledger as ledger_client
+
+    def refuse(ref, action, admission=None):
+        raise ledger_client.LedgerUnreachable(
+            "no ledger in tests — opt in with the ledger_ok fixture")
+
+    monkeypatch.setattr(ledger_client, "inventory", refuse)
+
+
 @pytest.fixture
 def ledger_ok(monkeypatch):
     """A ledger that says the admission set is satisfied.
@@ -88,10 +108,35 @@ def ledger_ok(monkeypatch):
     from core import ledger as ledger_client
 
     def fake(ref, action, admission=None):
+        # ⚠ admission_state is SET, not EMPTY. An empty set now REFUSES, so a
+        # fixture standing for "the ledger is happy" must name a real requirement —
+        # otherwise every allow-path test would be exercising the fail-closed
+        # branch while claiming to prove the happy one.
+        return {"ok": True, "complete": True, "ref": ref, "action": action,
+                "admitted": ["build"], "admission_state": "SET",
+                "policy_sha": "policy-sha", "required": 1, "satisfied": 1,
+                "registered_not_admitting": [],
+                "line": f"ALLOWED  {action}  1/1 admission keys  @ {ref[:12]}"}
+
+    monkeypatch.setattr(ledger_client, "inventory", fake)
+    return fake
+
+
+@pytest.fixture
+def ledger_empty(monkeypatch):
+    """The ledger answering fine, with NOTHING promoted to gate the action.
+
+    ⭐ This is the state the whole system shipped in on 2026-08-23, and it must
+    refuse. See test_ledger_gate.py.
+    """
+    from core import ledger as ledger_client
+
+    def fake(ref, action, admission=None):
         return {"ok": True, "complete": True, "ref": ref, "action": action,
                 "admitted": [], "admission_state": "EMPTY", "policy_sha": "policy-sha",
-                "required": 0, "satisfied": 0, "registered_not_admitting": [],
-                "line": f"ALLOWED  {action}  0/0 admission keys  @ {ref[:12]}"}
+                "required": 0, "satisfied": 0,
+                "registered_not_admitting": ["build", "check_prose", "check_pov"],
+                "line": f"{action}  0/0 admission keys  @ {ref[:12]}"}
 
     monkeypatch.setattr(ledger_client, "inventory", fake)
     return fake

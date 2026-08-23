@@ -140,12 +140,27 @@ def _commit(robot, repo, tmp_path, name="a.txt"):
     robot.commit(_msg(tmp_path))
 
 
-def test_push_refuses_without_a_preflight(robot, repo, tmp_path, fake_gate):
-    """A gate that runs inside the push reports after the push has happened. The
-    preflight is what turns a zero-length response window into a real one."""
+def test_push_consults_the_ledger_not_a_preflight_bit(robot, repo, tmp_path,
+                                                      fake_gate, ledger_refuses):
+    """⚠ THIS REPLACES `test_push_refuses_without_a_preflight`, and the swap is the
+    correction rather than an accident of refactoring.
+
+    push used to require a passing `preflight`: a pipeline run reduced to ONE BIT and
+    stored in gitRobot's own log. The ledger holds that same fact properly — every
+    requirement, per type, bound to the hash, with what it examined. Two mechanisms
+    answering one question, and on 2026-08-23 the bit said pass while the ledger said
+    0/19. The weaker one is always the one that lets things through.
+
+    It was also gitRobot writing a VERDICT, which §12d forbids. Keeping it out of the
+    ledger and putting it in git_ops.jsonl was the same defect in a different store.
+
+    The response window §9 Q2 wanted is not lost: `inventory(hash)` is an instant read
+    a caller can make at any time. Re-running a 155s pipeline to manufacture a bit was
+    never what provided it.
+    """
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+    with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="shipping")
     assert robot.read("log", ["origin/illustrated", "--oneline"])["output"].count("\n") == 0
 
@@ -159,30 +174,53 @@ def test_preflight_then_push(robot, repo, tmp_path, fake_gate, ledger_ok):
     assert result["decision"] == "allowed" and result["ok"]
 
 
-def test_a_failing_preflight_does_not_authorise_a_push(robot, repo, tmp_path, fake_gate):
+def test_a_failing_preflight_does_not_authorise_a_push(robot, repo, tmp_path,
+                                                       fake_gate, ledger_refuses):
+    """⚠⚠ NAMES A REAL GAP, deliberately. A red pipeline is now blocked because the
+    LEDGER reports the keys unsatisfied — not because preflight exited non-zero. That
+    only holds once a checker RECORDS its failure. Until the emitters land (§9c step 3)
+    a red pipeline that records nothing is indistinguishable from one that never ran,
+    and the empty-admission-set refusal is what stands in the gap.
+    """
     fake_gate(0)
     _commit(robot, repo, tmp_path)
     fake_gate(1, "BLOCK: check_paths failed")   # the pipeline goes red after the commit
     assert robot.preflight(wait=True)["passed"] is False
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+    with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="shipping anyway")
 
 
-def test_a_preflight_does_not_survive_a_later_commit(robot, repo, tmp_path, fake_gate):
-    """Bound to the HEAD it ran against — otherwise one clean run would authorise
-    everything that came after it."""
+def test_a_verdict_does_not_survive_a_later_commit(robot, repo, tmp_path, fake_gate,
+                                                   monkeypatch):
+    """Bound to the HASH it was recorded against, or one clean run would authorise
+    everything that came after it.
+
+    The property is unchanged; it is now enforced by the ledger keying on the hash
+    instead of by preflight staleness — which is strictly stricter. It survives a
+    restart, and it cannot be satisfied by a run against a DIFFERENT tree that
+    happened to leave a green row behind.
+    """
+    from core import ledger as ledger_client
     fake_gate(0)
     _commit(robot, repo, tmp_path, "a.txt")
-    robot.preflight(wait=True)
+    good = robot.git.head()
+
+    def only_good(ref, action, admission=None):
+        ok = ref == good
+        return {"ok": True, "complete": ok, "ref": ref, "action": action,
+                "admitted": ["build"], "admission_state": "SET", "policy_sha": "p",
+                "required": 1, "satisfied": 1 if ok else 0,
+                "line": "ALLOWED" if ok else "REFUSED  push  0/1 admission keys"}
+
+    monkeypatch.setattr(ledger_client, "inventory", only_good)
     _commit(robot, repo, tmp_path, "b.txt")
-    with pytest.raises(RefusalError, match="no passing pre-push preflight"):
+    with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="shipping")
 
 
 def test_push_requires_a_reason(robot, repo, tmp_path, fake_gate):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight(wait=True)
     with pytest.raises(RefusalError, match="requires a reason"):
         robot.push("illustrated", reason="")
 
@@ -190,22 +228,30 @@ def test_push_requires_a_reason(robot, repo, tmp_path, fake_gate):
 def test_private_branches_never_reach_a_remote(robot, repo, tmp_path, fake_gate):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight(wait=True)
     with pytest.raises(RefusalError, match="not a pushable branch"):
         robot.push("private/scratch", reason="oops")
 
 
-def test_push_records_the_gate_verdict_on_the_clean_path(robot, repo, tmp_path, fake_gate, ledger_ok):
+def test_push_records_what_authorised_it_on_the_clean_path(robot, repo, tmp_path,
+                                                           fake_gate, ledger_ok):
     """The whole point of the audit: 'judged clean' and 'never ran' must not be
-    indistinguishable afterwards."""
+    indistinguishable afterwards.
+
+    What gets recorded changed with the enforcement point. It used to be the gate
+    exit code; it is now the INVENTORY that authorised the push — the hash judged,
+    the policy it was judged under, and the admission set in force. That is strictly
+    more: a bar that moves later cannot re-interpret a past action, which an exit
+    code could never rule out.
+    """
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight(wait=True)
     robot.push("illustrated", reason="shipping")
     record = robot.audit.read()[-1]
     assert record["op"] == "push" and record["decision"] == "allowed"
     assert record["reason"] == "shipping"
-    assert record["gates"][0]["passed"] is True
+    assert record["args"]["inventory_ref"] == robot.git.head()
+    assert record["args"]["policy_sha"] == "policy-sha"
+    assert record["args"]["admission"] == ["build"]
 
 
 # -- worktree: the sanctioned escape ------------------------------------------

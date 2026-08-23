@@ -191,15 +191,34 @@ class GitRobot:
         unpushed = self.git.unpushed_count()
         if not self.gates.available():
             blockers.append("the gate pipeline is missing from this repo")
-        preflight = self._fresh_preflight()
-        if preflight is None:
-            blockers.append("no passing pre-push preflight for the current HEAD "
-                            "(run preflight() first)")
+
+        # ⚠ `would_block_push` must be answered by THE THING THAT BLOCKS. It used to
+        # report a preflight bit while push refused on something else entirely —
+        # a status that says "clear" over a push that refuses is worse than no
+        # status, because it sends the caller looking for a bug in the wrong system.
+        inventory = None
+        try:
+            inventory = ledger_client.inventory(self.git.head(), "push",
+                                                ledger_client.admission_for("push"))
+            if inventory.get("admission_state") in ("EMPTY", "UNSET"):
+                blockers.append("nothing gates a push: the admission set for 'push' is "
+                                "empty, so promote a verdict type in config/admission.json")
+            elif not inventory.get("complete"):
+                blockers.append(f"verdictLedger: {inventory.get('satisfied')}/"
+                                f"{inventory.get('required')} admission keys satisfied "
+                                f"for {self.git.head()[:12]}")
+        except ledger_client.LedgerUnreachable as exc:
+            # Reporting "clear" here would be the fail-open shape this system exists
+            # to end — status must say it does not know.
+            blockers.append(f"verdictLedger unreachable, so push WILL refuse: {exc}")
+        except GitRobotError as exc:
+            blockers.append(f"admission set unreadable, so push WILL refuse: {exc}")
+
         return {
             "repo": str(self.repo), "branch": branch, "head": self.git.head(),
             "tree": tree, "unpushed": unpushed,
             "gates_available": self.gates.available(),
-            "preflight_ok": preflight is not None,
+            "inventory": inventory,
             "would_block_push": blockers,
         }
 
@@ -420,28 +439,24 @@ class GitRobot:
                 "note": "the run was interrupted (its process is gone) and never recorded a "
                         "verdict — most likely killed mid-flight. Re-run preflight()."}
 
-    def _fresh_preflight(self) -> Optional[dict]:
-        """The completed, PASSING preflight for the current HEAD, if there is one.
-
-        A ``started`` row never satisfies this: an in-flight or interrupted run is
-        not a verdict.
-        """
-        head = self.git.head()
-        if head is None:
-            return None
-        record = self.audit.last_where(op="preflight", head=head, decision="allowed")
-        return record
-
     def push(self, branch: str, *, reason: Optional[str] = None,
              repo_mode: str = "main") -> dict:
-        """Push a branch. On the main repo, only on a passing preflight for HEAD.
+        """Push a branch. On the main repo, only if verdictLedger says so.
+
+        THE ONLY PRECONDITION IS THE LEDGER'S INVENTORY FOR THE EXACT HASH BEING
+        PUSHED. There is deliberately no second route. A preflight bit used to sit
+        here too, and on 2026-08-23 the bit said pass while the ledger said 0/19 —
+        when two mechanisms answer one question, the weaker one is the one that
+        lets things through. `preflight` still runs the pipeline, but running the
+        checks and deciding whether they passed are different jobs, and only the
+        ledger does the second.
 
         ``repo_mode='.claude-local'`` pushes that nested repository to its own
-        remote instead. It is a genuinely separate repo with a separate history and
-        no gate pipeline of its own, so no preflight is required there — requiring
-        one would demand a verdict from a pipeline that does not exist and make the
-        operation permanently unreachable. The reason and the audit row still apply:
-        those are about accountability, not about the gate.
+        remote instead. It is a genuinely separate repo with a separate history, no
+        gate pipeline and no verdicts, so no inventory is required there — demanding
+        one would make the operation permanently unreachable rather than safe. The
+        reason and the audit row still apply: those are about accountability, not
+        about the gate.
 
         There is no force, no lease, no upstream override and no ``--no-verify``:
         the tool surface has no parameter that reaches any of them, so the
@@ -470,19 +485,20 @@ class GitRobot:
             )
 
         gates = None
-        if repo_mode == "main":
-            preflight = self._fresh_preflight()
-            if preflight is None:
-                raise self._refuse(
-                    "push", args,
-                    "no passing pre-push preflight for the current HEAD.",
-                    "Run preflight() first and read its findings. That is deliberate: a gate "
-                    "that runs inside the push reports after the push has already happened, "
-                    "which is no window at all. A preflight is bound to the HEAD it ran "
-                    "against, so commit first, then preflight, then push.",
-                    reason=reason, target=target,
-                )
-            gates = preflight.get("gates")
+        # ⚠⚠ THERE IS NO PREFLIGHT PRECONDITION, AND ITS REMOVAL IS THE POINT.
+        # `preflight` ran the pipeline and stored ONE BIT — "passed at HEAD X" — in
+        # gitRobot's own log. The ledger holds the same fact properly: every
+        # requirement, per type, bound to that hash, with what it examined. Two
+        # sources of truth for one question, and on 55f2d6a the bit said yes while
+        # the ledger said 0/19. The weaker one is always the one that passes.
+        #
+        # It was also gitRobot WRITING A VERDICT, which §12d forbids. Keeping it out
+        # of the ledger and putting it in git_ops.jsonl was the same defect wearing
+        # a different hat.
+        #
+        # The response window §9 Q2 wanted is not lost: `inventory(hash)` is an
+        # instant read a caller can make at any time. Re-running a 155s pipeline to
+        # manufacture a bit was never what provided it.
         # The nested repo has no gate pipeline of its own, so there is no verdict to
         # demand — requiring one would make its push permanently unreachable rather
         # than safe. Reason and audit still apply: those are accountability, not gate.
@@ -536,6 +552,38 @@ class GitRobot:
                 "push", args, f"the admission set could not be read: {exc}",
                 "gitRobot refuses rather than guessing what should gate a push — an "
                 "absent list is not an empty one. Fix config/admission.json.",
+                reason=reason, target=target)
+
+        # ⚠⚠ AN EMPTY ADMISSION SET REFUSES. It does NOT allow-with-a-warning.
+        #
+        # Tim, 2026-08-23: "It should have been impossible to push without having the
+        # preset of requirements from verdictLedger created." An empty set IS that
+        # preset not existing. The first build of this gate rendered EMPTY as ALLOWED
+        # with a loud capitalised warning, which is fail-OPEN wearing the costume of
+        # fail-closed — a warning nobody is obliged to act on gates nothing.
+        #
+        # This blocks main-repo pushes until at least one type is promoted in
+        # config/admission.json AND a checker records verdicts. That is the point:
+        # the system should be unusable in exactly the state where it cannot tell
+        # you whether anything was checked. `.claude-local` is unaffected — it never
+        # reaches here.
+        state = inv.get("admission_state")
+        if state in ("EMPTY", "UNSET"):
+            not_gating = inv.get("registered_not_admitting") or []
+            named = ", ".join(sorted(not_gating)[:8]) or "none registered"
+            raise self._refuse(
+                "push", args,
+                f"NOTHING GATES THIS PUSH. The admission set for `push` is "
+                f"{'empty' if state == 'EMPTY' else 'not set'}, so verdictLedger was "
+                f"asked to certify {head[:12]} against zero requirements. A push "
+                f"admitted against zero requirements is not a checked push; it is an "
+                f"unchecked one with a receipt.",
+                f"Promote at least one verdict type into config/admission.json under "
+                f"'push', and make sure a checker actually records that type against "
+                f"the hash being pushed. The ledger has {len(not_gating)} registered "
+                f"type(s) available to promote: {named}. Registering a type is free; "
+                f"gating on one is the deliberate act — which is why the empty set "
+                f"cannot be treated as 'nothing required'.",
                 reason=reason, target=target)
 
         if not inv.get("ok", True) or not inv.get("complete"):
