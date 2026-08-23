@@ -81,94 +81,116 @@ def fake_gate(repo):
 def _never_a_live_ledger(monkeypatch):
     """⚠ NO TEST MAY REACH THE RUNNING LEDGER ON :8011.
 
-    `status()` and `push()` both consult it now, so without this a suite run would
-    silently depend on whatever a real server happened to answer that day — and
-    would pass or fail based on the state of the actual ZeroParadox repo. The
-    default is UNREACHABLE, which is the fail-closed answer; tests that need a
-    verdict opt in explicitly via ledger_ok / ledger_refuses / ledger_down, whose
-    monkeypatch of the same attribute lands after this one and wins.
+    `status()` consults `inventory` and `push` consults `can_push`, so BOTH are
+    stubbed. Patching only one would let the other reach the real server and make the
+    suite pass or fail on the state of the actual ZeroParadox repo. The default is
+    UNREACHABLE — the fail-closed answer; tests needing a verdict opt in below, and
+    their monkeypatch lands after this one and wins.
     """
     from core import ledger as ledger_client
 
-    def refuse(ref, action, admission=None):
+    def refuse(*a, **k):
         raise ledger_client.LedgerUnreachable(
             "no ledger in tests — opt in with the ledger_ok fixture")
 
     monkeypatch.setattr(ledger_client, "inventory", refuse)
+    monkeypatch.setattr(ledger_client, "can_push", refuse)
+
+
+def _range_answer(rev_range, *, allowed, commits=1, blocking=0, admission_state="SET",
+                  admitted=("build",), line="", **extra):
+    """The can_push payload shape, in one place so a change to it breaks once."""
+    return {"ok": True, "allowed": allowed, "range": rev_range,
+            "commits_in_range": commits, "blocking_count": blocking,
+            "tip": extra.pop("tip", "deadbeef"), "admitted": list(admitted),
+            "admission_state": admission_state, "not_gating": [],
+            "policy_sha": "policy-sha", "commits": [], "missing": [], "stale": [],
+            "failed": [], "legacy": [], "line": line, **extra}
 
 
 @pytest.fixture
-def ledger_ok(monkeypatch):
-    """A ledger that says the admission set is satisfied.
-
-    ⚠ Tests must never depend on a live server. The point of the fixture is that
-    the REFUSAL paths get their own explicit tests below, rather than being
-    whatever a real ledger happened to answer that day.
-    """
+def ledger_ok(monkeypatch, repo):
+    """A ledger that says every commit in the range is green."""
     from core import ledger as ledger_client
 
-    def fake(ref, action, admission=None):
-        # ⚠ admission_state is SET, not EMPTY. An empty set now REFUSES, so a
-        # fixture standing for "the ledger is happy" must name a real requirement —
-        # otherwise every allow-path test would be exercising the fail-closed
-        # branch while claiming to prove the happy one.
+    def fake_can_push(rev_range, admission=None, action="push"):
+        # ⚠ admission_state SET, not EMPTY — an empty set REFUSES, so a fixture
+        # standing for "the ledger is happy" must name a real requirement or every
+        # allow-path test would silently exercise the fail-closed branch instead.
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo),
+                              capture_output=True, text=True).stdout.strip()
+        return _range_answer(rev_range, allowed=True, tip=head,
+                             line=f"ALLOWED  push  0/1 commit(s) short  @ {rev_range}")
+
+    def fake_inventory(ref, action, admission=None):
         return {"ok": True, "complete": True, "ref": ref, "action": action,
                 "admitted": ["build"], "admission_state": "SET",
                 "policy_sha": "policy-sha", "required": 1, "satisfied": 1,
-                "registered_not_admitting": [],
-                "line": f"ALLOWED  {action}  1/1 admission keys  @ {ref[:12]}"}
+                "registered_not_admitting": [], "line": "ALLOWED"}
 
-    monkeypatch.setattr(ledger_client, "inventory", fake)
-    return fake
+    monkeypatch.setattr(ledger_client, "can_push", fake_can_push)
+    monkeypatch.setattr(ledger_client, "inventory", fake_inventory)
+    return fake_can_push
+
+
+@pytest.fixture
+def ledger_refuses(monkeypatch):
+    """A ledger reporting the range short — the 2026-08-23 event."""
+    from core import ledger as ledger_client
+
+    def fake_can_push(rev_range, admission=None, action="push"):
+        return _range_answer(
+            rev_range, allowed=False, commits=2, blocking=2,
+            missing=["build", "check_prose"],
+            line=("REFUSED  push  2/2 commit(s) short\n"
+                  "  MISSING  build, check_prose"))
+
+    def fake_inventory(ref, action, admission=None):
+        return {"ok": True, "complete": False, "ref": ref, "action": action,
+                "admitted": ["build", "check_prose"], "admission_state": "SET",
+                "policy_sha": "policy-sha", "required": 2, "satisfied": 0,
+                "registered_not_admitting": ["check_pov"],
+                "line": "REFUSED  push  0/2 admission keys"}
+
+    monkeypatch.setattr(ledger_client, "can_push", fake_can_push)
+    monkeypatch.setattr(ledger_client, "inventory", fake_inventory)
+    return fake_can_push
 
 
 @pytest.fixture
 def ledger_empty(monkeypatch):
     """The ledger answering fine, with NOTHING promoted to gate the action.
 
-    ⭐ This is the state the whole system shipped in on 2026-08-23, and it must
-    refuse. See test_ledger_gate.py.
+    ⭐ The state the whole system shipped in on 2026-08-23; it must refuse.
     """
     from core import ledger as ledger_client
 
-    def fake(ref, action, admission=None):
+    def fake_can_push(rev_range, admission=None, action="push"):
+        return _range_answer(rev_range, allowed=True, admission_state="EMPTY",
+                             admitted=(), not_gating=["build", "check_prose",
+                                                      "check_pov"],
+                             line=f"push  0 keys  @ {rev_range}")
+
+    def fake_inventory(ref, action, admission=None):
         return {"ok": True, "complete": True, "ref": ref, "action": action,
                 "admitted": [], "admission_state": "EMPTY", "policy_sha": "policy-sha",
                 "required": 0, "satisfied": 0,
                 "registered_not_admitting": ["build", "check_prose", "check_pov"],
-                "line": f"{action}  0/0 admission keys  @ {ref[:12]}"}
+                "line": f"{action}  0/0 admission keys"}
 
-    monkeypatch.setattr(ledger_client, "inventory", fake)
-    return fake
-
-
-@pytest.fixture
-def ledger_refuses(monkeypatch):
-    """A ledger reporting an incomplete admission set — the 2026-08-23 event."""
-    from core import ledger as ledger_client
-
-    def fake(ref, action, admission=None):
-        return {"ok": True, "complete": False, "ref": ref, "action": action,
-                "admitted": ["build", "check_prose"], "admission_state": "SET",
-                "policy_sha": "policy-sha", "required": 2, "satisfied": 0,
-                "missing": 2, "stale": 0, "undecided": 0, "failed": 0,
-                "registered_not_admitting": ["check_pov"],
-                "rows": [{"step": "build", "family": "mechanical",
-                          "status": "MISSING", "gating": True}],
-                "line": ("REFUSED  push  0/2 admission keys\n"
-                         "  MISSING  mechanical  build, check_prose")}
-
-    monkeypatch.setattr(ledger_client, "inventory", fake)
-    return fake
+    monkeypatch.setattr(ledger_client, "can_push", fake_can_push)
+    monkeypatch.setattr(ledger_client, "inventory", fake_inventory)
+    return fake_can_push
 
 
 @pytest.fixture
 def ledger_down(monkeypatch):
     from core import ledger as ledger_client
 
-    def boom(ref, action, admission=None):
+    def boom(*a, **k):
         raise ledger_client.LedgerUnreachable("verdictLedger is not answering")
 
+    monkeypatch.setattr(ledger_client, "can_push", boom)
     monkeypatch.setattr(ledger_client, "inventory", boom)
     return boom
 

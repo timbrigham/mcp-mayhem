@@ -201,18 +201,22 @@ def test_a_verdict_does_not_survive_a_later_commit(robot, repo, tmp_path, fake_g
     happened to leave a green row behind.
     """
     from core import ledger as ledger_client
+    import subprocess
     fake_gate(0)
     _commit(robot, repo, tmp_path, "a.txt")
-    good = robot.git.head()
+    satisfied = {robot.git.head()}
 
-    def only_good(ref, action, admission=None):
-        ok = ref == good
-        return {"ok": True, "complete": ok, "ref": ref, "action": action,
-                "admitted": ["build"], "admission_state": "SET", "policy_sha": "p",
-                "required": 1, "satisfied": 1 if ok else 0,
-                "line": "ALLOWED" if ok else "REFUSED  push  0/1 admission keys"}
+    def only_good(rev_range, admission=None, action="push"):
+        out = subprocess.run(["git", "rev-list", rev_range], cwd=str(repo),
+                             capture_output=True, text=True).stdout.split()
+        short = [c for c in out if c not in satisfied]
+        return {"ok": True, "allowed": not short, "range": rev_range,
+                "commits_in_range": len(out), "blocking_count": len(short),
+                "tip": out[0] if out else None, "admitted": ["build"],
+                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "commits": [], "line": "ALLOWED" if not short else "REFUSED"}
 
-    monkeypatch.setattr(ledger_client, "inventory", only_good)
+    monkeypatch.setattr(ledger_client, "can_push", only_good)
     _commit(robot, repo, tmp_path, "b.txt")
     with pytest.raises(RefusalError, match="admission set is not satisfied"):
         robot.push("illustrated", reason="shipping")

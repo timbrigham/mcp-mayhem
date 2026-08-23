@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core import canpush as canpush_mod
 from core import crossref as crossref_mod
 from core import inventory as inventory_mod
 from core import render as render_mod
@@ -115,6 +116,19 @@ def cmd_inventory(args) -> int:
     return 0 if inv["complete"] else 1
 
 
+def cmd_can_push(args) -> int:
+    led = _ledger(args)
+    result = canpush_mod.check(records=led.store.records(),
+                               config=led._require_config(), repo=args.repo,
+                               rev_range=args.range, action=args.action,
+                               admission=args.admit, limit=args.limit)
+    if args.json:
+        _emit(result)
+    else:
+        print(canpush_mod.render(result))
+    return 0 if result.get("allowed") else 1
+
+
 def cmd_crossref(args) -> int:
     led = _ledger(args)
     result = crossref_mod.check(records=led.store.records(),
@@ -188,6 +202,17 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--ref", default="staged")
     i.add_argument("--json", action="store_true")
     i.set_defaults(func=cmd_inventory)
+
+    cp = sub.add_parser("can-push",
+                        help="may this RANGE be pushed? one answer, every commit in it")
+    cp.add_argument("range", help="a git range expression, e.g. origin/main..main")
+    cp.add_argument("--action", default="push")
+    cp.add_argument("--admit", action="append", default=None,
+                    help="a type that must be green; repeat. Omitted means UNSET, "
+                         "which refuses -- it is not an empty set")
+    cp.add_argument("--limit", type=int, default=canpush_mod.DEFAULT_LIMIT)
+    cp.add_argument("--json", action="store_true")
+    cp.set_defaults(func=cmd_can_push)
 
     c = sub.add_parser("crossref",
                        help="audit git history: did anything land without the gate?")

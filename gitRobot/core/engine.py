@@ -513,7 +513,9 @@ class GitRobot:
             # ⚠ The audit row NAMES the inventory that authorised this push and the
             # policy it was judged under, so a bar that moved later cannot
             # re-interpret a past action.
-            args = {**args, "inventory_ref": inv.get("ref"),
+            args = {**args, "inventory_ref": inv.get("tip") or inv.get("ref"),
+                    "inventory_range": inv.get("range"),
+                    "commits_gated": inv.get("commits_in_range"),
                     "policy_sha": inv.get("policy_sha"),
                     "admission": inv.get("admitted")}
         return self._receipt(
@@ -522,6 +524,28 @@ class GitRobot:
                    "inventory": None if inv is None else inv.get("line")},
             target=target,
         )
+
+    def _push_range(self, branch: str, target) -> str:
+        """What this push will PUBLISH, as a git range expression.
+
+        ⚠⚠ THE RANGE, NOT HEAD, and the difference is the whole point of this method.
+        A push publishes every commit the remote does not have. Measured 2026-08-23:
+        a push logged `scope 1 ref(s) — range 5892cbc..55f2d6a`, 43 commits, while the
+        gate asked only about HEAD. Gating the tip certifies the content that will
+        EXIST while intermediate commits ride along unexamined — and they are just as
+        published: fetchable, bisectable and citable forever. `crossref` measured eight
+        of them NOT_RUN.
+
+        ⚠ A BRANCH WITH NO REMOTE COUNTERPART PUBLISHES EVERYTHING NOT ALREADY ON A
+        REMOTE. `origin/<branch>..<branch>` would fail to resolve, and the tempting
+        fallback — "just check HEAD" — is the quiet fail-open: a brand-new branch is
+        exactly when the most unexamined history lands at once.
+        """
+        remote = f"origin/{branch}"
+        known = target.run(["rev-parse", "--verify", "--quiet", remote])
+        if known.ok and known.output.strip():
+            return f"{remote}..{branch}"
+        return f"{branch} --not --remotes=origin"
 
     def _require_inventory(self, branch: str, args: Any, *, reason, target) -> dict:
         """THE HARD CONTRACT: refuse unless the ledger says every admission key is
@@ -543,8 +567,10 @@ class GitRobot:
             raise self._refuse(
                 "push", args, "cannot resolve HEAD, so there is no hash to evaluate.",
                 "Commit something first.", reason=reason, target=target)
+
+        rev_range = self._push_range(branch, target)
         try:
-            inv = ledger_client.inventory(head, "push")
+            inv = ledger_client.can_push(rev_range)
         except ledger_client.LedgerUnreachable:
             raise
         except GitRobotError as exc:
@@ -569,7 +595,8 @@ class GitRobot:
         # reaches here.
         state = inv.get("admission_state")
         if state in ("EMPTY", "UNSET"):
-            not_gating = inv.get("registered_not_admitting") or []
+            not_gating = (inv.get("not_gating")
+                          or inv.get("registered_not_admitting") or [])
             named = ", ".join(sorted(not_gating)[:8]) or "none registered"
             raise self._refuse(
                 "push", args,
@@ -586,15 +613,18 @@ class GitRobot:
                 f"cannot be treated as 'nothing required'.",
                 reason=reason, target=target)
 
-        if not inv.get("ok", True) or not inv.get("complete"):
+        if not inv.get("ok", True) or not inv.get("allowed"):
             # ⚠ Print the ROWS, not a count. The ledger already renders this and it
             # is genuinely actionable; summarising it here would throw away the
             # remedy per group, and the remedies differ by an order of magnitude.
             rendered = inv.get("line") or json.dumps(inv, indent=2)[:2000]
+            short = (f"{inv.get('blocking_count')}/{inv.get('commits_in_range')} "
+                     f"commit(s) in {rev_range}"
+                     if inv.get("commits_in_range") else head[:12])
             raise self._refuse(
                 "push", args,
                 f"verdictLedger reports the admission set is not satisfied for "
-                f"{head[:12]}.\n\n{rendered}",
+                f"{short}.\n\n{rendered}",
                 "Every required verdict must be recorded and passing for the EXACT hash "
                 "being pushed. This is not advisory and there is no flag that skips it — "
                 "a push allowed while the ledger said 0/19 is the failure this gate "

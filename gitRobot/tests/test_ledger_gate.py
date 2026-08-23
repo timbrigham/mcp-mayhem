@@ -45,9 +45,12 @@ def test_push_refuses_when_the_inventory_is_incomplete(robot, repo, tmp_path,
         robot.push("illustrated", reason="shipping")
 
     assert "admission set is not satisfied" in str(exc.value)
-    # ⚠ The refusal prints the ROWS, not a count — the remedies differ by an order
-    # of magnitude in cost and summarising throws that away.
-    assert "MISSING  mechanical  build, check_prose" in str(exc.value)
+    # ⚠ It names the RANGE and how much of it is short, not just a hash. "2 of 2
+    # commits" and "the tip is short" are different situations with different work.
+    assert "2/2 commit(s) in origin/illustrated..illustrated" in str(exc.value)
+    # ⚠ And it prints the ROWS, not a count — the remedies differ by an order of
+    # magnitude in cost and summarising throws that away.
+    assert "MISSING  build, check_prose" in str(exc.value)
     assert "no flag that skips it" in exc.value.alternative
     # and nothing reached the remote
     assert robot.read("log", ["origin/illustrated", "--oneline"])["output"].count("\n") == 0
@@ -121,51 +124,87 @@ def test_status_names_the_empty_set_as_a_blocker(robot, ledger_empty):
 
 # -- the inventory is consulted at PUSH, over the pushed hash, every time -----
 
-def test_the_inventory_is_asked_for_the_current_head(robot, repo, tmp_path,
-                                                     fake_gate, monkeypatch):
-    """⚠ preflight validates the TREE; only push knows what is being published.
-    Measured: preflight logged `scope 0 ref(s)` while the push logged `scope 1`."""
+def test_the_question_asked_is_the_pushed_range(robot, repo, tmp_path,
+                                                fake_gate, monkeypatch):
+    """⭐⭐ THE RANGE, NOT HEAD. A push publishes every commit the remote lacks.
+    Measured 2026-08-23: a push logged `scope 1 ref(s) — range 5892cbc..55f2d6a`, 43
+    commits, while the gate asked only about HEAD — certifying the content that will
+    EXIST while every intermediate commit rode along unexamined.
+
+    ⚠ It also asserts gitRobot passes a RANGE EXPRESSION and not a commit list:
+    §12-0-alpha puts resolution on the server, and a client that resolved the commits
+    itself would be the second implementation this integration exists to remove."""
     fake_gate(0)
     _commit(robot, repo, tmp_path)
-    robot.preflight(wait=True)
 
     seen = []
 
-    def spy(ref, action, admission=None):
-        seen.append((ref, action))
-        return {"ok": True, "complete": True, "ref": ref, "action": action,
-                "admitted": ["build"], "admission_state": "SET", "policy_sha": "p",
-                "required": 1, "satisfied": 1, "line": "ALLOWED"}
+    def spy(rev_range, admission=None, action="push"):
+        seen.append((rev_range, action))
+        return {"ok": True, "allowed": True, "range": rev_range, "commits_in_range": 1,
+                "blocking_count": 0, "tip": robot.git.head(), "admitted": ["build"],
+                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "commits": [], "line": "ALLOWED"}
 
-    monkeypatch.setattr(ledger_client, "inventory", spy)
+    monkeypatch.setattr(ledger_client, "can_push", spy)
     robot.push("illustrated", reason="shipping")
 
     assert len(seen) == 1
-    assert seen[0] == (robot.git.head(), "push")
+    assert seen[0] == ("origin/illustrated..illustrated", "push")
+
+
+def test_a_branch_with_no_remote_counterpart_publishes_everything(robot, repo,
+                                                                  tmp_path, fake_gate,
+                                                                  monkeypatch):
+    """⚠ `origin/<branch>..<branch>` does not resolve for a new branch, and the
+    tempting fallback — "just check HEAD" — is the quiet fail-open: a brand-new
+    branch is exactly when the most unexamined history lands at once."""
+    fake_gate(0)
+    _commit(robot, repo, tmp_path)
+    import subprocess
+    subprocess.run(["git", "branch", "fresh"], cwd=str(repo), check=True,
+                   capture_output=True)          # exists locally, never pushed
+
+    seen = []
+
+    def spy(rev_range, admission=None, action="push"):
+        seen.append(rev_range)
+        return {"ok": True, "allowed": True, "range": rev_range, "commits_in_range": 1,
+                "blocking_count": 0, "tip": "x", "admitted": ["build"],
+                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "commits": [], "line": "ALLOWED"}
+
+    monkeypatch.setattr(ledger_client, "can_push", spy)
+    robot.push("fresh", reason="first push of a new branch")
+    assert seen == ["fresh --not --remotes=origin"]
 
 
 def test_the_hash_specificity_control(robot, repo, tmp_path, fake_gate, monkeypatch):
-    """⭐ Satisfy every key for hash A, commit again to reach B, assert push refuses
-    at B. Proves the keys bind to the HASH, not to the session."""
+    """⭐ Satisfy every key for the commit at A, commit again to reach B, assert push
+    refuses. Proves the keys bind to the CONTENT, not to the session — and that a
+    later commit cannot ride out on an earlier commit's verdicts."""
     fake_gate(0)
     _commit(robot, repo, tmp_path, "a.txt")
-    good_hash = robot.git.head()
+    satisfied = {robot.git.head()}
 
-    def only_a(ref, action, admission=None):
-        ok = ref == good_hash
-        return {"ok": True, "complete": ok, "ref": ref, "action": action,
-                "admitted": ["build"], "admission_state": "SET", "policy_sha": "p",
-                "required": 1, "satisfied": 1 if ok else 0,
-                "line": ("ALLOWED" if ok else "REFUSED  push  0/1 admission keys")}
+    def only_satisfied(rev_range, admission=None, action="push"):
+        import subprocess
+        out = subprocess.run(["git", "rev-list", rev_range], cwd=str(repo),
+                             capture_output=True, text=True).stdout.split()
+        short = [c for c in out if c not in satisfied]
+        return {"ok": True, "allowed": not short, "range": rev_range,
+                "commits_in_range": len(out), "blocking_count": len(short),
+                "tip": out[0] if out else None, "admitted": ["build"],
+                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "commits": [], "missing": ["build"] if short else [],
+                "line": "ALLOWED" if not short else "REFUSED  push  short"}
 
-    monkeypatch.setattr(ledger_client, "inventory", only_a)
-    robot.preflight(wait=True)
-    robot.push("illustrated", reason="hash A is satisfied")
+    monkeypatch.setattr(ledger_client, "can_push", only_satisfied)
+    robot.push("illustrated", reason="the range is satisfied")
 
-    _commit(robot, repo, tmp_path, "b.txt")           # now at hash B
-    robot.preflight(wait=True)
+    _commit(robot, repo, tmp_path, "b.txt")           # a commit nothing examined
     with pytest.raises(RefusalError, match="admission set is not satisfied"):
-        robot.push("illustrated", reason="hash B is not")
+        robot.push("illustrated", reason="the new commit is not")
 
 
 # -- ⭐ FAIL CLOSED WHEN THE LEDGER IS DOWN, WITH ITS OWN ERROR TYPE ----------

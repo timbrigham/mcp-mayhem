@@ -27,6 +27,14 @@ from typing import Optional
 def _subject_index(records) -> tuple:
     """(tips, legacy): path -> the tip record that most recently examined it, per step.
 
+    ⚠⚠ KEYED ON CONTENT. `by_content` maps (step, path, git_blob_id) to the record
+    that examined exactly those bytes; `by_path` remembers that a step touched a path
+    at all, which is what separates STALE ("examined, content moved") from MISSING
+    ("never examined"). An earlier version kept one tip per (step, path) and so a
+    newer verdict ERASED an older commit's coverage -- invisible under tip-only
+    gating, fatal under range gating, where every commit but the last then reads
+    STALE however diligently it was checked at the time.
+
     ⚠⚠ LEGACY IS SEPARATED ON PURPOSE. Records written before 2026-08-23 carry a
     64-hex sha256 under `sha256` instead of a git blob id. Left in the main index they
     compare unequal to every blob id and render as STALE -- and "the content moved"
@@ -34,17 +42,30 @@ def _subject_index(records) -> tuple:
     different remedies. Re-running a checker fixes the first and does nothing for the
     second.
     """
-    out: dict = {}
+    by_content: dict = {}      # (step, path, blob) -> the record that examined it
+    by_path: dict = {}         # (step, path)        -> some record, for STALE
     legacy: dict = {}
     for r in records:
         step = r.get("step")
+        rev = r.get("revision", 0)
         for s in r.get("subjects") or []:
-            key = (step, s.get("path"))
-            target = out if s.get("git_blob_id") else legacy
-            prior = target.get(key)
-            if prior is None or r.get("revision", 0) >= prior[0].get("revision", 0):
-                target[key] = (r, s.get("git_blob_id"))
-    return out, legacy
+            path, blob = s.get("path"), s.get("git_blob_id")
+            if not blob:
+                prior = legacy.get((step, path))
+                if prior is None or rev >= prior[0].get("revision", 0):
+                    legacy[(step, path)] = (r, None)
+                continue
+            key = (step, path, blob)
+            prior = by_content.get(key)
+            # ⚠ Revision compares WITHIN one content key. Across different content
+            # there is nothing to supersede: two verdicts about different bytes are
+            # both true.
+            if prior is None or rev >= prior.get("revision", 0):
+                by_content[key] = r
+            seen = by_path.get((step, path))
+            if seen is None or rev >= seen.get("revision", 0):
+                by_path[(step, path)] = r
+    return by_content, by_path, legacy
 
 
 def build(*, config, records, action: str, files: dict,
@@ -73,7 +94,7 @@ def build(*, config, records, action: str, files: dict,
     as an empty one and must never read as satisfied — see `admission_state`.
     """
     reqs = config.requirements(action)
-    tips, legacy_tips = _subject_index(records)
+    by_content, by_path, legacy_tips = _subject_index(records)
 
     rows = []
     how_counts: dict = {}
@@ -100,16 +121,14 @@ def build(*, config, records, action: str, files: dict,
         covered, stale = 0, 0
         covered_rec, stale_rec = None, None
         for path, sha in files.items():
-            hit = tips.get((step, path))
-            if hit is None:
-                continue
-            rec, recorded_sha = hit
-            if recorded_sha == sha:
+            rec = by_content.get((step, path, sha))
+            if rec is not None:
                 covered += 1
                 covered_rec = covered_rec or rec
-            else:
+            elif (step, path) in by_path:
+                # examined, but never at THIS content
                 stale += 1
-                stale_rec = stale_rec or rec
+                stale_rec = stale_rec or by_path[(step, path)]
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
                            if (step, p) in legacy_tips), None)

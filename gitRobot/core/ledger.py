@@ -157,6 +157,23 @@ def admission_for(action: str, path=None) -> list:
     return list(entry)
 
 
+def can_push(rev_range: str, admission: Optional[list] = None,
+             action: str = "push") -> dict:
+    """⭐⭐ THE ONE QUESTION. §12-0-alpha: "these are the keys needed, does commit xyz
+    have them so we can push safely. There should be a substantial reduction in the
+    amount of extra stuff to compute."
+
+    gitRobot hands over a RANGE EXPRESSION and obeys the answer. It does not resolve
+    the commits, does not assemble a file list, does not hash anything, and does not
+    re-derive completeness. Every one of those would be a second implementation
+    waiting to disagree with the first — which is the failure of 2026-08-23.
+    """
+    if admission is None:
+        admission = admission_for(action)
+    return call("can_push", {"rev_range": rev_range, "action": action,
+                             "admission": admission})
+
+
 def inventory(ref: str, action: str, admission: Optional[list] = None) -> dict:
     """Ask the ledger to evaluate `ref` against the admission set for `action`.
 

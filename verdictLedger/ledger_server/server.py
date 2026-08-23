@@ -34,6 +34,7 @@ import anyio.to_thread
 
 from mcp.server.fastmcp import FastMCP
 
+from core import canpush as canpush_mod
 from core import crossref as crossref_mod
 from core import inventory as inventory_mod
 from core import render as render_mod
@@ -254,6 +255,41 @@ async def coverage(ref: str = "HEAD") -> dict:
     health. Day one is exactly when the stream is empty."""
     return await _guard(lambda: inventory_mod.coverage(
         records=_ledger().store.records(), paths=list(_files(ref))))
+
+
+@mcp.tool()
+async def can_push(rev_range: str, admission: Optional[list[str]] = None,
+                   action: str = "push", limit: int = 500) -> dict:
+    """⭐⭐ THE ONE QUESTION A CLIENT ASKS: may this RANGE be pushed?
+
+    §12-0-alpha: "these are the keys needed, does commit xyz have them so we can push
+    safely. There should be a substantial reduction in the amount of extra stuff to
+    compute." The caller hands over a range expression and obeys the answer. It
+    assembles no file list, hashes nothing, and re-derives no completeness.
+
+    ⚠⚠ EVERY COMMIT IN THE RANGE, NOT JUST THE TIP. A push publishes a range --
+    measured 2026-08-23, a push logged `scope 1 ref(s) -- range 5892cbc..55f2d6a`, 43
+    commits, while the gate asked only about HEAD. Gating the tip certifies the content
+    that will EXIST while intermediate commits ride along unexamined, and those are
+    just as published: fetchable, bisectable and citable forever. `crossref` measured
+    eight of them NOT_RUN. That is SCOPE-1 reborn inside the fix for it.
+
+    ⚠ An over-long range REFUSES rather than truncating: an answer about part of a
+    range renders identically to one about all of it.
+
+    ⚠ `admission=None` is not an empty set -- it means nobody said what gates this."""
+    return await _guard(_sync_can_push, rev_range, admission, action, limit)
+
+
+def _sync_can_push(rev_range, admission, action, limit) -> dict:
+    led = _ledger()
+    result = canpush_mod.check(records=led.store.records(),
+                               config=led._require_config(), repo=REPO,
+                               rev_range=rev_range, action=action,
+                               admission=admission, limit=limit)
+    result["policy_sha"] = led._require_config().policy_sha
+    result["line"] = canpush_mod.render(result)
+    return result
 
 
 @mcp.tool()
