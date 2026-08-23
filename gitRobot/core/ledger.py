@@ -128,15 +128,32 @@ def admission_for(action: str, path=None) -> list:
         doc = json.loads(p.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GitRobotError(f"admission set unreadable at {p}: {exc}") from exc
-    actions = doc.get("actions")
+    # ⚠ The `default` is validated, not merely read. A file that quietly declared a
+    # permissive default would move the bar without anyone editing a list, which is
+    # exactly the single-edit lowering that separation of duty exists to prevent.
+    default = doc.get("default")
+    if default != "NOT_ADMITTING":
+        raise GitRobotError(
+            f"admission set declares default={default!r}; the only accepted value is "
+            f"'NOT_ADMITTING'. An unnamed action must never be treated as unrestricted.")
+
+    actions = doc.get("admission")
     if not isinstance(actions, dict) or action not in actions:
         raise GitRobotError(
             f"admission set names no entry for action {action!r}; it has "
-            f"{sorted(actions) if isinstance(actions, dict) else 'no actions map'}. "
+            f"{sorted(actions) if isinstance(actions, dict) else 'no admission map'}. "
             f"Refusing rather than treating an unnamed action as unrestricted.")
     entry = actions[action]
     if not isinstance(entry, list):
-        raise GitRobotError(f"admission.actions[{action!r}] must be a list of type names")
+        raise GitRobotError(f"admission[{action!r}] must be a list of type names")
+    if not all(isinstance(t, str) and t for t in entry):
+        raise GitRobotError(f"admission[{action!r}] must contain only type names")
+    # ⚠ Duplicates are refused rather than de-duplicated. A list with a repeat is a
+    # list somebody edited carelessly, and silently accepting it hides the edit.
+    if len(set(entry)) != len(entry):
+        dupes = sorted({t for t in entry if entry.count(t) > 1})
+        raise GitRobotError(f"admission[{action!r}] repeats {dupes}; refusing an "
+                            f"ambiguous set rather than de-duplicating it silently")
     return list(entry)
 
 

@@ -212,16 +212,18 @@ def test_registering_a_type_does_not_gate_a_push(tmp_path):
     """⭐ THE 20-EXPERIMENTAL-GATES CASE. Registering is free; gating is a
     deliberate promotion."""
     cfg = tmp_path / "admission.v1.json"
-    cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
-                               "actions": {"commit": [], "push": [], "tag": []}}),
+    cfg.write_text(json.dumps({"schema": "zp.admission.v1",
+                               "default": "NOT_ADMITTING",
+                               "admission": {"commit": [], "push": [], "tag": []}}),
                    encoding="utf-8")
     assert ledger_client.admission_for("push", cfg) == []
 
 
 def test_promotion_binds_immediately(tmp_path):
     cfg = tmp_path / "admission.v1.json"
-    cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
-                               "actions": {"commit": [], "push": ["build"], "tag": []}}),
+    cfg.write_text(json.dumps({"schema": "zp.admission.v1",
+                               "default": "NOT_ADMITTING",
+                               "admission": {"commit": [], "push": ["build"], "tag": []}}),
                    encoding="utf-8")
     assert ledger_client.admission_for("push", cfg) == ["build"]
     assert ledger_client.admission_for("commit", cfg) == []
@@ -239,8 +241,9 @@ def test_a_missing_admission_set_refuses_rather_than_assuming_empty(robot, repo,
 
 def test_an_unnamed_action_refuses(tmp_path):
     cfg = tmp_path / "admission.v1.json"
-    cfg.write_text(json.dumps({"schema": "gitrobot.admission.v1",
-                               "actions": {"commit": []}}), encoding="utf-8")
+    cfg.write_text(json.dumps({"schema": "zp.admission.v1",
+                               "default": "NOT_ADMITTING",
+                               "admission": {"commit": []}}), encoding="utf-8")
     with pytest.raises(GitRobotError, match="names no entry for action"):
         ledger_client.admission_for("push", cfg)
 

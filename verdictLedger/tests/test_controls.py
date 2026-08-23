@@ -84,9 +84,16 @@ def test_a_malformed_config_never_falls_back_to_a_default(tmp_path, config_dir):
 # -- ⭐ REQUIRED BY DEFAULT, AND A REASON-LESS EXEMPTION IS IGNORED ------------
 
 def test_a_minimal_entry_is_required_for_every_action(ledger):
+    """⚠ `check_prose`, not `build`. build carries an actions:["tag"] narrowing now,
+    so it is no longer a MINIMAL entry and asserting on it would test the narrowing
+    while claiming to test the default. A minimal entry is `{"family": ...}` alone."""
+    minimal = "check_prose"
+    assert set(ledger.config.required["types"][minimal]) == {"family"}, (
+        f"{minimal} is no longer a minimal entry; this control needs a type with no "
+        f"`actions` and no `when`, or it stops testing required-by-default")
     reqs = {a: ledger.config.requirements(a) for a in ledger.config.actions}
     for action, r in reqs.items():
-        assert r["build"]["required"] is True, f"build not required for {action}"
+        assert r[minimal]["required"] is True, f"{minimal} not required for {action}"
 
 
 def test_a_reasonless_narrowing_is_ignored(tmp_path, config_dir):
@@ -127,14 +134,16 @@ def _basis(v="a" * 40):
 
 
 def test_stale_never_collapses_into_satisfied(ledger):
-    ledger.append(good(step="build", subjects=[{"sha256": "b" * 40, "path": "x.lean"}]))
+    ledger.append(good(step="check_prose",
+                       subjects=[{"sha256": "b" * 40, "path": "x.lean"}]))
     recs = ledger.store.records()
     fresh = inventory_mod.build(config=ledger.config, records=recs, action="commit",
                                 files={"x.lean": "b" * 40})
     moved = inventory_mod.build(config=ledger.config, records=recs, action="commit",
                                 files={"x.lean": "c" * 40})
-    assert next(r for r in fresh["rows"] if r["step"] == "build")["status"] == "SATISFIED"
-    stale = next(r for r in moved["rows"] if r["step"] == "build")
+    assert next(r for r in fresh["rows"]
+                if r["step"] == "check_prose")["status"] == "SATISFIED"
+    stale = next(r for r in moved["rows"] if r["step"] == "check_prose")
     # ⚠ STALE, not MISSING and never SATISFIED: the step DID examine this path, the
     # content moved underneath it. Re-run, versus run-at-all — different remedies.
     assert stale["status"] == "STALE"
@@ -156,11 +165,11 @@ def test_not_applicable_does_not_count_toward_required(ledger):
     the type is admitted — it did not apply, so it cannot be missing."""
     inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
                               files={"x.lean": "b" * 40},
-                              admission=["build", "pdf_coupling"])
+                              admission=["check_prose", "pdf_coupling"])
     assert inv["not_applicable"] > 0
     pdf = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
     assert pdf["status"] == "NOT_APPLICABLE" and pdf["gating"] is False
-    assert inv["required"] == 1          # only `build` gates
+    assert inv["required"] == 1          # only `check_prose` gates
 
 
 # -- ⭐ CROSSREF AUDITS GIT HISTORY, NOT A SECOND STORE -----------------------
