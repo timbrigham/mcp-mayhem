@@ -11,4 +11,4 @@ mcp-servers.json
 !mcp-servers.sample.json
 
 # Local Claude Code permission grants - machine-specific path globs.
-.claude/
+.claude/*.bak

@@ -1,0 +1,25 @@
+[project]
+name = "verdictledger"
+version = "0.1.0"
+description = "Append-only, validated record store for gate verdicts: what was decided, on what, and how. An invalid or missing record means UNDECIDED, which blocks."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+zpledger = "core.cli:main"
+zpledger-mcp = "ledger_server.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core", "ledger_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

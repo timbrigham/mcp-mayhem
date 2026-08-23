@@ -1,0 +1,131 @@
+"""`inventory(ref, action)` — the complete set of keys for an action, and what is missing.
+
+⚠⚠ THE REQUIREMENT SET IS DECLARED IN ADVANCE. An inventory assembled from "the
+records that happen to exist" is worthless, because *"3 of 3 passed"* and *"5 never
+ran"* render identically — the enumerator-found-nothing defect, five measured
+instances, arriving through a new door. So the manifest is the source and the
+records are checked against it, never the other way round.
+
+⚠ IDENTITY IS NOT SATISFACTION. A record is IDENTIFIED by `(step, basis, verdict,
+reason, subjects, revision)`, but it SATISFIES a key while the content it examined
+is unchanged — matched on `subjects[].sha256`, never on basis. Matching on basis
+would make every record die on every commit: 40 files, 14 checks recorded against
+tree X, one unrelated file changes, and the whole pipeline re-runs including the
+paid review rounds. "Re-run everything, always" wears the costume of rigour.
+
+⚠ Five statuses, and none may ever collapse into another:
+  SATISFIED · STALE (examined, content moved — re-run) · MISSING (never examined —
+  run at all) · NOT_APPLICABLE (a `when` glob did not match) · FAIL/UNDECIDED.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+from typing import Optional
+
+
+def _subject_index(records) -> dict:
+    """path -> the tip record that most recently examined it, per step."""
+    out: dict = {}
+    for r in records:
+        step = r.get("step")
+        for s in r.get("subjects") or []:
+            key = (step, s.get("path"))
+            prior = out.get(key)
+            if prior is None or r.get("revision", 0) >= prior[0].get("revision", 0):
+                out[key] = (r, s.get("sha256"))
+    return out
+
+
+def build(*, config, records, action: str, files: dict,
+          ref: Optional[str] = None) -> dict:
+    """``files`` maps path -> current sha256 for the content being promoted."""
+    reqs = config.requirements(action)
+    tips = _subject_index(records)
+
+    rows = []
+    how_counts: dict = {}
+    for step, spec in sorted(reqs.items()):
+        family = spec["family"]
+        if not spec["required"]:
+            rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
+                         "why": spec.get("reason") or "narrowed by action",
+                         "record_id": None, "subjects_covered": 0})
+            continue
+        when = spec.get("when")
+        if when and not any(fnmatch.fnmatch(p, when) for p in files):
+            # ⚠ "It did not apply" and "it passed" must never render the same, and
+            # the status carries the glob that excluded it.
+            rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
+                         "why": f"no path matched {when!r}", "record_id": None,
+                         "subjects_covered": 0})
+            continue
+
+        covered, stale, record = 0, 0, None
+        for path, sha in files.items():
+            hit = tips.get((step, path))
+            if hit is None:
+                continue
+            rec, recorded_sha = hit
+            record = record or rec
+            if recorded_sha == sha:
+                covered += 1
+            else:
+                stale += 1
+
+        if covered == 0 and stale == 0:
+            status = "MISSING"
+        elif record is not None and record.get("verdict") == "FAIL":
+            status = "FAIL"
+        elif record is not None and record.get("verdict") == "UNDECIDED":
+            status = "UNDECIDED"
+        elif stale:
+            status = "STALE"
+        else:
+            status = "SATISFIED"
+
+        if status == "SATISFIED" and record is not None:
+            how = (record.get("decided") or {}).get("how", "?")
+            how_counts[how] = how_counts.get(how, 0) + 1
+
+        rows.append({"step": step, "family": family, "status": status,
+                     "record_id": (record or {}).get("id"),
+                     "subjects_covered": covered, "subjects_stale": stale,
+                     "why": None})
+
+    def n(status):
+        return sum(1 for r in rows if r["status"] == status)
+
+    required = sum(1 for r in rows if r["status"] != "NOT_APPLICABLE")
+    satisfied = n("SATISFIED")
+    return {
+        "ref": ref, "action": action,
+        "required": required, "satisfied": satisfied,
+        "missing": n("MISSING"), "stale": n("STALE"),
+        "undecided": n("UNDECIDED"), "failed": n("FAIL"),
+        "not_applicable": n("NOT_APPLICABLE"),
+        # gitRobot's rule is that these are all zero. The ledger COMPUTES; the
+        # consumer REQUIRES. Re-deriving completeness on the other side would be
+        # the mirror defect in the highest-stakes possible location.
+        "complete": (n("MISSING") == 0 and n("STALE") == 0
+                     and n("UNDECIDED") == 0 and n("FAIL") == 0 and required > 0),
+        "how_breakdown": how_counts,
+        "rows": rows,
+    }
+
+
+def coverage(*, records, paths: list) -> dict:
+    """Tracked paths MINUS the union of every `subjects` entry ever recorded.
+
+    ⚠ On an empty stream this reports EVERYTHING uncovered, never a clean bill of
+    health. Day one is exactly when the stream is empty, and that is the fail-open
+    shape this project has been bitten by five times.
+    """
+    examined = {s.get("path") for r in records for s in (r.get("subjects") or [])}
+    uncovered = sorted(p for p in paths if p not in examined)
+    return {
+        "tracked": len(paths), "examined": len(set(paths) & examined),
+        "uncovered": len(uncovered), "paths": uncovered[:200],
+        "note": ("nothing recorded — every tracked path is uncovered"
+                 if not examined else None),
+    }

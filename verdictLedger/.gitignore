@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# The record stream is per-run process state that churns on every push.
+# Runtime state: the stream, and the durable counters beside it.
+data/*.jsonl
+data/*.counters.json

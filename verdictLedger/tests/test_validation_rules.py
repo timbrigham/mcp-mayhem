@@ -1,0 +1,248 @@
+"""V1–V14, each with a probe that must turn the validator RED.
+
+⚠ THE CONTROLS ARE THE DELIVERABLE, NOT THE AFTERTHOUGHT. Every probe here changes
+exactly ONE thing about a record that otherwise passes, so a red result can only
+mean the rule fired. The neuter control at the bottom proves that: stub the
+validator to return ok unconditionally and every probe must go red. Any probe that
+stays green was testing a proxy rather than the rule.
+"""
+
+import pytest
+
+from conftest import good, set_policy
+from core.errors import ValidationFailure
+from core.ledger import Ledger
+
+
+def errs(ledger, record):
+    return ledger.validate(record)["errors"]
+
+
+def rule(ledger, record, tag):
+    """Assert the named rule fired, and report what did fire when it did not."""
+    found = errs(ledger, record)
+    assert any(e.startswith(tag) for e in found), f"{tag} did not fire; got {found}"
+    return found
+
+
+def test_a_good_record_passes(ledger):
+    """The baseline. If this ever fails, every probe below is meaningless."""
+    assert errs(ledger, good()) == []
+
+
+# -- V1: a silent fallback to a permissive basis (FRZ-4) ----------------------
+
+def test_v1_basis_resolution_must_be_stated(ledger):
+    rule(ledger, good(basis={"kind": "tree", "value": "a" * 40,
+                             "resolved_from": None}), "V1")
+
+
+def test_v1_fallback_is_legal_but_recorded(ledger):
+    """FALLBACK is allowed — the point is that it is VISIBLE, not forbidden."""
+    assert errs(ledger, good(basis={"kind": "tree", "value": "a" * 40,
+                                    "resolved_from": "FALLBACK"})) == []
+
+
+# -- V2: warrant-satisfied-while-empty, five measured instances ---------------
+
+def test_v2_pass_with_no_subjects(ledger):
+    rule(ledger, good(subjects=[]), "V2")
+
+
+def test_v2_a_fail_may_have_no_subjects(ledger):
+    """Only a PASS is forbidden from examining nothing — a FAIL that could not
+    even enumerate its inputs is a legitimate thing to report."""
+    assert not any(e.startswith("V2") for e in
+                   errs(ledger, good(verdict="FAIL", subjects=[], reason="could not enumerate")))
+
+
+# -- V3: fake unanimity, and the threshold is CONFIG --------------------------
+
+def test_v3_agreement_needs_unanimity(ledger):
+    rule(ledger, good(decided={"how": "agreement", "passes": 3, "agreed": 2, "who": None}), "V3")
+
+
+def test_v3_agreement_needs_enough_passes(ledger):
+    rule(ledger, good(decided={"how": "agreement", "passes": 1, "agreed": 1, "who": None}), "V3")
+
+
+def test_v3_threshold_is_data_not_a_constant(tmp_path, config_dir):
+    """⭐ THE CONTROL THAT PROVES CONFIG IS CONFIG: change the number, restart
+    nothing, and watch the same record change verdict."""
+    rec = good(decided={"how": "agreement", "passes": 2, "agreed": 2, "who": None})
+
+    strict = Ledger(tmp_path / "a.jsonl", policy_path=config_dir / "policy.v1.json",
+                    required_path=config_dir / "required.v2.json")
+    assert any(e.startswith("V3") for e in strict.validate(rec)["errors"])
+
+    set_policy(config_dir, **{"agreement.min_passes": 2})
+    relaxed = Ledger(tmp_path / "b.jsonl", policy_path=config_dir / "policy.v1.json",
+                     required_path=config_dir / "required.v2.json")
+    assert not any(e.startswith("V3") for e in relaxed.validate(rec)["errors"])
+
+
+# -- V4: an aggregate claiming a pass over steps that never ran ---------------
+
+def test_v4_inputs_must_already_exist(ledger):
+    rule(ledger, good(inputs=["deadbeef"]), "V4")
+
+
+def test_v4_leaf_steps_have_empty_inputs(ledger):
+    """Checks are INDEPENDENT — `inputs` is the seam between stages, not a link
+    within one. A leaf step consuming a predecessor would be a design error."""
+    assert errs(ledger, good(inputs=[])) == []
+
+
+# -- V5 / V6 -------------------------------------------------------------------
+
+def test_v5_signature_needs_who(ledger):
+    rule(ledger, good(decided={"how": "signature", "passes": 1, "agreed": 1, "who": None},
+                      tier="H"), "V5")
+
+
+@pytest.mark.parametrize("verdict", ["FAIL", "UNDECIDED"])
+def test_v6_a_block_needs_a_reason(ledger, verdict):
+    rule(ledger, good(verdict=verdict, reason=None), "V6")
+
+
+# -- V7: a step inventing a field to smuggle state past the schema ------------
+
+def test_v7_unknown_keys_are_rejected_not_ignored(ledger):
+    rule(ledger, good(sneaky_override=True), "V7")
+
+
+# -- V8: 'prose' and 'check_prose' silently becoming two steps ----------------
+
+def test_v8_unregistered_step_cannot_record(ledger):
+    """⭐ The pair that closes the hole: you cannot add a check that silently does
+    not count, and you cannot register one that silently is not required."""
+    rule(ledger, good(step="check_prosee"), "V8")
+
+
+# -- V9 / V10 ------------------------------------------------------------------
+
+def test_v9_run_id_is_required(ledger):
+    rule(ledger, good(run={"id": "", "started": None, "policy_sha": None, "env": {}}), "V9")
+
+
+def test_v10_policy_sha_must_name_a_known_policy(ledger):
+    rule(ledger, good(run={"id": "r", "started": None,
+                           "policy_sha": "0" * 64, "env": {}}), "V10")
+
+
+def test_v10_current_policy_is_accepted(ledger):
+    """The ledger stamps its own sha when the caller omits it."""
+    assert ledger.append(good())["appended"] is True
+
+
+# -- V11 / V13: branching and endless regrading, scoped to one basis ----------
+
+def test_v11_branching_is_unrepresentable(ledger):
+    ledger.append(good())
+    ledger.append(good(revision=1, verdict="FAIL", reason="regraded"))
+    # a second revision 1 for the same (step, basis) is the branch
+    rule(ledger, good(revision=1, verdict="PASS", reason="different regrade"), "V11")
+
+
+def test_v11_a_revision_needs_its_predecessor_at_this_basis(ledger):
+    rule(ledger, good(revision=2, verdict="FAIL", reason="skipped a step"), "V11")
+
+
+def test_v11_a_chain_never_crosses_bases(ledger):
+    """⭐ An accepted FAIL can never be carried forward onto content it was not
+    about — STALE enforced in the identity rather than checked afterwards."""
+    ledger.append(good())
+    ledger.append(good(revision=1, verdict="FAIL", reason="regraded"))
+    other = good(basis={"kind": "tree", "value": "c" * 40, "resolved_from": "explicit"},
+                 revision=1, verdict="FAIL", reason="carried forward")
+    rule(ledger, other, "V11")
+
+
+def test_v13_depth_cap_and_it_is_config(ledger, tmp_path, config_dir):
+    deep = good(revision=6, verdict="FAIL", reason="regraded to death")
+    assert any(e.startswith("V13") for e in ledger.validate(deep)["errors"])
+
+    set_policy(config_dir, **{"supersede.max_depth": 9})
+    raised = Ledger(tmp_path / "c.jsonl", policy_path=config_dir / "policy.v1.json",
+                    required_path=config_dir / "required.v2.json")
+    assert not any(e.startswith("V13") for e in raised.validate(deep)["errors"])
+
+
+# -- V12: "sudo it away by declaring it a false positive" ---------------------
+
+def test_v12_cannot_override_your_own_prior_decision(ledger):
+    base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
+    subj = [{"sha256": "b" * 40, "path": "docs/x.md"}]
+    ledger.sign(step="check_prose", subjects=subj, who="tim",
+                reason="accepted as known debt", basis=base)
+    with pytest.raises(ValidationFailure) as exc:
+        ledger.override(step="check_prose", subjects=subj, who="tim",
+                        reason="actually a false positive", basis=base)
+    assert any(e.startswith("V12") for e in exc.value.violations)
+
+
+def test_v12_a_different_person_may_override(ledger):
+    base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
+    subj = [{"sha256": "b" * 40, "path": "docs/x.md"}]
+    ledger.sign(step="check_prose", subjects=subj, who="tim",
+                reason="accepted as known debt", basis=base)
+    out = ledger.override(step="check_prose", subjects=subj, who="reviewer-2",
+                          reason="the gate was wrong", basis=base)
+    assert out["appended"] is True
+
+
+# -- V14: reason is in the identity, so it must be deterministic --------------
+
+@pytest.mark.parametrize("reason", [
+    "check took 1.4s",
+    "failed at 2026-08-22T20:58:13Z",
+    "worker pid: 4821 died",
+    "wrote /tmp/abc123def/out.txt",
+])
+def test_v14_nondeterministic_reason_is_refused(ledger, reason):
+    """⚠ The rule most likely to be violated by accident, by a checker that
+    helpfully reports its own duration. Two identical failures would hash
+    differently and dedupe would never fire."""
+    rule(ledger, good(verdict="FAIL", reason=reason), "V14")
+
+
+def test_v14_a_stable_reason_is_fine(ledger):
+    assert errs(ledger, good(verdict="FAIL",
+                             reason="blah.md is not formatted correctly")) == []
+
+
+# -- ⭐ THE NEUTER CONTROL ------------------------------------------------------
+
+def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
+    """Stub the rule engine to return nothing and assert every probe above would
+    now PASS. Any record that still fails was being caught by something other than
+    the rule its test names — i.e. that probe tests a proxy.
+
+    ⚠ This is the control that distinguishes "the check fired" from "the check
+    prevented", which is the gap LOCK-1 was about one project over.
+    """
+    from core import validate as validate_mod
+
+    probes = [
+        good(basis={"kind": "tree", "value": "a" * 40, "resolved_from": None}),
+        good(subjects=[]),
+        good(decided={"how": "agreement", "passes": 1, "agreed": 1, "who": None}),
+        good(inputs=["deadbeef"]),
+        good(decided={"how": "signature", "passes": 1, "agreed": 1, "who": None}),
+        good(verdict="FAIL", reason=None),
+        good(step="check_prosee"),
+        good(run={"id": "", "started": None, "policy_sha": None, "env": {}}),
+        good(revision=6, verdict="FAIL", reason="deep"),
+        good(verdict="FAIL", reason="took 1.4s"),
+    ]
+    for p in probes:
+        assert errs(ledger, p), "a probe was already green before neutering"
+
+    monkeypatch.setattr(validate_mod, "rules", lambda *a, **k: [])
+    for p in probes:
+        remaining = [e for e in errs(ledger, p) if not e.startswith("V7")]
+        # V7 is structural (an unknown key cannot be rule-checked, only rejected),
+        # so it survives neutering by design; everything else must go green.
+        assert remaining == [], (
+            f"probe still red with the rules neutered: {remaining} — it was "
+            f"testing a proxy, not the rule")

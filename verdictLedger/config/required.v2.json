@@ -1,0 +1,47 @@
+{
+  "schema": "zp.required.v2",
+  "default": "REQUIRED_FOR_ALL_ACTIONS",
+
+  "_comment": "REQUIRED BY DEFAULT. A registered type binds on EVERY action unless an entry says otherwise, and saying otherwise costs a stated `reason`. The minimal entry {\"family\": \"...\"} is the STRICT one -- adding a type is one line and it binds immediately. Inclusion is free; exclusion is the thing that takes effort.",
+
+  "_why": "The first draft listed required steps explicitly per action, so adding a checker meant writing it AND remembering to add it to the list. Forget the second half and the checker runs, passes, and counts for nothing -- absence rendering as success, in the very file that defines what complete means. A registry you must remember to extend is a registry that will be incomplete.",
+
+  "_reasonless_narrowing": "An `actions` or `when` narrowing with NO `reason` is IGNORED and the type falls back to required-for-all. This is the encoding_whitelist.txt convention, reused deliberately because it is already familiar here: nothing is suppressed until a human has actually looked. A typo in an exemption fails safe.",
+
+  "_unregistered": "V8 rejects a record whose step is not listed here, record.py returns None, and the checker exits 2 -- so the pipeline blocks the moment someone wires in an unregistered check, loudly, at the desk of the person who can fix it. That is the pair that closes the hole: you cannot add a check that silently does not count, and you cannot register one that silently is not required.",
+
+  "types": {
+    "genesis":        { "family": "review",
+                        "actions": [],
+                        "reason": "the recording floor itself; it is not a gate on any action" },
+
+    "build":          { "family": "mechanical" },
+    "check_encoding": { "family": "mechanical" },
+    "check_paths":    { "family": "mechanical" },
+    "check_frozen":   { "family": "mechanical" },
+    "check_prose":    { "family": "mechanical" },
+    "check_pov":      { "family": "mechanical" },
+    "check_modal":    { "family": "mechanical" },
+    "check_classes":  { "family": "mechanical" },
+    "check_invariants": { "family": "mechanical" },
+    "check_hashes":   { "family": "mechanical" },
+    "check_moved":    { "family": "mechanical" },
+    "check_negatives":{ "family": "mechanical" },
+    "check_figures":  { "family": "mechanical" },
+    "check_checkers": { "family": "mechanical" },
+    "guards":         { "family": "mechanical" },
+    "decls":          { "family": "mechanical" },
+
+    "pdf_coupling":   { "family": "mechanical", "when": "**/*.pdf",
+                        "reason": "only meaningful when a PDF changed" },
+
+    "editorial":      { "family": "review", "actions": ["push", "tag"],
+                        "reason": "prose gate; nothing is published at commit time" },
+    "adversary":      { "family": "review", "actions": ["push", "tag"],
+                        "reason": "publication gate; nothing is published at commit time" },
+    "prior_art":      { "family": "review", "actions": ["push", "tag"],
+                        "reason": "publication gate; nothing is published at commit time" },
+    "release_ready":  { "family": "review", "actions": ["tag"],
+                        "reason": "release-only by construction" }
+  }
+}

@@ -1,14 +1,9 @@
 {
   "_comment": "SAMPLE manifest for the MCP supervisor. Copy this to 'mcp-servers.json' (which is gitignored, because it is machine-specific) and edit it for your machine. The two servers below are this repo's own subprojects and work as-is once mcpSupervisor sits alongside them.",
-
   "_tokens": "${McpRoot} expands to the folder holding this manifest, with '..' segments collapsed. Use it in exe / args / workingDir / env values so the manifest stays portable instead of hardcoding an absolute location. Values without the token are passed through untouched.",
-
   "_addingMoreServers": "The watchdog is NOT limited to this repo's servers - it is a general-purpose keep-alive for any local MCP server that listens on an HTTP port. Add another entry with kind 'process' if the server binds the port itself, or kind 'proxyWithChild' if it is a stdio server fronted by a proxy (e.g. mcp_proxy): there the proxy holds the port even when its backend has died, so 'identity.requireChildProcess' names the child that must also be alive for the server to count as healthy. Each server's port must match the URL registered for it in your Claude config (~/.claude.json).",
-
   "_env": "Secrets are never stored here. List the variable NAMES a server needs in 'requiredEnv' and the supervisor refuses to launch it until those user-scope variables are set, rather than starting a broken process.",
-
   "pollSeconds": 30,
-
   "servers": [
     {
       "name": "sjv",
@@ -19,7 +14,10 @@
       "start": {
         "_comment": "Bare 'python' is resolved via PATH by Start-Process. If you need a specific interpreter, set 'exe' to its absolute path and keep 'exeFallback': 'python'.",
         "exe": "python",
-        "args": ["-m", "mcp_server.server"],
+        "args": [
+          "-m",
+          "mcp_server.server"
+        ],
         "workingDir": "${McpRoot}\\..\\structuredJsonValidator",
         "env": {
           "PYTHONPATH": "${McpRoot}\\..\\structuredJsonValidator",
@@ -44,7 +42,10 @@
       "start": {
         "_comment": "gitRobot mediates git for exactly ONE repository, named by GITROBOT_REPO. This sample points it at the repo it ships in; change it to whichever repository you want mediated.",
         "exe": "python",
-        "args": ["-m", "gitrobot_server.server"],
+        "args": [
+          "-m",
+          "gitrobot_server.server"
+        ],
         "workingDir": "${McpRoot}\\..\\gitRobot",
         "env": {
           "PYTHONPATH": "${McpRoot}\\..\\gitRobot",
@@ -60,6 +61,39 @@
         "_comment": "cmdlineMatch MUST be unique across servers. Get-McpServerProcess matches on processName + command-line substring ONLY - no working directory, no port - and Stop-McpServer force-kills every machine-wide match. If two Python servers shared a module path they would be indistinguishable, and repairing one would kill the other.",
         "processName": "python*.exe",
         "cmdlineMatch": "gitrobot_server.server"
+      }
+    },
+    {
+      "_comment": "verdictLedger: the validated record store PROCESS v2 runs on. Spec at C:\\temp\\verdictLedger.md. MANDATORY DEPENDENCY of every gated commit and push: when it is down, nothing lands, which is intentional rather than a fault. Supervised for exactly that reason.",
+      "name": "verdictLedger",
+      "host": "127.0.0.1",
+      "port": 8011,
+      "healthPath": "/mcp",
+      "kind": "process",
+      "start": {
+        "exe": "python",
+        "args": [
+          "-m",
+          "ledger_server.server"
+        ],
+        "workingDir": "${McpRoot}\\..\\verdictLedger",
+        "env": {
+          "PYTHONPATH": "${McpRoot}\\..\\verdictLedger",
+          "ZPLEDGER_DATA": "${McpRoot}\\..\\verdictLedger\\data\\records.jsonl",
+          "ZPLEDGER_POLICY": "${McpRoot}\\..\\verdictLedger\\config\\policy.v1.json",
+          "ZPLEDGER_REQUIRED": "${McpRoot}\\..\\verdictLedger\\config\\required.v2.json",
+          "ZPLEDGER_GITOPS": "${McpRoot}\\..\\gitRobot\\data\\git_ops.jsonl",
+          "ZPLEDGER_REPO": "C:\\Workspace\\ZeroParadox",
+          "ZPLEDGER_HOST": "127.0.0.1",
+          "ZPLEDGER_PORT": "8011",
+          "ZPLEDGER_ACTOR": "mcp"
+        }
+      },
+      "requiredEnv": [],
+      "identity": {
+        "_comment": "cmdlineMatch MUST be unique across servers. Get-McpServerProcess matches on processName + command-line substring ONLY - no working directory, no port - and Stop-McpServer force-kills every machine-wide match. sjv holds 'mcp_server.server' and gitRobot holds 'gitrobot_server.server'; sharing either would make a repair on one kill the other.",
+        "processName": "python*.exe",
+        "cmdlineMatch": "ledger_server.server"
       }
     }
   ]
