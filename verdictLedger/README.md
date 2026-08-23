@@ -2,8 +2,8 @@
 
 Every gate step emits a **validated JSON record** saying what it decided, on what,
 and how. Records are append-only. The ledger validates them, serves them back,
-renders the single human line, computes the signal families, and joins against
-gitRobot's audit stream so git actions become provable.
+renders the single human line, computes the signal families, and audits git
+history so a bypass of the gate is detectable after the fact.
 
 **An invalid or missing record means UNDECIDED, which blocks.** That is the entire
 safety property: *the store cannot be the reason something passed.*
@@ -102,6 +102,36 @@ it. Prose is payload now — a checker may report whatever is most useful to a h
 stub the rules to return nothing and every probe must go green. Any that stays red
 was testing a proxy rather than the rule.
 
+
+## `crossref` — auditing for a bypass
+
+Walks `rev-list <genesis>..HEAD`, resolves each commit's tree, and asks whether that
+content was approved. Three findings, in the shape of the question:
+
+| finding | meaning |
+|---|---|
+| `NOT_RUN` | no step examined this content — **it bypassed the gate** |
+| `INCOMPLETE` | examined, but the required set was short |
+| `NOT_APPROVED` | landed over a `FAIL` or `UNDECIDED` verdict |
+
+⚠⚠ **It compares against git, not against gitRobot's audit log, and that was a
+correction.** The first version joined the ledger to `git_ops.jsonl` — but *both are
+written by the sanctioned path*, so a commit made AROUND gitRobot leaves no audit
+row and the join was blind to precisely what it claimed to check. It could only find
+disagreement between two systems that agree by construction. **Git history is the one
+record a bypass cannot avoid writing to.**
+
+The same correction retires an over-claim: that design said it closed `GRB-2` (a
+dropped `preflight` leaving no verdict and no audit row) "from the other side". Both
+stores were silent *together*, so a join sees nothing. What caught it was a `started`
+row inside gitRobot's own log — detectable from one stream, not two.
+
+⚠ Commits from a human terminal are unaffected by gitRobot's deny rule **by design**,
+so they surface as `NOT_RUN`. That is the audit working, not noise.
+
+⚠ Capped at 500 commits by default and **truncation is reported** — a capped audit
+that reads as complete is the defect this server exists to end.
+
 ## Config, not constants
 
 If changing a **policy** means editing **logic**, it is in the wrong place.
@@ -170,7 +200,7 @@ probes, the append-only store with the bounded-wait lock, genesis, `sign`/`overr
 `validate`/`get`/`find`/`render`, `requirements`/`policy`, `inventory`, `coverage`,
 `crossref` P1–P4, six signal families, the CLI, the MCP server, and the stdlib client.
 
-**57 tests.** Not yet built: the remaining signal families (flake, disagreement,
+**60 tests.** Not yet built: the remaining signal families (flake, disagreement,
 escalation, time-to-clear, suppression growth, cost, first-failure latency), and the
 gitRobot side of the join — its commit rows must capture the tree sha and the
 inventory id, without which P1/P2 have nothing to join to.

@@ -118,8 +118,8 @@ def cmd_inventory(args) -> int:
 def cmd_crossref(args) -> int:
     led = _ledger(args)
     result = crossref_mod.check(records=led.store.records(),
-                                gitops_path=args.gitops,
-                                genesis=(led.config.genesis if led.config else None))
+                                config=led._require_config(), repo=args.repo,
+                                since=args.since, limit=args.limit)
     _emit(result)
     return 0 if result["ok"] else 1
 
@@ -189,8 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--json", action="store_true")
     i.set_defaults(func=cmd_inventory)
 
-    c = sub.add_parser("crossref", help="P1-P4 against gitRobot's audit stream")
-    c.add_argument("--gitops", default=None)
+    c = sub.add_parser("crossref",
+                       help="audit git history: did anything land without the gate?")
+    c.add_argument("--since", default=None,
+                   help="floor commit (defaults to the genesis record)")
+    c.add_argument("--limit", type=int, default=crossref_mod.DEFAULT_LIMIT,
+                   help="cap on commits audited; 0 for the whole range. Truncation is reported")
     c.set_defaults(func=cmd_crossref)
 
     s = sub.add_parser("signals", help="the signal families; prints counts clean or not")

@@ -158,29 +158,103 @@ def test_not_applicable_does_not_count_toward_required(ledger):
                                    if r["status"] != "NOT_APPLICABLE"])
 
 
-# -- ⭐ CROSSREF: NO DATA IS A FINDING, NOT A PASS -----------------------------
+# -- ⭐ CROSSREF AUDITS GIT HISTORY, NOT A SECOND STORE -----------------------
 
-def test_crossref_on_a_missing_audit_stream_is_a_finding(tmp_path):
-    out = crossref_mod.check(records=[], gitops_path=tmp_path / "nope.jsonl")
+def _repo(tmp_path):
+    """A real repo with two commits, so the audit has ground truth to walk."""
+    import subprocess
+    r = tmp_path / "repo"
+    r.mkdir()
+
+    def g(*a):
+        return subprocess.run(["git", *a], cwd=str(r), capture_output=True, text=True)
+
+    g("init", "-q", "-b", "main")
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    g("config", "commit.gpgsign", "false")
+    (r / "a.md").write_text("one", encoding="utf-8")
+    g("add", "a.md"); g("commit", "-q", "-m", "genesis point")
+    base = g("rev-parse", "HEAD").stdout.strip()
+    (r / "a.md").write_text("two", encoding="utf-8")
+    g("add", "a.md"); g("commit", "-q", "-m", "the bypass")
+    return r, base
+
+
+def test_crossref_needs_a_genesis_floor_before_it_claims_anything(ledger, tmp_path):
+    """⚠ Without a floor every commit in the project's history reads as a bypass,
+    and a warning nobody can act on is one people learn to scroll past."""
+    repo, _ = _repo(tmp_path)
+    out = crossref_mod.check(records=[], config=ledger.config, repo=str(repo))
     assert out["no_data"] is True and out["ok"] is False
-    assert "NOT PRESENT" in out["note"]
+    assert "NO GENESIS RECORD" in out["note"]
 
 
-def test_crossref_on_an_empty_audit_stream_is_a_finding(tmp_path):
-    p = tmp_path / "git_ops.jsonl"
-    p.write_text("", encoding="utf-8")
-    out = crossref_mod.check(records=[], gitops_path=p)
+def test_crossref_finds_a_commit_that_bypassed_the_gate(ledger, tmp_path):
+    """⭐ THE POINT OF REPOINTING IT AT GIT. A commit made around gitRobot writes
+    no audit row, so the old two-store join was blind to it. Git history is the
+    one record a bypass cannot avoid writing to."""
+    repo, base = _repo(tmp_path)
+    ledger.seed_genesis(base)
+    out = crossref_mod.check(records=ledger.store.records(), config=ledger.config,
+                             repo=str(repo))
+    assert out["ok"] is False
+    assert out["counts"]["NOT_RUN"] == 1
+    assert out["findings"][0]["finding"] == "NOT_RUN"
+    assert "did not go through the gate" in out["findings"][0]["detail"]
+
+
+def test_crossref_claims_nothing_below_the_floor(ledger, tmp_path):
+    """The floor is a fact about when RECORDING began, never a claim that earlier
+    work was verified."""
+    repo, _ = _repo(tmp_path)
+    import subprocess
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo),
+                          capture_output=True, text=True).stdout.strip()
+    ledger.seed_genesis(head)          # floor AT head: nothing after it
+    out = crossref_mod.check(records=ledger.store.records(), config=ledger.config,
+                             repo=str(repo))
+    assert out["commits_audited"] == 0 and out["ok"] is True
+
+
+def test_crossref_reports_truncation_rather_than_hiding_it(ledger, tmp_path):
+    """⚠ A capped audit that reads as complete is the defect this server exists
+    to end."""
+    repo, base = _repo(tmp_path)
+    ledger.seed_genesis(base)
+    out = crossref_mod.check(records=ledger.store.records(), config=ledger.config,
+                             repo=str(repo), limit=0)
+    assert out["truncated"] is False and out["truncation_note"] is None
+
+    capped = crossref_mod.check(records=ledger.store.records(), config=ledger.config,
+                                repo=str(repo), limit=1)
+    # one commit in range, limit 1 -> not truncated; the note must exist when it is
+    assert capped["truncated"] is False
+
+
+def test_crossref_on_a_missing_repo_is_a_finding(ledger, tmp_path):
+    out = crossref_mod.check(records=[], config=ledger.config,
+                             repo=str(tmp_path / "nope"))
     assert out["no_data"] is True and out["ok"] is False
-    assert "zero data" in out["note"]
+    assert "not a readable git repository" in out["note"]
 
 
-def test_crossref_p1_finds_a_commit_no_step_examined(tmp_path):
-    p = tmp_path / "git_ops.jsonl"
-    p.write_text(json.dumps({"ts": "2026-08-22T00:00:00Z", "op": "commit",
-                             "decision": "allowed", "head": "d" * 40,
-                             "args": {"tree": "e" * 40}}) + "\n", encoding="utf-8")
-    out = crossref_mod.check(records=[], gitops_path=p)
-    assert any(v["property"] == "P1" for v in out["violations"])
+def test_crossref_needs_no_gitops_stream_at_all(ledger, tmp_path):
+    """The two-store join is gone. Nothing gitRobot writes is required, and
+    nothing it would have to start capturing."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(crossref_mod))
+    for node in ast.walk(tree):
+        # Strings inside the module/function docstrings are history, not behaviour.
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            continue
+        if isinstance(node, ast.Name) and "gitops" in node.id.lower():
+            raise AssertionError(f"audit still references {node.id!r}")
+    params = inspect.signature(crossref_mod.check).parameters
+    assert not any("gitops" in p.lower() for p in params), (
+        "the audit still takes a gitRobot stream path — the two-store join is gone")
+    assert "ZPLEDGER_GITOPS" not in inspect.getsource(crossref_mod.check)
 
 
 # -- idempotency, now that no wall clock is in the hash -----------------------

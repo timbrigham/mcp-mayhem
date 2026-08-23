@@ -249,24 +249,34 @@ async def coverage(ref: str = "HEAD") -> dict:
 
 
 @mcp.tool()
-async def crossref(since: Optional[str] = None) -> dict:
-    """P1-P4 against gitRobot's `git_ops.jsonl`: what was DECIDED vs what was DONE.
+async def crossref(since: Optional[str] = None, limit: int = 500) -> dict:
+    """Audit GIT HISTORY against the ledger: did anything land without the gate?
 
-    Orphans in either direction are findings — you cannot have a commit with no
-    record, or a record naming a commit that never happened. Neither store can be
-    fixed into silence, because the other one still remembers.
+    Walks `rev-list <genesis>..HEAD`, resolves each commit's tree, and asks whether that
+    content was approved. Three findings, in the shape of the question:
 
-    ⚠ An absent or empty audit stream is reported as `no_data`, NEVER as "no
-    violations". The two paths are configured independently and a drift would
-    otherwise report clean."""
-    return await _guard(_sync_crossref, since)
+      NOT_RUN       no step examined this content — it bypassed the gate
+      INCOMPLETE    examined, but the required set was short
+      NOT_APPROVED  landed over a FAIL or UNDECIDED verdict
+
+    ⚠ It compares against git, NOT against gitRobot's audit log. An earlier version joined
+    the two stores, but both are written by the sanctioned path — so a commit made AROUND
+    gitRobot leaves no audit row and the join was blind to exactly what it claimed to check.
+    Git history is the one record a bypass cannot avoid writing to.
+
+    ⚠ Commits from a human terminal are unaffected by gitRobot's deny rule BY DESIGN, so they
+    surface as NOT_RUN. That is the audit working, not noise.
+
+    ⚠ Capped at `limit` commits by default; truncation is REPORTED, never silent. limit=0 for
+    the whole range."""
+    return await _guard(_sync_crossref, since, limit)
 
 
-def _sync_crossref(since) -> dict:
+def _sync_crossref(since, limit) -> dict:
     led = _ledger()
     return crossref_mod.check(records=led.store.records(),
-                              genesis=(led.config.genesis if led.config else None),
-                              since=since)
+                              config=led._require_config(), repo=REPO,
+                              since=since, limit=limit)
 
 
 @mcp.tool()
