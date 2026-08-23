@@ -38,7 +38,7 @@ def test_preflight_returns_immediately_and_records_a_start_row(robot, repo, fake
 
 
 def test_the_verdict_lands_afterwards_and_authorises_a_push(robot, repo, tmp_path,
-                                                            fake_gate):
+                                                            fake_gate, ledger_ok):
     fake_gate(0)
     (repo / "a.txt").write_text("a\n", encoding="utf-8")
     robot.stage(["a.txt"])

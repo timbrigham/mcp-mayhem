@@ -45,25 +45,41 @@ def render(record: dict) -> str:
 
 
 def render_inventory(inv: dict) -> str:
-    """The allow/refuse line, grouped by family and showing the `how` breakdown.
-
-    ⚠ A push carried by ten mechanical passes and one carried by ten signatures are
-    different events, and nothing else would tell them apart. It matters most at a
-    tag: a release whose keys are mostly `signature` is shipping known accepted
-    debt, and that belongs in the deposit rather than in someone's memory.
-    """
+    """The allow/refuse line. ⚠ It must make three things visible at once: the
+    verdict, HOW the passing keys were carried, and what is registered but not
+    gating — because a finished gate nobody promoted never gates, silently, and
+    silence is what made this class expensive."""
     counts = inv.get("how_breakdown") or {}
     breakdown = " · ".join(f"{k} {v}" for k, v in sorted(counts.items()) if v)
-    head = ("ALLOWED " if inv.get("complete") else "REFUSED ")
-    line = (f"{head} {inv.get('action')}  "
-            f"{inv.get('satisfied')}/{inv.get('required')} keys"
-            f"{('   ' + breakdown) if breakdown else ''}")
-    if inv.get("complete"):
-        return line
+    state = inv.get("admission_state")
+    ref = (inv.get("ref") or "")[:12]
 
+    head = "ALLOWED " if inv.get("complete") else "REFUSED "
+    line = (f"{head} {inv.get('action')}  "
+            f"{inv.get('satisfied')}/{inv.get('required')} admission keys"
+            f"{('  @ ' + ref) if ref else ''}"
+            f"{('   ' + breakdown) if breakdown else ''}")
     lines = [line]
+
+    if state == "UNSET":
+        lines.append("  ⚠⚠ NO ADMISSION SET NAMED — nothing said what gates this action, "
+                     "which is not the same as nothing being required. REFUSED.")
+    elif state == "EMPTY":
+        lines.append("  ⚠⚠ ADMISSION SET IS EMPTY — this action was admitted WITHOUT any "
+                     "verdict gating it. Legitimate before emitters land; it must not be "
+                     "read as 'the gate passed'.")
+
+    not_gating = inv.get("registered_not_admitting") or []
+    if not_gating:
+        shown = ", ".join(not_gating[:8]) + ("…" if len(not_gating) > 8 else "")
+        lines.append(f"  not gating {inv.get('action')}: {len(not_gating)} registered "
+                     f"type(s) — {shown} (promote in the admission set)")
+
+    if inv.get("complete"):
+        return "\n".join(lines)
+
     for status in ("MISSING", "STALE", "UNDECIDED", "FAIL"):
-        rows = [r for r in inv.get("rows", []) if r.get("status") == status]
+        rows = [r for r in inv.get("rows", []) if r.get("status") == status and r.get("gating")]
         if not rows:
             continue
         for family in ("mechanical", "review"):
@@ -72,8 +88,11 @@ def render_inventory(inv: dict) -> str:
                 continue
             # The remedies differ by an order of magnitude in cost, which is the
             # only reason the grouping exists.
-            remedy = ("run python tools/verify/batch.py precommit"
-                      if family == "mechanical" else "that is an agent round")
+            remedy = {"MISSING": ("python tools/verify/batch.py precommit"
+                                  if family == "mechanical" else "that is an agent round"),
+                      "STALE": "re-run — recorded against different bytes",
+                      "UNDECIDED": "the ledger could not judge it — investigate",
+                      "FAIL": "fix it"}[status]
             lines.append(f"  {status:9} {family:10} {', '.join(names)}"
                          f"      INSTEAD: {remedy}")
     return "\n".join(lines)

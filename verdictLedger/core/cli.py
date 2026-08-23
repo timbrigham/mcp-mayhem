@@ -208,7 +208,21 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _utf8_stdout() -> None:
+    """⚠ Refusal text carries ⚠ and — , and a Windows console defaults to cp1252.
+    Without this the tool raises UnicodeEncodeError and prints NOTHING — the
+    refusal that matters most would crash instead of explaining itself. Measured
+    2026-08-23 while proving the ledger gate.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None) -> int:
+    _utf8_stdout()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

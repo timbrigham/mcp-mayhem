@@ -38,8 +38,23 @@ def _subject_index(records) -> dict:
 
 
 def build(*, config, records, action: str, files: dict,
-          ref: Optional[str] = None) -> dict:
-    """``files`` maps path -> current sha256 for the content being promoted."""
+          ref: Optional[str] = None, admission: Optional[list] = None) -> dict:
+    """``files`` maps path -> current sha256 for the content being promoted.
+
+    ⚠⚠ TWO LISTS, NOT TWO COPIES. The REGISTRY (config.types) says what may be
+    RECORDED; the ADMISSION SET says what must be green to let an action through.
+    They answer different questions, so `complete` is computed against `admission`
+    — not against every registered type. Twenty experimental gates recording while
+    three admit a push is a coherent, intended state.
+
+    An earlier model conflated them, and the tell that it was wrong is that its
+    correct implementation blocks every push until every registered type has an
+    emitter. A model whose correct implementation bricks the system is describing
+    the wrong system.
+
+    ⚠ `admission=None` means "no admission set was named", which is NOT the same
+    as an empty one and must never read as satisfied — see `admission_state`.
+    """
     reqs = config.requirements(action)
     tips = _subject_index(records)
 
@@ -93,22 +108,53 @@ def build(*, config, records, action: str, files: dict,
                      "subjects_covered": covered, "subjects_stale": stale,
                      "why": None})
 
-    def n(status):
-        return sum(1 for r in rows if r["status"] == status)
+    # Only ADMITTED types decide `complete`. Everything else is reported so the
+    # caller can see it, and so a promotion gap is visible rather than silent.
+    admitted = None if admission is None else set(admission)
+    for r in rows:
+        r["gating"] = (admitted is not None and r["step"] in admitted
+                       and r["status"] != "NOT_APPLICABLE")
 
-    required = sum(1 for r in rows if r["status"] != "NOT_APPLICABLE")
+    gating = [r for r in rows if r["gating"]]
+
+    def n(status):
+        return sum(1 for r in gating if r["status"] == status)
+
+    required = len(gating)
     satisfied = n("SATISFIED")
+    registered_not_admitting = sorted(
+        r["step"] for r in rows
+        if not r["gating"] and r["status"] != "NOT_APPLICABLE")
+
+    if admitted is None:
+        # ⚠ NOT the same as an empty admission set. "Nobody said what gates this"
+        # must never render as "everything is fine" — that is the fail-open shape
+        # this whole system exists to end.
+        state = "UNSET"
+        complete = False
+    elif not admitted:
+        # Legitimate on day one, when no checker emits yet — but it must SCREAM,
+        # or "the gate is on" gets believed while it gates nothing.
+        state = "EMPTY"
+        complete = True
+    else:
+        state = "SET"
+        complete = (n("MISSING") == 0 and n("STALE") == 0
+                    and n("UNDECIDED") == 0 and n("FAIL") == 0)
+
     return {
         "ref": ref, "action": action,
+        "admission_state": state,
+        "admitted": sorted(admitted) if admitted is not None else None,
         "required": required, "satisfied": satisfied,
         "missing": n("MISSING"), "stale": n("STALE"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),
-        "not_applicable": n("NOT_APPLICABLE"),
+        "not_applicable": sum(1 for r in rows if r["status"] == "NOT_APPLICABLE"),
         # gitRobot's rule is that these are all zero. The ledger COMPUTES; the
         # consumer REQUIRES. Re-deriving completeness on the other side would be
         # the mirror defect in the highest-stakes possible location.
-        "complete": (n("MISSING") == 0 and n("STALE") == 0
-                     and n("UNDECIDED") == 0 and n("FAIL") == 0 and required > 0),
+        "complete": complete,
+        "registered_not_admitting": registered_not_admitting,
         "how_breakdown": how_counts,
         "rows": rows,
     }

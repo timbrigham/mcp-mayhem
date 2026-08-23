@@ -20,14 +20,16 @@ is defence in depth.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from core import ledger as ledger_client
 from core import tiers
 from core.audit import AuditLog
-from core.errors import RefusalError, RepoError, UsageError
+from core.errors import GitRobotError, RefusalError, RepoError, UsageError
 from core.gates import Gates
 from core.gitio import Git
 
@@ -485,12 +487,72 @@ class GitRobot:
         # demand — requiring one would make its push permanently unreachable rather
         # than safe. Reason and audit still apply: those are accountability, not gate.
 
+        inv = None
+        if repo_mode == "main":
+            inv = self._require_inventory(branch, args, reason=reason, target=target)
+
         result = target.run(["push", "origin", branch], timeout=900)
         decision = "allowed" if result.ok else "failed"
+        if inv is not None:
+            # ⚠ The audit row NAMES the inventory that authorised this push and the
+            # policy it was judged under, so a bar that moved later cannot
+            # re-interpret a past action.
+            args = {**args, "inventory_ref": inv.get("ref"),
+                    "policy_sha": inv.get("policy_sha"),
+                    "admission": inv.get("admitted")}
         return self._receipt(
             "push", args, decision, gates=gates, reason=reason, detail=result.output,
-            extra={"output": result.output, "ok": result.ok}, target=target,
+            extra={"output": result.output, "ok": result.ok,
+                   "inventory": None if inv is None else inv.get("line")},
+            target=target,
         )
+
+    def _require_inventory(self, branch: str, args: Any, *, reason, target) -> dict:
+        """THE HARD CONTRACT: refuse unless the ledger says every admission key is
+        green for the EXACT hash being pushed.
+
+        ⚠⚠ AT PUSH, NOT AT PREFLIGHT, and this is a trap worth naming. Measured
+        2026-08-23: `preflight` logged `scope 0 ref(s)` while the push that followed
+        logged `scope 1 ref(s) — range 5892cbc..55f2d6a`. **preflight validates the
+        TREE; only push knows what is actually being published.** An inventory
+        bolted onto preflight would certify the wrong subject — SCOPE-1 reborn
+        inside the fix for it.
+
+        ⚠ EVERY ATTEMPT, no caching. The hash is the key; if the hash moved the
+        answer is recomputed. A commit between preflight and push already
+        invalidates preflight, so the inventory must be at least as strict.
+        """
+        head = target.head()
+        if not head:
+            raise self._refuse(
+                "push", args, "cannot resolve HEAD, so there is no hash to evaluate.",
+                "Commit something first.", reason=reason, target=target)
+        try:
+            inv = ledger_client.inventory(head, "push")
+        except ledger_client.LedgerUnreachable:
+            raise
+        except GitRobotError as exc:
+            raise self._refuse(
+                "push", args, f"the admission set could not be read: {exc}",
+                "gitRobot refuses rather than guessing what should gate a push — an "
+                "absent list is not an empty one. Fix config/admission.json.",
+                reason=reason, target=target)
+
+        if not inv.get("ok", True) or not inv.get("complete"):
+            # ⚠ Print the ROWS, not a count. The ledger already renders this and it
+            # is genuinely actionable; summarising it here would throw away the
+            # remedy per group, and the remedies differ by an order of magnitude.
+            rendered = inv.get("line") or json.dumps(inv, indent=2)[:2000]
+            raise self._refuse(
+                "push", args,
+                f"verdictLedger reports the admission set is not satisfied for "
+                f"{head[:12]}.\n\n{rendered}",
+                "Every required verdict must be recorded and passing for the EXACT hash "
+                "being pushed. This is not advisory and there is no flag that skips it — "
+                "a push allowed while the ledger said 0/19 is the failure this gate "
+                "exists to prevent.",
+                reason=reason, target=target)
+        return inv
 
     # -- branch movement: refused while the tree is dirty ----------------------
 

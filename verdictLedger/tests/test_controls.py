@@ -40,7 +40,8 @@ def test_coverage_on_an_empty_stream_reports_everything_uncovered(ledger):
 def test_inventory_on_an_empty_ledger_reports_everything_missing(ledger):
     """⭐ Day one. It must NEVER read "0 required, all satisfied"."""
     inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
-                              files={"docs/x.md": "b" * 40})
+                              files={"docs/x.md": "b" * 40},
+                              admission=["build", "check_prose", "check_paths"])
     assert inv["required"] > 0, "an empty requirement set would render as success"
     assert inv["satisfied"] == 0
     assert inv["missing"] == inv["required"]
@@ -151,11 +152,15 @@ def test_not_applicable_is_not_satisfied(ledger):
 
 
 def test_not_applicable_does_not_count_toward_required(ledger):
+    """A `when` glob that did not match is excluded from the gating set even when
+    the type is admitted — it did not apply, so it cannot be missing."""
     inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
-                              files={"x.lean": "b" * 40})
+                              files={"x.lean": "b" * 40},
+                              admission=["build", "pdf_coupling"])
     assert inv["not_applicable"] > 0
-    assert inv["required"] == len([r for r in inv["rows"]
-                                   if r["status"] != "NOT_APPLICABLE"])
+    pdf = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+    assert pdf["status"] == "NOT_APPLICABLE" and pdf["gating"] is False
+    assert inv["required"] == 1          # only `build` gates
 
 
 # -- ⭐ CROSSREF AUDITS GIT HISTORY, NOT A SECOND STORE -----------------------

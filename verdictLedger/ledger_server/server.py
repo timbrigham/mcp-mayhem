@@ -214,7 +214,8 @@ def _sync_policy() -> dict:
 
 
 @mcp.tool()
-async def inventory(action: str, ref: str = "staged") -> dict:
+async def inventory(action: str, ref: str = "staged",
+                    admission: Optional[list[str]] = None) -> dict:
     """Required vs satisfied vs MISSING for a ref — the complete key set for an action.
 
     ⚠ The requirement set is declared IN ADVANCE. An inventory assembled from "the
@@ -225,15 +226,22 @@ async def inventory(action: str, ref: str = "staged") -> dict:
     content moved — re-run) · MISSING (never examined — run at all) ·
     NOT_APPLICABLE (a `when` glob did not match, and it carries the glob) ·
     FAIL/UNDECIDED. `complete` is true only when missing, stale, undecided and
-    failed are all zero — gitRobot REQUIRES that; the ledger COMPUTES it."""
-    return await _guard(_sync_inventory, action, ref)
+    failed are all zero — gitRobot REQUIRES that; the ledger COMPUTES it.
+
+    ⚠⚠ TWO LISTS. `admission` names which registered types GATE this action; the registry
+    says only what may be RECORDED. Twenty experimental gates recording while three admit a
+    push is intended. Omitting `admission` is NOT an empty set — it means nobody said what
+    gates this, and it refuses."""
+    return await _guard(_sync_inventory, action, ref, admission)
 
 
-def _sync_inventory(action: str, ref: str) -> dict:
+def _sync_inventory(action: str, ref: str, admission=None) -> dict:
     led = _ledger()
     cfg = led._require_config()
     inv = inventory_mod.build(config=cfg, records=led.store.records(),
-                              action=action, files=_files(ref), ref=ref)
+                              action=action, files=_files(ref), ref=ref,
+                              admission=admission)
+    inv["policy_sha"] = cfg.policy_sha
     inv["line"] = render_mod.render_inventory(inv)
     return inv
 

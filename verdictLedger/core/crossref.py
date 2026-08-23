@@ -90,7 +90,13 @@ def _genesis_floor_commit(records: list) -> Optional[str]:
 
 def check(*, records: list, config, repo: Optional[str] = None,
           since: Optional[str] = None, limit: int = DEFAULT_LIMIT,
-          action: str = "commit") -> dict:
+          action: str = "commit", admission: Optional[list] = None) -> dict:
+    """⚠ Without an `admission` set the audit can still answer *"did anything
+    examine this content?"* — that is NOT_RUN, and it needs no notion of
+    sufficiency. It CANNOT answer *"was it sufficiently examined?"*, so
+    INCOMPLETE is not evaluated and the result says so. Reporting clean because
+    nobody said what sufficient means is the fail-open this system exists to end.
+    """
     repo = repo or os.environ.get("ZPLEDGER_REPO", r"C:\Workspace\ZeroParadox")
 
     head = _git(repo, "rev-parse", "HEAD")
@@ -122,20 +128,25 @@ def check(*, records: list, config, repo: Optional[str] = None,
         if not files:
             continue
         inv = inventory_mod.build(config=config, records=records, action=action,
-                                  files=files, ref=commit)
+                                  files=files, ref=commit, admission=admission)
+        # "Did anything examine this content?" is independent of what would have
+        # been SUFFICIENT — a row in any non-MISSING state means some step looked.
+        examined = [r for r in inv["rows"]
+                    if r["status"] in ("SATISFIED", "STALE", "FAIL", "UNDECIDED")]
         subject = {"commit": commit, "tree": tree,
                    "subject": _git(repo, "log", "-1", "--pretty=%s", commit)[:80],
+                   "examined_by": len(examined),
                    "required": inv["required"], "satisfied": inv["satisfied"]}
-        if inv["satisfied"] == 0 and inv["required"] > 0:
+        if not examined:
             findings.append({**subject, "finding": "NOT_RUN",
                              "detail": ("no step examined this content — it did not go "
                                         "through the gate")})
-        elif inv["failed"] or inv["undecided"]:
+        elif any(r["status"] in ("FAIL", "UNDECIDED") for r in inv["rows"]):
             names = [r["step"] for r in inv["rows"]
                      if r["status"] in ("FAIL", "UNDECIDED")]
             findings.append({**subject, "finding": "NOT_APPROVED",
                              "detail": f"landed over a non-passing verdict: {', '.join(names)}"})
-        elif not inv["complete"]:
+        elif admission is not None and not inv["complete"]:
             names = [r["step"] for r in inv["rows"]
                      if r["status"] in ("MISSING", "STALE")]
             findings.append({**subject, "finding": "INCOMPLETE",
@@ -154,6 +165,11 @@ def check(*, records: list, config, repo: Optional[str] = None,
             f"⚠ AUDIT CAPPED at the most recent {limit} commits of {rev_range}. Earlier "
             f"commits in range were NOT examined and are not claimed clean. Pass limit=0 "
             f"for the whole range." if truncated else None),
+        "admission": sorted(admission) if admission is not None else None,
+        "completeness_note": (None if admission is not None else
+                              "⚠ NO ADMISSION SET GIVEN — NOT_RUN and NOT_APPROVED were "
+                              "evaluated, INCOMPLETE was NOT. A commit that was partly "
+                              "examined is not claimed clean here."),
         "counts": {k: sum(1 for f in findings if f["finding"] == k)
                    for k in ("NOT_RUN", "INCOMPLETE", "NOT_APPROVED")},
         "findings": findings,

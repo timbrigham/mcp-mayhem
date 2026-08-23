@@ -150,7 +150,7 @@ def test_push_refuses_without_a_preflight(robot, repo, tmp_path, fake_gate):
     assert robot.read("log", ["origin/illustrated", "--oneline"])["output"].count("\n") == 0
 
 
-def test_preflight_then_push(robot, repo, tmp_path, fake_gate):
+def test_preflight_then_push(robot, repo, tmp_path, fake_gate, ledger_ok):
     fake_gate(0)
     _commit(robot, repo, tmp_path)
     pre = robot.preflight(reason="pre-ship check", wait=True)
@@ -195,7 +195,7 @@ def test_private_branches_never_reach_a_remote(robot, repo, tmp_path, fake_gate)
         robot.push("private/scratch", reason="oops")
 
 
-def test_push_records_the_gate_verdict_on_the_clean_path(robot, repo, tmp_path, fake_gate):
+def test_push_records_the_gate_verdict_on_the_clean_path(robot, repo, tmp_path, fake_gate, ledger_ok):
     """The whole point of the audit: 'judged clean' and 'never ran' must not be
     indistinguishable afterwards."""
     fake_gate(0)

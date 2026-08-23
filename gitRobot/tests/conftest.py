@@ -75,3 +75,88 @@ def fake_gate(repo):
 
     _set(0)
     return _set
+
+
+@pytest.fixture
+def ledger_ok(monkeypatch):
+    """A ledger that says the admission set is satisfied.
+
+    ⚠ Tests must never depend on a live server. The point of the fixture is that
+    the REFUSAL paths get their own explicit tests below, rather than being
+    whatever a real ledger happened to answer that day.
+    """
+    from core import ledger as ledger_client
+
+    def fake(ref, action, admission=None):
+        return {"ok": True, "complete": True, "ref": ref, "action": action,
+                "admitted": [], "admission_state": "EMPTY", "policy_sha": "policy-sha",
+                "required": 0, "satisfied": 0, "registered_not_admitting": [],
+                "line": f"ALLOWED  {action}  0/0 admission keys  @ {ref[:12]}"}
+
+    monkeypatch.setattr(ledger_client, "inventory", fake)
+    return fake
+
+
+@pytest.fixture
+def ledger_refuses(monkeypatch):
+    """A ledger reporting an incomplete admission set — the 2026-08-23 event."""
+    from core import ledger as ledger_client
+
+    def fake(ref, action, admission=None):
+        return {"ok": True, "complete": False, "ref": ref, "action": action,
+                "admitted": ["build", "check_prose"], "admission_state": "SET",
+                "policy_sha": "policy-sha", "required": 2, "satisfied": 0,
+                "missing": 2, "stale": 0, "undecided": 0, "failed": 0,
+                "registered_not_admitting": ["check_pov"],
+                "rows": [{"step": "build", "family": "mechanical",
+                          "status": "MISSING", "gating": True}],
+                "line": ("REFUSED  push  0/2 admission keys\n"
+                         "  MISSING  mechanical  build, check_prose")}
+
+    monkeypatch.setattr(ledger_client, "inventory", fake)
+    return fake
+
+
+@pytest.fixture
+def ledger_down(monkeypatch):
+    from core import ledger as ledger_client
+
+    def boom(ref, action, admission=None):
+        raise ledger_client.LedgerUnreachable("verdictLedger is not answering")
+
+    monkeypatch.setattr(ledger_client, "inventory", boom)
+    return boom
+
+
+def _init(path):
+    for args in (["init", "-q", "-b", "master"], ["config", "user.email", "t@t"],
+                 ["config", "user.name", "t"], ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", *args], cwd=str(path), check=True, capture_output=True)
+
+
+@pytest.fixture
+def nested_local(repo, tmp_path):
+    """`.claude-local` inside the main checkout, with its own remote — the real shape."""
+    local = repo / ".claude-local"
+    local.mkdir()
+    _init(local)
+    (local / "notes.md").write_text("private notes\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=str(local), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=str(local),
+                   check=True, capture_output=True)
+
+    bare = tmp_path / "ZeroParadoxLocal.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=str(local),
+                   check=True, capture_output=True)
+
+    # prod ignores it, exactly as the real repo does
+    (repo / ".gitignore").write_text(".claude-local/\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=str(repo), check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "ignore local"], cwd=str(repo),
+                   check=True, capture_output=True)
+    return local
+
+
