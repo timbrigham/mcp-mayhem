@@ -129,6 +129,28 @@ def build(*, config, records, action: str, files: dict,
                 # examined, but never at THIS content
                 stale += 1
                 stale_rec = stale_rec or by_path[(step, path)]
+        # ⭐⭐ HOW MUCH OF THE SCOPE WAS NEVER EXAMINED AT ALL.
+        #
+        # Measured 2026-08-23: a step that examined ONE file out of 201 reported
+        # SATISFIED, because a path with no record for that step contributed to
+        # neither `covered` nor `stale` and so was simply not counted. Absence
+        # rendering as success -- the defect class this server exists to end,
+        # arriving through the one door nobody had checked.
+        #
+        # It matters right now because ZeroParadox's `common.ledger_subjects` DROPS
+        # any path whose worktree differs from the index. That fence is honest about
+        # what it read, but the narrowing was invisible HERE, so a dirty tree quietly
+        # shrank what a green key meant.
+        #
+        # ⚠ REPORTED, NOT YET BLOCKING. Making it block is a policy change that
+        # would refuse every push until every step covers every in-scope path, and
+        # that is Tim's call, not a side effect of a bug fix. But a downgraded gate
+        # has to get LOUDER, so the number is on every row and in the rendered line.
+        scope = [p for p in files if not when or fnmatch.fnmatch(p, when)]
+        unexamined = sum(1 for p in scope
+                         if (step, p, files[p]) not in by_content
+                         and (step, p) not in by_path)
+
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
                            if (step, p) in legacy_tips), None)
@@ -174,6 +196,7 @@ def build(*, config, records, action: str, files: dict,
         rows.append({"step": step, "family": family, "status": status,
                      "record_id": (record or {}).get("id"),
                      "subjects_covered": covered, "subjects_stale": stale,
+                     "subjects_unexamined": unexamined, "scope": len(scope),
                      "why": why})
 
     # Only ADMITTED types decide `complete`. Everything else is reported so the
@@ -216,6 +239,8 @@ def build(*, config, records, action: str, files: dict,
         "admission_state": state,
         "admitted": sorted(admitted) if admitted is not None else None,
         "required": required, "satisfied": satisfied,
+        "unexamined": sum(r["subjects_unexamined"] for r in rows
+                          if r.get("gating") and r.get("subjects_unexamined")),
         "missing": n("MISSING"), "stale": n("STALE"),
         "legacy_identity": n("LEGACY_IDENTITY"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),

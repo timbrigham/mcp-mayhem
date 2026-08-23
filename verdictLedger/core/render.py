@@ -75,6 +75,27 @@ def render_inventory(inv: dict) -> str:
         lines.append(f"  not gating {inv.get('action')}: {len(not_gating)} registered "
                      f"type(s) — {shown} (promote in the admission set)")
 
+    # ⚠⭐ A GREEN KEY OVER A NARROWED SCOPE. Measured 2026-08-23: a step that examined
+    # ONE file out of 201 still read SATISFIED, because a path with no record for that
+    # step counted as neither covered nor stale and so was not counted at all.
+    #
+    # ⚠⚠ THIS SITS BEFORE THE `complete` EARLY RETURN ON PURPOSE. A COMPLETE inventory
+    # over a narrowed scope is the only case where this warning is load-bearing — an
+    # incomplete one already refuses. Printing it only on failures would hide it in
+    # exactly the situation it exists for.
+    #
+    # ⚠ Reported, NOT blocking. Making it block would refuse every push until every
+    # step covers every in-scope path, and that is a policy decision rather than a
+    # side effect of a bug fix.
+    thin = [row for row in inv.get("rows") or []
+            if row.get("gating") and row.get("subjects_unexamined")]
+    if thin:
+        worst = sorted(thin, key=lambda x: -x["subjects_unexamined"])[:4]
+        lines.append("  ⚠ NARROWED COVERAGE — examined fewer paths than are in scope: "
+                     + ", ".join(f"{w['step']} {w['scope'] - w['subjects_unexamined']}"
+                                 f"/{w['scope']}" for w in worst)
+                     + (f" (+{len(thin) - 4} more)" if len(thin) > 4 else ""))
+
     if inv.get("complete"):
         return "\n".join(lines)
 

@@ -98,6 +98,15 @@
         "tag"
       ],
       "reason": "release-only by construction"
+    },
+    "rely": {
+      "family": "review",
+      "_why": "the /rely round signal. Read by batch.py, ship.py AND guards.py; `rely_cleared.txt` was its only representation, so retiring the signal path without this type deletes the coverage rather than migrating it."
+    },
+    "claim_review": {
+      "family": "review",
+      "_why": "check_frozen demands it when a BASELINE ENTRY IS REMOVED -- the fail-closed record that an unexamined site had its liability discharged. With no type, deleting a baseline entry becomes free, which is a suppression mechanism losing its price.",
+      "_emitter_contract": "MUST be recorded on EVERY run, not only when a baseline entry is removed: PASS when none was, and the discharge record when one was. A key that appears only sometimes is indistinguishable from a key nobody ran -- which is the enumerator-found-nothing defect, and the registry has no way to express 'conditional on an event' (its `when` is a PATH glob)."
     }
   }
 }

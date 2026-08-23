@@ -1,44 +1,85 @@
 {
   "schema": "zp.admission.v1",
-
   "_what": "THE ADMISSION SET: which registered verdict types must be green for gitRobot to let an action through. This is NOT the registry. The registry (verdictLedger's required.v2.json) says what may be RECORDED; this says what must PASS.",
-
   "_why_here": "Separation of duty. The ledger records verdicts; if it also decided what was SUFFICIENT, anyone able to edit ledger config could lower the bar that admits a push in one place. Split them and two systems must agree before the bar moves. This is a deliberate, NARROW reversal of 'no policy values in gitRobot' -- the type registry, min_passes, max_depth, lock waits, the genesis floor and HOW `complete` is computed all stay in the ledger, and gitRobot never re-derives completeness. It names this set and requires the ledger's answer.",
-
   "_complete_not_partial": "Tim, 2026-08-23: 'I want the complete set, not a partial lets do this later.' A PARTIAL ADMISSION SET IS A HALF-WORKING GATE. Admit 3 of 19 and the other 16 do not gate -- which is indistinguishable, from the outside, from the state that passed the push it should not have. That is the same reasoning that got the branch reset.",
-
   "_every_push_blocks_and_that_is_the_gate_working": "With the complete set admitted and no emitters wired, EVERY PUSH BLOCKS. That is deliberate. DO NOT THIN THIS SET TO UNBLOCK A PUSH -- satisfy the keys instead. Until checkers emit, the sanctioned way to satisfy one is the SIGNATURE ROUTE (decided.how = 'signature', who = '<name>'), which needs no agreement threshold and no paid agent round. A human accepting a key is attributable; a key that never had to exist is not.",
-
   "_empty_REFUSES": "An EMPTY list for an action REFUSES that action on the main repo; it does not allow-with-a-warning. That was the second half of the 2026-08-23 failure: EMPTY rendered as ALLOWED plus a capitalised warning, which is fail-OPEN in the costume of fail-closed. An empty set means the action would be certified against zero requirements.",
-
   "_mirrors_the_registry_and_the_registry_wins": "These lists mirror the registry's own `actions` narrowings. If admission and the registry ever disagree on an action, THE REGISTRY IS THE BUG -- it is the list that carries stated reasons. Admission is a list of names, and a list of names cannot explain itself, which is why a policy exception must never be expressed by thinning it.",
-
   "_genesis_is_admitted_by_nothing": "It is the recording floor, not a gate; the registry already narrows it to actions: [] with a reason.",
-
   "_conditional_types_are_still_admitted": "pdf_coupling is admitted everywhere and gates nothing when no PDF changed -- its registry `when` glob renders it NOT_APPLICABLE, carrying the glob. Admitting a conditional type is correct: 'it did not apply' and 'it was not required' are different facts, and only the first is checkable.",
-
   "default": "NOT_ADMITTING",
-
   "admission": {
     "commit": [
-      "build", "check_checkers", "check_classes", "check_encoding", "check_figures",
-      "check_frozen", "check_hashes", "check_invariants", "check_modal", "check_moved",
-      "check_negatives", "check_paths", "check_pov", "check_prose", "decls", "guards",
-      "pdf_coupling"
+      "build",
+      "check_checkers",
+      "check_classes",
+      "check_encoding",
+      "check_figures",
+      "check_frozen",
+      "check_hashes",
+      "check_invariants",
+      "check_modal",
+      "check_moved",
+      "check_negatives",
+      "check_paths",
+      "check_pov",
+      "check_prose",
+      "decls",
+      "guards",
+      "pdf_coupling",
+      "rely",
+      "claim_review"
     ],
     "push": [
-      "build", "check_checkers", "check_classes", "check_encoding", "check_figures",
-      "check_frozen", "check_hashes", "check_invariants", "check_modal", "check_moved",
-      "check_negatives", "check_paths", "check_pov", "check_prose", "decls", "guards",
+      "build",
+      "check_checkers",
+      "check_classes",
+      "check_encoding",
+      "check_figures",
+      "check_frozen",
+      "check_hashes",
+      "check_invariants",
+      "check_modal",
+      "check_moved",
+      "check_negatives",
+      "check_paths",
+      "check_pov",
+      "check_prose",
+      "decls",
+      "guards",
       "pdf_coupling",
-      "editorial", "adversary", "prior_art"
+      "editorial",
+      "adversary",
+      "prior_art",
+      "rely",
+      "claim_review"
     ],
     "tag": [
-      "build", "check_checkers", "check_classes", "check_encoding", "check_figures",
-      "check_frozen", "check_hashes", "check_invariants", "check_modal", "check_moved",
-      "check_negatives", "check_paths", "check_pov", "check_prose", "decls", "guards",
+      "build",
+      "check_checkers",
+      "check_classes",
+      "check_encoding",
+      "check_figures",
+      "check_frozen",
+      "check_hashes",
+      "check_invariants",
+      "check_modal",
+      "check_moved",
+      "check_negatives",
+      "check_paths",
+      "check_pov",
+      "check_prose",
+      "decls",
+      "guards",
       "pdf_coupling",
-      "editorial", "adversary", "prior_art", "release_ready"
+      "editorial",
+      "adversary",
+      "prior_art",
+      "release_ready",
+      "rely",
+      "claim_review"
     ]
-  }
+  },
+  "_req2_2026_08_23": "rely and claim_review admitted at every action on ZeroParadox's request. Both were live push-blocking properties whose ONLY representation was a *_cleared.txt file, so retiring the signal path without them would have deleted coverage rather than migrated it. cr_cleared.txt is the sharper loss: without a claim_review type, deleting a check_frozen baseline entry becomes free."
 }

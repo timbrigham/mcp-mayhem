@@ -16,6 +16,7 @@ import pytest
 from conftest import good
 from core import crossref as crossref_mod
 from core import inventory as inventory_mod
+from core import render as render_mod
 from core import signals as signals_mod
 from core.errors import ConfigError
 from core.ledger import Ledger
@@ -367,3 +368,68 @@ def test_status_reports_unwritable_as_unhealthy(ledger, monkeypatch):
     monkeypatch.setattr("pathlib.Path.write_text", boom)
     st = ledger.status()
     assert st["healthy"] is False and st["problems"]
+
+
+# -- ⭐ NARROWED COVERAGE IS VISIBLE ------------------------------------------
+
+def test_a_step_that_examined_one_file_of_many_is_not_silently_satisfied(ledger):
+    """⭐⭐ MEASURED 2026-08-23, and it is the defect class this server exists to end.
+
+    A step that examined ONE file out of 201 read SATISFIED. A path with no record for
+    that step contributed to neither `covered` nor `stale`, so it was not counted at
+    all — absence rendering as success, arriving through the one door nobody checked.
+
+    It mattered immediately: ZeroParadox's `common.ledger_subjects` DROPS any path
+    whose worktree differs from the index. That fence is honest about what it read,
+    but the narrowing was invisible here, so a dirty tree quietly shrank what a green
+    key meant.
+
+    ⚠ The count is REPORTED, not blocking — making it block is a policy decision.
+    But a downgraded gate has to get louder, so it must never be silent again.
+    """
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "a.md", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {f"f{i}.md": "b" * 40 for i in range(200)}
+    files["a.md"] = "a" * 40
+
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="push",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["subjects_covered"] == 1
+    assert row["subjects_unexamined"] == 200, "the narrowing was invisible again"
+    assert inv["unexamined"] == 200
+
+
+def test_the_narrowing_is_named_even_when_the_inventory_is_COMPLETE(ledger):
+    """⭐ THE LOAD-BEARING HALF. An incomplete inventory already refuses and the
+    reader is already looking; the dangerous case is a GREEN one over a thin scope.
+    The warning therefore prints before the `complete` early return."""
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "a.md", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {"a.md": "a" * 40, "b.md": "b" * 40, "c.md": "c" * 40}
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="push",
+                              files=files, ref="t", admission=["check_prose"])
+    assert inv["complete"] is True
+    line = render_mod.render_inventory(inv)
+    assert "NARROWED COVERAGE" in line
+    assert "check_prose 1/3" in line
+
+
+def test_full_coverage_raises_no_warning(ledger):
+    """⚠ …and it must not cry wolf when the scope really was covered."""
+    files = {"a.md": "a" * 40}
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "a.md", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="push",
+                              files=files, ref="t", admission=["check_prose"])
+    assert inv["unexamined"] == 0
+    assert "NARROWED COVERAGE" not in render_mod.render_inventory(inv)
