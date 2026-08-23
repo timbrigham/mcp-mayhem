@@ -137,12 +137,37 @@ class Git:
         Records the counts, not the file list: the audit is a receipt, and a
         1000-line status dump per record would bury the signal it exists to keep.
         """
+        # ⚠⚠ GRB-3. `staged` used to be `ln[:1].strip()`, which is TRUE for the "?"
+        # of an untracked "?? path" line. Measured twice 2026-08-23: `staged: 3,
+        # untracked: 3` for the same three files, while `status --short` showed three
+        # `??` and `diff --cached` was empty. A caller that trusts that count commits
+        # nothing and believes it committed three files.
+        #
+        # Porcelain v1 is two status characters then a space then the path. X is the
+        # INDEX state and Y the WORK TREE state; "?" and "!" are not states, they are
+        # the whole-line markers for untracked and ignored. Testing "is X non-blank"
+        # therefore had to be wrong for exactly those two.
         lines = self.porcelain()
-        staged = sum(1 for ln in lines if ln[:1].strip())
-        unstaged = sum(1 for ln in lines if len(ln) > 1 and ln[1:2].strip() and ln[:2] != "??")
-        untracked = sum(1 for ln in lines if ln.startswith("??"))
-        return {"dirty": bool(lines), "staged": staged,
-                "unstaged": unstaged, "untracked": untracked}
+        staged = unstaged = untracked = ignored = unmerged = 0
+        for ln in lines:
+            x, y = (ln[:1] or " "), (ln[1:2] or " ")
+            if ln.startswith("??"):
+                untracked += 1
+                continue
+            if ln.startswith("!!"):
+                ignored += 1
+                continue
+            # ⚠ A conflicted path is neither staged nor unstaged; counting "UU" as
+            # both is the same miscount GRB-3 was, one state over.
+            if "U" in (x, y) or (x, y) in (("A", "A"), ("D", "D")):
+                unmerged += 1
+                continue
+            if x != " ":
+                staged += 1
+            if y != " ":
+                unstaged += 1
+        return {"dirty": bool(lines), "staged": staged, "unstaged": unstaged,
+                "untracked": untracked, "ignored": ignored, "unmerged": unmerged}
 
     def unpushed_count(self) -> Optional[int]:
         """Commits on HEAD not on its upstream. None when there is no upstream."""

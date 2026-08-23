@@ -973,6 +973,45 @@ class GitRobot:
                         "ts": record["ts"]}
         raise UsageError(f"no refusal with id {refusal_id!r} in this session or the log")
 
-    def history(self, limit: int = 20) -> dict:
-        records = self.audit.read(limit=limit)
-        return {"count": len(records), "path": str(self.audit.path), "records": records}
+    # ⚠ The fields a reader actually scans after an incident. Everything else --
+    # full args, gate verdicts, inventory payloads -- is behind `full=True`.
+    SUMMARY_FIELDS = ("ts", "op", "decision", "head", "branch", "actor", "reason")
+
+    def history(self, limit: int = 20, full: bool = False, op: Optional[str] = None,
+                decision: Optional[str] = None) -> dict:
+        """The append-only op log. SUMMARY BY DEFAULT.
+
+        ⚠⚠ GRB-4. `limit=30` returned 194,296 characters across 818 lines -- it had
+        to be dumped to a file and grepped. §7 gives this tool one job, answering
+        "did this guard ever fire?" after an incident, and it could not be read at the
+        moment it was needed. A tool that must be post-processed to be used has the
+        wrong default.
+
+        ⚠ The full record is one flag away, never gone: truncation that cannot be
+        undone would trade an unreadable log for a lossy one.
+        """
+        records = self.audit.read()
+        if op:
+            records = [r for r in records if r.get("op") == op]
+        if decision:
+            records = [r for r in records if r.get("decision") == decision]
+
+        total = len(records)
+        # ⚠ The MOST RECENT `limit`, because an incident is always at the end.
+        shown = records[-limit:] if limit and limit > 0 else records
+        if not full:
+            shown = [{k: r.get(k) for k in self.SUMMARY_FIELDS if r.get(k) is not None}
+                     for r in shown]
+
+        return {
+            "count": len(shown), "total": total, "path": str(self.audit.path),
+            "full": full,
+            # ⚠ NAME WHAT WAS LEFT OUT. A window that renders like the whole log is
+            # the defect this file fixes elsewhere; silence about 780 skipped rows
+            # would be that same shape.
+            "omitted": max(0, total - len(shown)),
+            "note": (None if len(shown) == total else
+                     f"showing the most recent {len(shown)} of {total} \u2014 raise limit, "
+                     f"or filter with op=/decision="),
+            "records": shown,
+        }

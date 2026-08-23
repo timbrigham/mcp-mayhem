@@ -273,13 +273,24 @@ async def explain(refusal_id: str) -> dict:
 
 
 @mcp.tool()
-async def history(limit: int = 20) -> dict:
+async def history(limit: int = 20, full: bool = False, op: Optional[str] = None,
+                  decision: Optional[str] = None) -> dict:
     """The append-only operation log: every mutating call, ALLOWED OR REFUSED.
 
-    The refused half matters as much as the allowed half — a log that only records successes
+    The refused half matters as much as the allowed half - a log that only records successes
     cannot answer "did this guard ever fire?", which is the question that matters after an
-    incident. Tier 3 reads are not logged; they change nothing."""
-    return await _guard(_robot().history, limit=limit)
+    incident. Tier 3 reads are not logged; they change nothing.
+
+    SUMMARY BY DEFAULT: ts, op, decision, head, branch, actor, reason - one line per
+    operation. GRB-4 measured limit=30 returning 194,296 characters across 818 lines,
+    which had to be dumped to a file and grepped; a tool that must be post-processed
+    to be used has the wrong default. `full=True` returns the whole record, and the
+    count of anything omitted is always reported.
+
+    Filter with `op=` ("push", "commit", ...) or `decision=` ("refused", "allowed")
+    to answer the incident question directly rather than by reading everything."""
+    return await _guard(_robot().history, limit=limit, full=full, op=op,
+                        decision=decision)
 
 
 def main() -> None:
