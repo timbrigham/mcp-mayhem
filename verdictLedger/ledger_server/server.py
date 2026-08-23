@@ -259,6 +259,7 @@ async def coverage(ref: str = "HEAD") -> dict:
 
 @mcp.tool()
 async def can_push(rev_range: str, admission: Optional[list[str]] = None,
+                   commit_admission: Optional[list[str]] = None,
                    action: str = "push", limit: int = 500) -> dict:
     """⭐⭐ THE ONE QUESTION A CLIENT ASKS: may this RANGE be pushed?
 
@@ -278,15 +279,17 @@ async def can_push(rev_range: str, admission: Optional[list[str]] = None,
     range renders identically to one about all of it.
 
     ⚠ `admission=None` is not an empty set -- it means nobody said what gates this."""
-    return await _guard(_sync_can_push, rev_range, admission, action, limit)
+    return await _guard(_sync_can_push, rev_range, admission, commit_admission,
+                        action, limit)
 
 
-def _sync_can_push(rev_range, admission, action, limit) -> dict:
+def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dict:
     led = _ledger()
     result = canpush_mod.check(records=led.store.records(),
                                config=led._require_config(), repo=REPO,
                                rev_range=rev_range, action=action,
-                               admission=admission, limit=limit)
+                               admission=admission,
+                               commit_admission=commit_admission, limit=limit)
     result["policy_sha"] = led._require_config().policy_sha
     result["line"] = canpush_mod.render(result)
     return result

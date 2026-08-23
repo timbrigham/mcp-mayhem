@@ -65,10 +65,16 @@ def _rec(step, path, blob, basis):
             "basis": {"kind": "tree", "value": basis}}
 
 
-def _check(ledger, tmp_path, rev_range, records=(), admission=("check_prose",), **kw):
-    return canpush_mod.check(records=list(records), config=ledger.config,
-                             repo=str(tmp_path), rev_range=rev_range,
-                             admission=list(admission), **kw)
+def _check(ledger, tmp_path, rev_range, records=(), admission=("check_prose",),
+           commit_admission=None, **kw):
+    # ⚠ commit_admission defaults to the same set: most controls here are about the
+    # RANGE, not the tip/commit split, and leaving it None would make them exercise
+    # the UNSET refusal instead of what they name.
+    return canpush_mod.check(
+        records=list(records), config=ledger.config, repo=str(tmp_path),
+        rev_range=rev_range, admission=list(admission),
+        commit_admission=list(admission if commit_admission is None
+                              else commit_admission), **kw)
 
 
 # -- ⭐ THE HEADLINE: a green tip does not carry the range --------------------
@@ -193,3 +199,70 @@ def test_the_middle_commit_alone_can_be_the_one_short(ledger, tmp_path):
     assert result["blocking_count"] == 1
     assert [r["complete"] for r in result["commits"]] == [True, False, True]
     assert result["commits"][1]["commit"] == shas[1]
+
+
+# -- ⭐ the tip is judged as a PUSH; the commits under it as COMMITS ----------
+
+def test_review_types_are_required_of_the_tip_only(ledger, tmp_path):
+    """⭐⭐ MY DEFECT, found by ZeroParadox. `can_push` asked action="push" of EVERY
+    commit, so each intermediate one owed `adversary`, `editorial` and `prior_art` —
+    three agent rounds apiece, 129 for a 43-commit range. That is not a strict gate,
+    it is an unsatisfiable one.
+
+    The registry already said otherwise and this ignored it: those three carry
+    `actions: ["push", "tag"]`, which IS the statement that they judge the work being
+    PUBLISHED rather than each step of reaching it.
+    """
+    base, shas = _repo(tmp_path, n=3)
+    records = [_rec("check_prose", "doc.md", _blob(tmp_path, sha, "doc.md"), sha)
+               for sha in shas]
+    # `adversary` gates the push; only `check_prose` gates a commit
+    records.append(_rec("adversary", "doc.md",
+                        _blob(tmp_path, shas[-1], "doc.md"), shas[-1]))
+
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}", records,
+                    admission=("check_prose", "adversary"),
+                    commit_admission=("check_prose",))
+    assert result["allowed"] is True, "a review key was demanded of an intermediate commit"
+    assert [r["judged_as"] for r in result["commits"]] == ["commit", "commit", "push"]
+    assert [r["is_tip"] for r in result["commits"]] == [False, False, True]
+
+
+def test_the_tip_still_carries_the_full_push_bar(ledger, tmp_path):
+    """⚠ THE CONTROL THAT KEEPS THE SPLIT FROM BEING A HOLE. Relaxing intermediate
+    commits must not relax the thing actually being published."""
+    base, shas = _repo(tmp_path, n=2)
+    records = [_rec("check_prose", "doc.md", _blob(tmp_path, sha, "doc.md"), sha)
+               for sha in shas]          # no `adversary` anywhere
+
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}", records,
+                    admission=("check_prose", "adversary"),
+                    commit_admission=("check_prose",))
+    assert result["allowed"] is False
+    assert result["commits"][-1]["complete"] is False
+    assert "adversary" in result["commits"][-1]["missing"]
+    assert all(r["complete"] for r in result["commits"][:-1])
+
+
+def test_intermediate_commits_still_earn_the_full_commit_set(ledger, tmp_path):
+    """⭐ NOTHING IS WEAKENED. The property range gating exists for — no commit lands
+    unexamined — is unchanged; only WHICH bar applies to which commit moved."""
+    base, shas = _repo(tmp_path, n=3)
+    records = [_rec("check_prose", "doc.md", _blob(tmp_path, sha, "doc.md"), sha)
+               for sha in (shas[0], shas[2])]      # the middle commit earns nothing
+
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}", records,
+                    commit_admission=("check_prose",))
+    assert result["allowed"] is False
+    assert result["commits"][1]["complete"] is False
+
+
+def test_an_absent_commit_admission_set_refuses(ledger, tmp_path):
+    """⚠ Absent is not empty, on this parameter too. Omitting it must not quietly
+    mean "intermediate commits require nothing"."""
+    base, shas = _repo(tmp_path, n=2)
+    result = canpush_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
+                               rev_range=f"{base}..{shas[-1]}",
+                               admission=["check_prose"], commit_admission=None)
+    assert result["allowed"] is False
+    assert result["commits"][0]["admission_state"] == "UNSET"

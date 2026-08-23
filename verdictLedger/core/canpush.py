@@ -65,12 +65,28 @@ def _files_at(repo: str, ref: str) -> dict:
 
 
 def check(*, records: list, config, repo: str, rev_range: str, action: str = "push",
-          admission: Optional[list] = None, limit: int = DEFAULT_LIMIT) -> dict:
+          admission: Optional[list] = None, commit_admission: Optional[list] = None,
+          limit: int = DEFAULT_LIMIT) -> dict:
     """Can this range be pushed? One answer, over every commit it publishes.
 
-    ⚠ `admission=None` is NOT an empty set — it means nobody said what gates this
-    action, and it refuses. An empty set refuses too (gitRobot enforces that side):
-    a range certified against zero requirements is an unchecked push with a receipt.
+    ⚠⚠ INTERMEDIATE COMMITS ARE JUDGED AS COMMITS; THE TIP IS JUDGED AS A PUSH.
+
+    An earlier build asked `action="push"` of every commit, so each one had to carry
+    `adversary`, `editorial` and `prior_art` -- three agent rounds per commit, 129 for
+    a 43-commit range. That is not a strict gate, it is an unsatisfiable one.
+
+    The registry already said otherwise and this ignored it: those three carry
+    `actions: ["push", "tag"]`, which IS the statement that they judge the work being
+    PUBLISHED rather than each step of reaching it. 12-0-ter's rule -- if admission and
+    the registry disagree, the registry is the list with the stated reasons -- applies
+    to a consumer overriding a narrowing just as much as to a thinned admission set.
+
+    ⚠ Nothing is weakened: every commit still earns the full COMMIT set, which is the
+    property range gating exists for. The review types are required once, of the thing
+    actually published.
+
+    ⚠ `admission=None` is NOT an empty set -- it means nobody said what gates this
+    action, and it refuses. Same for `commit_admission`: absent is not empty.
     """
     try:
         raw = _git(repo, "rev-list", "--reverse", rev_range)
@@ -94,12 +110,20 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
 
     admitted = sorted(admission) if admission is not None else None
     rows = []
-    for commit in commits:
+    for i, commit in enumerate(commits):
+        is_tip = (i == len(commits) - 1)
+        # ⚠ The tip is what the world will see as the published state, so it carries
+        # the full push bar. Everything under it is judged by the bar that applied
+        # when it was MADE.
+        this_action = action if is_tip else "commit"
+        this_admission = admission if is_tip else commit_admission
         files = _files_at(repo, commit)
-        inv = inventory_mod.build(config=config, records=records, action=action,
-                                  files=files, ref=commit, admission=admission)
+        inv = inventory_mod.build(config=config, records=records, action=this_action,
+                                  files=files, ref=commit, admission=this_admission)
         rows.append({
             "commit": commit,
+            "judged_as": this_action,
+            "is_tip": is_tip,
             "subject": _git(repo, "log", "-1", "--pretty=%s", commit).strip()[:72],
             "complete": bool(inv.get("complete")),
             "required": inv["required"], "satisfied": inv["satisfied"],

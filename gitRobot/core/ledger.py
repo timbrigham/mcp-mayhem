@@ -170,8 +170,13 @@ def can_push(rev_range: str, admission: Optional[list] = None,
     """
     if admission is None:
         admission = admission_for(action)
+    # ⚠ BOTH SETS, because the range holds two kinds of subject. The tip is what gets
+    # published and carries the push bar; the commits under it are judged by the bar
+    # that applied when they were made. Sending only the push set made every
+    # intermediate commit owe three agent rounds -- unsatisfiable, not strict.
     return call("can_push", {"rev_range": rev_range, "action": action,
-                             "admission": admission})
+                             "admission": admission,
+                             "commit_admission": admission_for("commit")})
 
 
 def inventory(ref: str, action: str, admission: Optional[list] = None) -> dict:

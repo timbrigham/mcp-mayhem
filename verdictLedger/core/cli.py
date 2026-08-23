@@ -121,7 +121,9 @@ def cmd_can_push(args) -> int:
     result = canpush_mod.check(records=led.store.records(),
                                config=led._require_config(), repo=args.repo,
                                rev_range=args.range, action=args.action,
-                               admission=args.admit, limit=args.limit)
+                               admission=args.admit,
+                               commit_admission=args.admit_commit or args.admit,
+                               limit=args.limit)
     if args.json:
         _emit(result)
     else:
@@ -210,6 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--admit", action="append", default=None,
                     help="a type that must be green; repeat. Omitted means UNSET, "
                          "which refuses -- it is not an empty set")
+    cp.add_argument("--admit-commit", action="append", default=None,
+                    help="a type that must be green at each INTERMEDIATE commit; "
+                         "defaults to --admit. The tip carries --admit")
     cp.add_argument("--limit", type=int, default=canpush_mod.DEFAULT_LIMIT)
     cp.add_argument("--json", action="store_true")
     cp.set_defaults(func=cmd_can_push)
