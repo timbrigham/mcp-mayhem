@@ -82,11 +82,51 @@ def _call(tool: str, arguments: dict):
         return None
 
 
+# -- the subject identity ------------------------------------------------------
+
+def blob_id(path: str, *, repo: str = ".") -> str:
+    """The GIT BLOB ID for a working-tree file — what `subjects[].blob` must carry.
+
+    ⚠⚠ USE THIS. DO NOT COMPUTE A sha256 OF THE FILE. The ledger matches a subject
+    against the value `git ls-tree` prints, which is git's own object id: SHA-1 over
+    the bytes ``b"blob %d\0" % len(data) + data``. A plain sha256 of the same file is
+    a different hash function over a different byte string, so it can never match --
+    the record appends cleanly, then reads STALE forever, which looks exactly like a
+    staleness bug and is not one. Measured 2026-08-23; it cost an afternoon of
+    (correctly) verifying that the sha256 matched disk byte-for-byte.
+
+    Tim's rule, and the reason the field is `blob`: exactly one hash is in use in
+    this system and it is git's.
+    """
+    import hashlib
+    import pathlib
+    data = (pathlib.Path(repo) / path).read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def blobs_at(ref: str, *, repo: str = ".") -> dict:
+    """path -> blob id for every file at `ref`. Cheaper than hashing files yourself
+    and it is definitionally what the ledger will compare against."""
+    import subprocess
+    out = {}
+    proc = subprocess.run(["git", "ls-tree", "-r", ref], cwd=repo,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    for line in proc.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3:
+            out[path.strip()] = parts[2]
+    return out
+
+
 def emit(step, tier, verdict, subjects, basis, reason=None,
          inputs=(), decided=None, cost=None, revision=0):
     """Append one record. Returns its id, or None if refused or unreachable.
 
-    `subjects` is a list of {"path", "sha256"} — WHAT THIS VERDICT IS ABOUT, not
+    `subjects` is a list of {"path", "blob"} — WHAT THIS VERDICT IS ABOUT, not
     everything the step glanced at. A step that examined forty files and failed on
     one emits a PASS over the thirty-nine and a FAIL over the one; that is what
     keeps coverage exact and makes repeat-subject a hash count rather than a grep

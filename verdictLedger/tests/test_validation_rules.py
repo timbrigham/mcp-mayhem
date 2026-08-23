@@ -176,7 +176,7 @@ def test_v13_depth_cap_and_it_is_config(ledger, tmp_path, config_dir):
 
 def test_v12_cannot_override_your_own_prior_decision(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
-    subj = [{"sha256": "b" * 40, "path": "docs/x.md"}]
+    subj = [{"blob": "b" * 40, "path": "docs/x.md"}]
     ledger.sign(step="check_prose", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
     with pytest.raises(ValidationFailure) as exc:
@@ -187,7 +187,7 @@ def test_v12_cannot_override_your_own_prior_decision(ledger):
 
 def test_v12_a_different_person_may_override(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
-    subj = [{"sha256": "b" * 40, "path": "docs/x.md"}]
+    subj = [{"blob": "b" * 40, "path": "docs/x.md"}]
     ledger.sign(step="check_prose", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
     out = ledger.override(step="check_prose", subjects=subj, who="reviewer-2",

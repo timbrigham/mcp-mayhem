@@ -135,7 +135,7 @@ def _basis(v="a" * 40):
 
 def test_stale_never_collapses_into_satisfied(ledger):
     ledger.append(good(step="check_prose",
-                       subjects=[{"sha256": "b" * 40, "path": "x.lean"}]))
+                       subjects=[{"blob": "b" * 40, "path": "x.lean"}]))
     recs = ledger.store.records()
     fresh = inventory_mod.build(config=ledger.config, records=recs, action="commit",
                                 files={"x.lean": "b" * 40})
@@ -300,7 +300,7 @@ def test_the_key_ignores_timing_and_run(ledger):
 
 
 def test_subject_order_does_not_change_the_payload_comparison(ledger):
-    s = [{"sha256": "1" * 40, "path": "a.md"}, {"sha256": "2" * 40, "path": "b.md"}]
+    s = [{"blob": "1" * 40, "path": "a.md"}, {"blob": "2" * 40, "path": "b.md"}]
     a = ledger.append(good(subjects=s))
     b = ledger.append(good(subjects=list(reversed(s))))
     assert a["id"] == b["id"]

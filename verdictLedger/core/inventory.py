@@ -8,7 +8,7 @@ records are checked against it, never the other way round.
 
 ⚠ IDENTITY IS NOT SATISFACTION. A record is IDENTIFIED by `(step, basis, verdict,
 reason, subjects, revision)`, but it SATISFIES a key while the content it examined
-is unchanged — matched on `subjects[].sha256`, never on basis. Matching on basis
+is unchanged — matched on `subjects[].blob`, never on basis. Matching on basis
 would make every record die on every commit: 40 files, 14 checks recorded against
 tree X, one unrelated file changes, and the whole pipeline re-runs including the
 paid review rounds. "Re-run everything, always" wears the costume of rigour.
@@ -33,13 +33,20 @@ def _subject_index(records) -> dict:
             key = (step, s.get("path"))
             prior = out.get(key)
             if prior is None or r.get("revision", 0) >= prior[0].get("revision", 0):
-                out[key] = (r, s.get("sha256"))
+                out[key] = (r, s.get("blob"))
     return out
 
 
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None) -> dict:
-    """``files`` maps path -> current sha256 for the content being promoted.
+    """``files`` maps path -> GIT BLOB ID for the content being promoted.
+
+    ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
+    These values come straight from `git ls-tree` / `git ls-files -s`, and a
+    subject matches only if it carries the same thing. The field used to be called
+    `sha256`, so a client computed a sha256 of the file bytes — a different hash
+    function over a different byte string (git prefixes "blob <len>\0") — and no
+    key could ever be satisfied. Every record rotted to STALE forever.
 
     ⚠⚠ TWO LISTS, NOT TWO COPIES. The REGISTRY (config.types) says what may be
     RECORDED; the ADMISSION SET says what must be green to let an action through.

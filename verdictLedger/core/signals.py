@@ -88,7 +88,7 @@ def _repeat_subject(rows, threshold: int) -> dict:
         if r.get("verdict") != "FAIL":
             continue
         for s in r.get("subjects") or []:
-            seen[(r.get("step"), s.get("sha256"), s.get("path"))].add(
+            seen[(r.get("step"), s.get("blob"), s.get("path"))].add(
                 (r.get("basis") or {}).get("value"))
     out = [{"step": k[0], "path": k[2], "rounds": len(v)}
            for k, v in seen.items() if len(v) >= threshold]

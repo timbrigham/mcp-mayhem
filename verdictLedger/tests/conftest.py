@@ -56,7 +56,7 @@ def good(**over):
         "verdict": "PASS",
         "reason": None,
         "basis": {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"},
-        "subjects": [{"sha256": "b" * 40, "path": "docs/x.md"}],
+        "subjects": [{"blob": "b" * 40, "path": "docs/x.md"}],
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,

@@ -52,8 +52,12 @@ def structural(record: dict) -> list[str]:
         out.append("subjects must be an array")
     else:
         for i, s in enumerate(subjects):
-            if not isinstance(s, dict) or not s.get("sha256") or not s.get("path"):
-                out.append(f"subjects[{i}] needs both sha256 and path")
+            if not isinstance(s, dict) or not s.get("blob") or not s.get("path"):
+                out.append(f"subjects[{i}] needs both blob and path")
+                continue
+            bad = _not_a_blob_id(s["blob"], s.get("path"))
+            if bad:
+                out.append(f"subjects[{i}] {bad}")
 
     decided = record.get("decided")
     if not isinstance(decided, dict):
@@ -211,3 +215,68 @@ def validate(record: dict, *, config: Config, existing_ids=None, tips=None,
     return out + rules(record, config=config,
                        existing_ids=existing_ids if existing_ids is not None else set(),
                        tips=tips, known_policy_shas=known_policy_shas)
+
+
+# -- the subject identity must be one git could have produced -------------------
+
+_OBJECT_FORMAT = None
+
+
+def _object_hex_len() -> int | None:
+    """How many hex characters a git object id has in THIS repo (40 for sha1, 64 for
+    sha256 repos). None when the repo cannot be resolved, in which case the check is
+    skipped rather than guessed at."""
+    global _OBJECT_FORMAT
+    if _OBJECT_FORMAT is None:
+        import os
+        import subprocess
+        repo = os.environ.get("ZPLEDGER_REPO")
+        _OBJECT_FORMAT = 0                       # sentinel: looked, found nothing
+        if repo:
+            try:
+                proc = subprocess.run(["git", "rev-parse", "--show-object-format"],
+                                      cwd=repo, capture_output=True, text=True,
+                                      timeout=10)
+                fmt = (proc.stdout or "").strip()
+                _OBJECT_FORMAT = {"sha1": 40, "sha256": 64}.get(fmt, 0)
+            except (OSError, subprocess.SubprocessError):
+                _OBJECT_FORMAT = 0
+    return _OBJECT_FORMAT or None
+
+
+def _not_a_blob_id(value, path) -> str | None:
+    """⚠⚠ CATCHES THE 2026-08-23 DEFECT AT THE DOOR.
+
+    `subjects[].blob` must carry GIT'S BLOB ID -- the value `git ls-tree` prints and
+    the only thing `inventory` compares against. The field used to be named `sha256`,
+    so a client computed a sha256 digest of the file bytes. That is a different hash
+    function over a different byte string (git prefixes ``b"blob <len>\0"``), so it
+    could never match: the record appended cleanly and then read STALE forever, which
+    is indistinguishable from a staleness bug and cost an afternoon of correctly
+    verifying that the sha256 matched disk.
+
+    A record that can never be satisfied is not a valid record. Refusing it here with
+    the reason beats letting it rot, which is the same fail-open shape as absence
+    rendering as success.
+    """
+    if not isinstance(value, str):
+        return "blob must be a string"
+    v = value.strip()
+    if v != value or not v:
+        return "blob must not carry surrounding whitespace"
+    if v != v.lower() or any(c not in "0123456789abcdef" for c in v):
+        return f"blob {v!r} is not lowercase hex; git object ids are"
+
+    want = _object_hex_len()
+    if want is None or len(v) == want:
+        return None
+    if want == 40 and len(v) == 64:
+        return (f"blob for {path!r} is 64 hex characters, but this repository's git "
+                f"object ids are 40. This is almost certainly a sha256 of the file "
+                f"contents -- git's blob id is SHA-1 over b'blob <len>\\0' + data, a "
+                f"different hash over different bytes, and it can NEVER match. Use "
+                f"client.record.blob_id(path) or column 3 of `git ls-tree -r <ref>`. "
+                f"Refused rather than appended, because such a record reads STALE "
+                f"forever and looks like a staleness bug.")
+    return (f"blob for {path!r} is {len(v)} hex characters; this repository's git "
+            f"object ids are {want}")

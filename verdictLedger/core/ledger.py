@@ -122,7 +122,7 @@ class Ledger:
             step=GENESIS_STEP, tier="H", verdict="PASS",
             reason=None,
             basis={"kind": "ref", "value": commit, "resolved_from": "explicit"},
-            subjects=[{"sha256": commit, "path": "<genesis>"}],
+            subjects=[{"blob": commit, "path": "<genesis>"}],
             decided={"how": "signature", "passes": 1, "agreed": 1,
                      "who": os.environ.get("ZPLEDGER_ACTOR", "operator")},
             run={"id": f"genesis-{commit[:12]}", "started": _now(),
@@ -182,7 +182,7 @@ class Ledger:
                 continue
             if since and ((r.get("run") or {}).get("started") or "") < since:
                 continue
-            if subject_sha and not any(s.get("sha256") == subject_sha
+            if subject_sha and not any(s.get("blob") == subject_sha
                                        for s in r.get("subjects") or []):
                 continue
             out.append(r)
