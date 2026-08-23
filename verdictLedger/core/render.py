@@ -96,6 +96,16 @@ def render_inventory(inv: dict) -> str:
                                  f"/{w['scope']}" for w in worst)
                      + (f" (+{len(thin) - 4} more)" if len(thin) > 4 else ""))
 
+    # ⚠⭐ THE SYMMETRIC ALARM. Also before the `complete` early return: an undeclared
+    # switch or a too-narrow scope shows up on a GREEN inventory by definition, since
+    # the paths involved are covered -- they are simply not accounted for.
+    unscoped = inv.get("unscoped") or []
+    if unscoped:
+        lines.append("  ⚠ EXAMINED BUT UNSCOPED — recorded, yet outside the declared "
+                     "scope and not a declared switch: "
+                     + ", ".join(unscoped[:4])
+                     + (f" (+{len(unscoped) - 4} more)" if len(unscoped) > 4 else ""))
+
     if inv.get("complete"):
         return "\n".join(lines)
 

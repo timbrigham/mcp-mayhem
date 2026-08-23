@@ -824,3 +824,88 @@ def test_exclusions_are_named_individually_not_matched(ledger):
     assert not any("*" in e or "?" in e for e in excl), (
         "an exclusion became a pattern; a builder added later would inherit the "
         "exemption silently")
+
+
+# -- ⭐ subjects_unscoped: the symmetric detector ------------------------------
+
+def test_a_scope_narrower_than_what_was_examined_is_surfaced(tmp_path, config_dir):
+    """⭐⭐ THE BLIND SIDE OF THE RESIDUE SWEEP. `subjects_unexamined` finds a scope
+    WIDER than the property. It is structurally blind to one that is NARROWER, because
+    an excluded path produces no residue at all — `unexamined` goes to zero and
+    everything reads clean. The exclusions both sessions started adding are exactly
+    what it cannot see.
+
+    This number is derived from the checker's own SUBJECT SET rather than from the
+    declaration, which is the property that makes the pair work: two numbers arrived at
+    independently.
+    """
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", "scope": ["docs/*"],
+                                   "reason": "docs only"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "docs/a.md", "git_blob_id": "a" * 40},
+                         {"path": "elsewhere/b.md", "git_blob_id": "b" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {"docs/a.md": "a" * 40, "elsewhere/b.md": "b" * 40}
+
+    inv = inventory_mod.build(config=led.config, records=rec, action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["subjects_unexamined"] == 0, "the wide-detector should be silent here"
+    assert row["subjects_unscoped"] == ["elsewhere/b.md"]
+    assert inv["unscoped"] == ["elsewhere/b.md"]
+    assert "EXAMINED BUT UNSCOPED" in render_mod.render_inventory(inv)
+
+
+def test_a_declared_switch_is_not_reported_as_unscoped(tmp_path, config_dir):
+    """⚠ Switches are SUPPOSED to sit outside the scanned scope — they are the
+    exemption surface, not the corpus. Without this subtraction the field would be
+    permanent known-noise on the eight types that declare one, and a noisy alarm is a
+    disabled alarm."""
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", "scope": ["docs/*"],
+                                   "switches": ["tools/verify/prose_baseline.txt"],
+                                   "reason": "docs only"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "docs/a.md", "git_blob_id": "a" * 40},
+                         {"path": "tools/verify/prose_baseline.txt",
+                          "git_blob_id": "b" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {"docs/a.md": "a" * 40, "tools/verify/prose_baseline.txt": "b" * 40}
+    inv = inventory_mod.build(config=led.config, records=rec, action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    assert inv["unscoped"] == []
+
+
+def test_unscoped_spans_types_nothing_admits(ledger):
+    """⚠ An undeclared switch on a type nothing currently gates is still an undeclared
+    switch, and promoting that type later would inherit the hole silently. Same
+    reasoning as `needs_rerun` spanning the whole registry."""
+    rec = [{"id": "check_pov@t#0", "step": "check_pov", "verdict": "PASS",
+            "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "nowhere/x.md", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="commit",
+                              files={"nowhere/x.md": "a" * 40}, ref="t", admission=[])
+    assert inv["unscoped"] == [], "check_pov is unscoped, so nothing is out of scope"
+
+
+def test_check_hashes_declares_the_switch_it_records(ledger):
+    """⭐ THE HIT THIS DETECTOR FOUND, pinned. `check_hashes` RECORDED
+    shared_build_baseline.txt while the type declared no switches — so nothing held it
+    there, and a later edit dropping the `switches=` argument would have made the
+    shared-build exemption editable for free. Exactly the REQ-10 hole, in my config
+    rather than theirs."""
+    assert ledger.config.requirements("commit")["check_hashes"]["switches"] == [
+        "tools/verify/shared_build_baseline.txt"]

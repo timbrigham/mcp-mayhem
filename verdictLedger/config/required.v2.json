@@ -95,6 +95,9 @@
         "scripts/build_dictionary_map.py",
         "scripts/build_manifest.py",
         "scripts/build_snap_map.py"
+      ],
+      "switches": [
+        "tools/verify/shared_build_baseline.txt"
       ]
     },
     "check_moved": {

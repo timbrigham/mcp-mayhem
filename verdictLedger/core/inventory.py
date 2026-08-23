@@ -104,7 +104,7 @@ def build(*, config, records, action: str, files: dict,
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
                          "why": spec.get("reason") or "narrowed by action",
                          "record_id": None, "subjects_covered": 0,
-                         "subjects_stale": 0, "subjects_unexamined": 0, "scope": 0,
+                         "subjects_stale": 0, "subjects_unexamined": 0, "scope": 0, "subjects_unscoped": [],
                          "needs_rerun": False, "rerun_reason": None})
             continue
         when = spec.get("when")
@@ -114,7 +114,7 @@ def build(*, config, records, action: str, files: dict,
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
                          "why": f"no path matched {when!r}", "record_id": None,
                          "subjects_covered": 0, "subjects_stale": 0,
-                         "subjects_unexamined": 0, "scope": 0,
+                         "subjects_unexamined": 0, "scope": 0, "subjects_unscoped": [],
                          "needs_rerun": False, "rerun_reason": None})
             continue
 
@@ -170,6 +170,27 @@ def build(*, config, records, action: str, files: dict,
                          if (step, p, files[p]) not in by_content
                          and (step, p) not in by_path)
 
+        # ⭐ THE SYMMETRIC NUMBER. `subjects_unexamined` finds a scope wider than the
+        # property; this finds one NARROWER than what the checker actually examined --
+        # the case the other is structurally blind to, because an excluded path
+        # produces no residue at all and everything reads clean.
+        #
+        # Derived from the checker's own subject set rather than from the declaration,
+        # which is the property that makes the pair work at all.
+        #
+        # Switches are subtracted because they are SUPPOSED to sit outside the scanned
+        # scope -- they are the exemption surface, not the corpus. No further
+        # subtraction is needed: `subjects` is everything the verdict depends on,
+        # `scope` is what it examines, `switches` is what it depends on beyond that, so
+        # `subjects` is contained in their union by construction. Anything left over is
+        # an undeclared switch, a scope too narrow, or over-recording -- all three of
+        # which someone should look at.
+        in_scope = set(scope)
+        switch_set = set(spec.get("switches") or [])
+        unscoped = sorted(p for p in files
+                          if (step, p) in by_path
+                          and p not in in_scope and p not in switch_set)
+
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
                            if (step, p) in legacy_tips), None)
@@ -216,6 +237,7 @@ def build(*, config, records, action: str, files: dict,
                      "record_id": (record or {}).get("id"),
                      "subjects_covered": covered, "subjects_stale": stale,
                      "subjects_unexamined": unexamined, "scope": len(scope),
+                     "subjects_unscoped": unscoped,
                      "why": why,
                      # ⭐ WHAT A CALLER MUST ACTUALLY RUN, answered here so no consumer
                      # builds a second staleness predicate (§12-0-alpha). Stated as a
@@ -275,6 +297,10 @@ def build(*, config, records, action: str, files: dict,
         "required": required, "satisfied": satisfied,
         "unexamined": sum(r["subjects_unexamined"] for r in rows
                           if r.get("gating") and r.get("subjects_unexamined")),
+        # ⚠ ALL rows, not just gating ones: an undeclared switch on a type nothing
+        # currently admits is still an undeclared switch, and promoting that type later
+        # would inherit the hole silently.
+        "unscoped": sorted({p for r in rows for p in (r.get("subjects_unscoped") or [])}),
         # ⚠ ALL registered steps, not just gating ones. The caller deciding what to RUN
         # is a different question from what GATES -- a hook has emitters for types that
         # may not be admitted, and must not be told to skip them just because nothing
