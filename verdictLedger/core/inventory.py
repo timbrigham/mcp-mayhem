@@ -155,9 +155,12 @@ def build(*, config, records, action: str, files: dict,
         # owes the whole tree. Measured 2026-08-23 -- without a declared scope, `guards`
         # reported 475 of 479 paths unexamined and would have been re-run on every
         # commit forever, which is the 18.26s this design exists to skip.
-        scope_glob = spec.get("scope") or when
+        # ⚠ `scope` is a LIST of globs; a path is in scope if ANY matches. `when`
+        # remains a single glob because it answers a different question -- whether the
+        # type applies at all -- and no measured case needed more than one.
+        globs = spec.get("scope") or ([when] if when else [])
         scope = [p for p in files
-                 if not scope_glob or fnmatch.fnmatch(p, scope_glob)]
+                 if not globs or any(fnmatch.fnmatch(p, g) for g in globs)]
         unexamined = sum(1 for p in scope
                          if (step, p, files[p]) not in by_content
                          and (step, p) not in by_path)

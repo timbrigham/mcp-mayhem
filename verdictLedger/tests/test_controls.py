@@ -582,3 +582,53 @@ def test_scope_is_not_when(tmp_path, config_dir):
     row = next(r for r in inv["rows"] if r["step"] == "check_prose")
     assert row["status"] != "NOT_APPLICABLE", "scope behaved like when"
     assert inv["complete"] is False
+
+
+def test_scope_accepts_a_list_of_globs(tmp_path, config_dir):
+    """⭐ A REAL CHECKER READS MORE THAN ONE ROOT. ZeroParadox measured `check_hashes`
+    over `register.md` plus 39 files under `scripts/`, and `guards` over three roots
+    including the corpus itself. A single-glob API forced them to either widen a glob
+    until it was wrong or leave the checker unscoped — so the API was the defect, not
+    their measurement.
+
+    They chose to pay 18.26s per commit rather than narrow `guards` wrongly, which is
+    the right instinct: a wrong `scope` narrows INVISIBLY — the row just goes green
+    over fewer paths — and `guards` is the checker whose job is proving the exemption
+    surface still behaves.
+    """
+    led = _cfg_with_scope(tmp_path, config_dir,
+                          scope=["register.md", "scripts/**"],
+                          reason="reads the register plus the script bundle")
+    files = {"register.md": "a" * 40, "scripts/x.py": "b" * 40,
+             "docs/unrelated.md": "c" * 40}
+    inv = inventory_mod.build(config=led.config, records=[], action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["scope"] == 2, "a second root was dropped"
+
+
+def test_a_string_scope_still_works(tmp_path, config_dir):
+    """⚠ Normalised in config so no consumer re-implements the string case."""
+    led = _cfg_with_scope(tmp_path, config_dir, scope="tools/**",
+                          reason="reads only the tooling tree")
+    assert led.config.requirements("commit")["check_prose"]["scope"] == ["tools/**"]
+
+
+def test_the_shipped_scopes_match_what_was_measured(ledger):
+    """⚠ Pins the three ZeroParadox MEASURED and gave, and that the two they REFUSED
+    to guess stay unscoped. `guards` over-running is a deliberate, costed choice — a
+    later "tidy-up" that scopes it to tools/verify/** would silently drop the corpus
+    paths it plants violations in."""
+    reqs = ledger.config.requirements("commit")
+    assert reqs["check_checkers"]["scope"] == ["tools/verify/**"]
+    # ⚠ THE EXPLICIT SIX, not the glob they proposed. `tools/verify/*_baseline.txt`
+    # matched TEN files at their tree while check_frozen covers SIX, so the glob was
+    # broader than the property: `unexamined` stayed at 4 and the optimisation never
+    # fired. Enumerating is faithful to their own wording ("exactly the 6 frozen
+    # baselines") and is the same six already declared as check_frozen's `switches`.
+    six = ["tools/verify/" + f + "_baseline.txt" for f in
+           ("class", "figures", "modal", "negatives", "pov", "prose")]
+    assert reqs["check_frozen"]["scope"] == six
+    assert reqs["claim_review"]["scope"] == six
+    assert reqs["guards"]["scope"] is None, "guards was scoped on an inference"
+    assert reqs["check_hashes"]["scope"] is None

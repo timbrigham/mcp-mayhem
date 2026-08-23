@@ -175,6 +175,11 @@ class Config:
                 entry["narrowed"] = True
                 entry["reason"] = reason
             if scope is not None:
+                # ⚠ A STRING OR A LIST. A checker that reads two roots had to either
+                # widen its glob until it was wrong or stay unscoped; both are worse
+                # than saying what it reads. Normalised here so every consumer sees a
+                # list and nobody re-implements the string case.
+                scope = [scope] if isinstance(scope, str) else list(scope)
                 # ⚠ A narrowing, so it costs a reason like the others -- and the
                 # reason-less case above already fell through to "stays required over
                 # every path", which is the safe direction.
