@@ -145,11 +145,15 @@ class Config:
         out: dict[str, dict] = {}
         for name, spec in self.types.items():
             entry = {"family": spec["family"], "required": True,
-                     "when": None, "reason": None, "narrowed": False}
+                     "when": None, "scope": None, "reason": None, "narrowed": False}
             reason = spec.get("reason")
             actions = spec.get("actions")
             when = spec.get("when")
-            if (actions is not None or when is not None) and not (
+            # ⚠ `scope` is NOT `when`. `when` says whether the type applies at all;
+            # `scope` says which paths it examines when it does. A type with a narrow
+            # scope is still REQUIRED -- it simply owes coverage of fewer paths.
+            scope = spec.get("scope")
+            if (actions is not None or when is not None or scope is not None) and not (
                     isinstance(reason, str) and reason.strip()):
                 # ⚠ Reason-less narrowing is IGNORED, not honoured.
                 entry["reason"] = ("narrowing ignored: no reason given, so the type "
@@ -163,6 +167,13 @@ class Config:
                     entry["required"] = False
             if when is not None:
                 entry["when"] = when
+                entry["narrowed"] = True
+                entry["reason"] = reason
+            if scope is not None:
+                # ⚠ A narrowing, so it costs a reason like the others -- and the
+                # reason-less case above already fell through to "stays required over
+                # every path", which is the safe direction.
+                entry["scope"] = scope
                 entry["narrowed"] = True
                 entry["reason"] = reason
             out[name] = entry

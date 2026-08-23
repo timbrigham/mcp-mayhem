@@ -103,7 +103,9 @@ def build(*, config, records, action: str, files: dict,
         if not spec["required"]:
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
                          "why": spec.get("reason") or "narrowed by action",
-                         "record_id": None, "subjects_covered": 0})
+                         "record_id": None, "subjects_covered": 0,
+                         "subjects_stale": 0, "subjects_unexamined": 0, "scope": 0,
+                         "needs_rerun": False, "rerun_reason": None})
             continue
         when = spec.get("when")
         if when and not any(fnmatch.fnmatch(p, when) for p in files):
@@ -111,7 +113,9 @@ def build(*, config, records, action: str, files: dict,
             # the status carries the glob that excluded it.
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
                          "why": f"no path matched {when!r}", "record_id": None,
-                         "subjects_covered": 0})
+                         "subjects_covered": 0, "subjects_stale": 0,
+                         "subjects_unexamined": 0, "scope": 0,
+                         "needs_rerun": False, "rerun_reason": None})
             continue
 
         # ⚠⚠ THE VERDICT MUST COME FROM A RECORD THAT EXAMINED *THESE* BYTES.
@@ -146,7 +150,14 @@ def build(*, config, records, action: str, files: dict,
         # would refuse every push until every step covers every in-scope path, and
         # that is Tim's call, not a side effect of a bug fix. But a downgraded gate
         # has to get LOUDER, so the number is on every row and in the rendered line.
-        scope = [p for p in files if not when or fnmatch.fnmatch(p, when)]
+        # ⚠ `scope` if declared, else `when`, else EVERY path. The default is the
+        # strict reading and stays that way: a type that has not said what it examines
+        # owes the whole tree. Measured 2026-08-23 -- without a declared scope, `guards`
+        # reported 475 of 479 paths unexamined and would have been re-run on every
+        # commit forever, which is the 18.26s this design exists to skip.
+        scope_glob = spec.get("scope") or when
+        scope = [p for p in files
+                 if not scope_glob or fnmatch.fnmatch(p, scope_glob)]
         unexamined = sum(1 for p in scope
                          if (step, p, files[p]) not in by_content
                          and (step, p) not in by_path)
@@ -197,7 +208,22 @@ def build(*, config, records, action: str, files: dict,
                      "record_id": (record or {}).get("id"),
                      "subjects_covered": covered, "subjects_stale": stale,
                      "subjects_unexamined": unexamined, "scope": len(scope),
-                     "why": why})
+                     "why": why,
+                     # ⭐ WHAT A CALLER MUST ACTUALLY RUN, answered here so no consumer
+                     # builds a second staleness predicate (§12-0-alpha). Stated as a
+                     # NEGATIVE on purpose: re-run unless the step is fully covered at
+                     # this tree or does not apply. A positive list would have to
+                     # enumerate every not-covered state, and the one it missed --
+                     # SATISFIED-but-narrow -- is exactly the hole measured on
+                     # 2026-08-23, where adding a file left a row green while the new
+                     # path went unexamined.
+                     "needs_rerun": not (status == "NOT_APPLICABLE"
+                                         or (status == "SATISFIED" and unexamined == 0)),
+                     "rerun_reason": (
+                         None if status == "NOT_APPLICABLE"
+                         or (status == "SATISFIED" and unexamined == 0)
+                         else (f"{unexamined} in-scope path(s) never examined"
+                               if status == "SATISFIED" else status.lower()))})
 
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.
@@ -241,6 +267,11 @@ def build(*, config, records, action: str, files: dict,
         "required": required, "satisfied": satisfied,
         "unexamined": sum(r["subjects_unexamined"] for r in rows
                           if r.get("gating") and r.get("subjects_unexamined")),
+        # ⚠ ALL registered steps, not just gating ones. The caller deciding what to RUN
+        # is a different question from what GATES -- a hook has emitters for types that
+        # may not be admitted, and must not be told to skip them just because nothing
+        # currently gates on them.
+        "needs_rerun": sorted(r["step"] for r in rows if r["needs_rerun"]),
         "missing": n("MISSING"), "stale": n("STALE"),
         "legacy_identity": n("LEGACY_IDENTITY"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),

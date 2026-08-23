@@ -433,3 +433,146 @@ def test_full_coverage_raises_no_warning(ledger):
                               files=files, ref="t", admission=["check_prose"])
     assert inv["unexamined"] == 0
     assert "NARROWED COVERAGE" not in render_mod.render_inventory(inv)
+
+
+# -- ⭐ needs_rerun: the server answers what must actually run ----------------
+
+def _one_record(step="check_prose", path="old.md", blob="a" * 40):
+    return [{"id": f"{step}@t#0", "step": step, "verdict": "PASS", "revision": 0,
+             "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+             "subjects": [{"path": path, "git_blob_id": blob}],
+             "basis": {"kind": "tree", "value": "t"}}]
+
+
+def _row(ledger, records, files, step="check_prose"):
+    inv = inventory_mod.build(config=ledger.config, records=records, action="commit",
+                              files=files, ref="t", admission=[step])
+    return inv, next(r for r in inv["rows"] if r["step"] == step)
+
+
+def test_a_fully_covered_step_does_not_need_rerunning(ledger):
+    """The whole point: a checker whose subjects have not moved is re-deriving a
+    verdict that already carries forward."""
+    inv, row = _row(ledger, _one_record(), {"old.md": "a" * 40})
+    assert row["needs_rerun"] is False and row["rerun_reason"] is None
+    assert "check_prose" not in inv["needs_rerun"]
+
+
+def test_a_step_needs_rerunning_when_a_NEW_FILE_appears(ledger):
+    """⭐⭐ THE HOLE IN THE OBVIOUS PREDICATE, and the reason this lives server-side.
+
+    ZeroParadox planned to re-run on STALE or MISSING. A commit that ADDS a file leaves
+    the row SATISFIED — covered=1, unexamined=1 — because a path with no record counts
+    as neither covered nor stale. Under a skip-if-green hook the checker would be
+    SKIPPED and the new file never examined by it.
+
+    `subjects_unexamined` was a reporting defect; under that hook it becomes a checker
+    that silently stops running.
+    """
+    inv, row = _row(ledger, _one_record(), {"old.md": "a" * 40, "brand_new.md": "b" * 40})
+    assert row["status"] == "SATISFIED"          # green…
+    assert row["needs_rerun"] is True            # …and still owed a run
+    assert "never examined" in row["rerun_reason"]
+
+
+@pytest.mark.parametrize("files,expect", [
+    ({"old.md": "CHANGED" + "a" * 33}, "stale"),
+    ({"other.md": "b" * 40}, "missing"),
+])
+def test_the_ordinary_cases_still_need_rerunning(ledger, files, expect):
+    inv, row = _row(ledger, _one_record(), files)
+    assert row["needs_rerun"] is True and row["rerun_reason"] == expect
+
+
+def test_a_not_applicable_step_is_never_rerun(ledger):
+    """⚠ "It did not apply" is the one green that genuinely costs nothing to skip."""
+    inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
+                              files={"x.lean": "b" * 40}, ref="t",
+                              admission=["pdf_coupling"])
+    row = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+    assert row["status"] == "NOT_APPLICABLE" and row["needs_rerun"] is False
+
+
+def test_needs_rerun_covers_types_that_are_not_admitted(ledger):
+    """⚠ WHAT TO RUN AND WHAT GATES ARE DIFFERENT QUESTIONS. A hook has emitters for
+    types nothing currently admits, and must not be told to skip them merely because
+    no admission set names them — that would make promoting a type later silently
+    depend on someone remembering to re-run it."""
+    inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
+                              files={"a.md": "a" * 40}, ref="t", admission=[])
+    assert inv["needs_rerun"], "an empty admission set emptied the re-run list"
+    assert "check_prose" in inv["needs_rerun"]
+
+
+# -- ⭐ `scope`: which paths a type EXAMINES, distinct from where it APPLIES ---
+
+def _cfg_with_scope(tmp_path, config_dir, **scope_spec):
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", **scope_spec}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    return Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json")
+
+
+def test_a_declared_scope_shrinks_what_a_type_owes(tmp_path, config_dir):
+    """⭐⭐ MEASURED LIVE 2026-08-23: without this, `guards` reported 475 of 479 paths
+    unexamined — about paths that were never its to examine — so it would have been
+    re-run on every commit forever. That is the 18.26s the skip-if-unchanged design
+    exists to avoid, which makes this the difference between a useless optimisation
+    and a working one."""
+    led = _cfg_with_scope(tmp_path, config_dir, scope="tools/**",
+                          reason="reads only the tooling tree")
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0, "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "tools/a.py", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {"tools/a.py": "a" * 40, "docs/x.md": "b" * 40, "docs/y.md": "c" * 40}
+
+    inv = inventory_mod.build(config=led.config, records=rec, action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["scope"] == 1                 # only tools/a.py is its business
+    assert row["subjects_unexamined"] == 0
+    assert row["needs_rerun"] is False
+
+
+def test_no_declared_scope_still_means_every_path(tmp_path, config_dir):
+    """⚠ THE DEFAULT STAYS STRICT. A type that has not said what it examines owes the
+    whole tree — consistent with required-by-default, where inclusion is free and
+    exclusion is the thing that takes effort."""
+    led = _cfg_with_scope(tmp_path, config_dir)
+    rec = [{"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS",
+            "revision": 0, "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "tools/a.py", "git_blob_id": "a" * 40}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    files = {"tools/a.py": "a" * 40, "docs/x.md": "b" * 40}
+    inv = inventory_mod.build(config=led.config, records=rec, action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["scope"] == 2 and row["subjects_unexamined"] == 1
+    assert row["needs_rerun"] is True
+
+
+def test_a_reasonless_scope_is_ignored_like_any_other_narrowing(tmp_path, config_dir):
+    """⚠ A typo in an exemption must fail safe. `scope` is a narrowing and costs a
+    stated reason exactly like `actions` and `when`."""
+    led = _cfg_with_scope(tmp_path, config_dir, scope="tools/**")   # no reason
+    files = {"tools/a.py": "a" * 40, "docs/x.md": "b" * 40}
+    inv = inventory_mod.build(config=led.config, records=[], action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["scope"] == 2, "a reason-less scope narrowed the type anyway"
+
+
+def test_scope_is_not_when(tmp_path, config_dir):
+    """⚠ THE DISTINCTION THAT MAKES BOTH USEFUL. `when` says whether the type applies
+    at all — no match and the whole row is NOT_APPLICABLE. `scope` says which paths it
+    examines when it does apply: the type is still REQUIRED, it owes fewer paths."""
+    led = _cfg_with_scope(tmp_path, config_dir, scope="tools/**",
+                          reason="reads only the tooling tree")
+    inv = inventory_mod.build(config=led.config, records=[], action="commit",
+                              files={"docs/x.md": "b" * 40}, ref="t",
+                              admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["status"] != "NOT_APPLICABLE", "scope behaved like when"
+    assert inv["complete"] is False
