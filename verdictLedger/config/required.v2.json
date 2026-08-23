@@ -22,7 +22,15 @@
       "family": "mechanical",
       "switches": [
         "tools/verify/encoding_whitelist.txt"
-      ]
+      ],
+      "scope": [
+        "*"
+      ],
+      "scope_exclude": [
+        "*.pdf",
+        "*.ttf"
+      ],
+      "reason": "its property is tracked TEXT files; a BOM test on a font or a published PDF is meaningless. Stated as an exclusion rather than an extension allow-list on purpose: a new text extension must NOT silently fall out of scope, which is the direction an allow-list fails in"
     },
     "check_paths": {
       "family": "mechanical"
@@ -76,23 +84,38 @@
       "family": "mechanical"
     },
     "check_hashes": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "scope": [
+        "register.md",
+        "scripts/*"
+      ],
+      "reason": "hashes the register plus the script bundle; measured 40 paths = 1 + 39"
     },
     "check_moved": {
       "family": "mechanical"
     },
     "check_negatives": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/negatives_baseline.txt"
+      ]
     },
     "check_figures": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/figures_baseline.txt"
+      ]
     },
     "check_checkers": {
       "family": "mechanical",
       "scope": [
-        "tools/verify/**"
+        "tools/verify/check_*.py",
+        "tools/verify/common.py",
+        "tools/verify/debaseline.py",
+        "tools/verify/guards.py",
+        "tools/verify/vendored.py"
       ],
-      "reason": "audits the checker bundle, not the corpus"
+      "reason": "audits the 19 checker modules, not the tooling directory; stays dynamic because a checker added later matches check_*.py on its own"
     },
     "guards": {
       "family": "mechanical"

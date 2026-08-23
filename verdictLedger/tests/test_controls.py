@@ -620,7 +620,17 @@ def test_the_shipped_scopes_match_what_was_measured(ledger):
     later "tidy-up" that scopes it to tools/verify/** would silently drop the corpus
     paths it plants violations in."""
     reqs = ledger.config.requirements("commit")
-    assert reqs["check_checkers"]["scope"] == ["tools/verify/**"]
+    # ⚠ The PRECISE list, not `tools/verify/**`. ZeroParadox measured
+    # check_checkers.checkers() at 19 files while the directory holds 58 — the same
+    # over-match as the *_baseline.txt glob, one directory up. It stays dynamic: a
+    # checker added later matches check_*.py on its own.
+    assert reqs["check_checkers"]["scope"] == [
+        "tools/verify/check_*.py", "tools/verify/common.py",
+        "tools/verify/debaseline.py", "tools/verify/guards.py",
+        "tools/verify/vendored.py"]
+    # ⭐ the exclusion form: "all tracked text" is not expressible as an allow-list
+    assert reqs["check_encoding"]["scope"] == ["*"]
+    assert reqs["check_encoding"]["scope_exclude"] == ["*.pdf", "*.ttf"]
     # ⚠ THE EXPLICIT SIX, not the glob they proposed. `tools/verify/*_baseline.txt`
     # matched TEN files at their tree while check_frozen covers SIX, so the glob was
     # broader than the property: `unexamined` stayed at 4 and the optimisation never
@@ -630,8 +640,17 @@ def test_the_shipped_scopes_match_what_was_measured(ledger):
            ("class", "figures", "modal", "negatives", "pov", "prose")]
     assert reqs["check_frozen"]["scope"] == six
     assert reqs["claim_review"]["scope"] == six
-    assert reqs["guards"]["scope"] is None, "guards was scoped on an inference"
-    assert reqs["check_hashes"]["scope"] is None
+    # ⚠ `guards` STAYS UNSCOPED, and not out of caution. Two of its seven inputs live
+    # in `.claude-local`, a DIFFERENT repository, so they can never be subjects of a
+    # record here at all — `rely_cleared.txt` can be edited, guards' verdict changes,
+    # and no subject moves. A scope cannot close that; only REQ-2 (`rely` becoming a
+    # record rather than a file) can. Scoping it to the five in-tree paths would make
+    # it LOOK fully covered while its two most decision-bearing inputs sit outside.
+    assert reqs["guards"]["scope"] is None, "guards was scoped over a hole"
+    # `check_pov` likewise: its property is ".md only where a same-stem .lean exists",
+    # which is a sibling test, not a path pattern. Measured: 69 .md, 28 paired, 41 not.
+    assert reqs["check_pov"]["scope"] is None
+    assert reqs["check_hashes"]["scope"] == ["register.md", "scripts/*"]
 
 
 # -- ⭐ a type may be RECORDABLE without being REQUIRED ----------------------
@@ -681,3 +700,102 @@ def test_the_reason_lives_in_the_registry_not_the_admission_set(ledger):
     reason = ledger.config.requirements("push")["check_frozen"]["reason"]
     assert reason and len(reason) > 40
     assert "Tim" in reason, "the decision is unattributed"
+
+
+# -- ⭐ a config the running build predates must REFUSE, not crash ------------
+
+def _broken(tmp_path, config_dir, **spec):
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", **spec}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    return Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json")
+
+
+@pytest.mark.parametrize("spec,field", [
+    ({"when": ["a", "b"]}, "when"),
+    ({"scope": 42}, "scope"),
+    ({"scope": ["ok", 7]}, "scope"),
+    ({"switches": "…"}, None),          # a string switch is legal, see below
+    ({"switches": [None]}, "switches"),
+    ({"actions": "push"}, "actions"),
+])
+def test_a_malformed_field_is_a_config_error_not_a_crash(tmp_path, config_dir,
+                                                         spec, field):
+    """⭐⭐ MEASURED 2026-08-23. `scope` gained list support at 16:00; I wrote
+    list-valued scopes into the config at 15:55, while the server still ran the 15:53
+    build whose `fnmatch.fnmatch(path, glob)` took a single string. `fnmatch` calls
+    `os.path.normcase`, which raises `TypeError: expected str, bytes or os.PathLike
+    object, not list` — naming neither the file nor the field.
+
+    THE CLASS: config is data read LIVE, while the code that understands it needs a
+    RESTART. The two deploy at different times and nothing checked they agreed.
+
+    ZeroParadox's framing is why it is worth fixing properly rather than patching the
+    one field: "a crash is indistinguishable from the server being down to any caller
+    that swallows errors — which mine did, returning None and reading as 'nothing
+    needs re-running'." Absence rendering as success, in the code that decides what
+    runs.
+    """
+    led = _broken(tmp_path, config_dir, **spec)
+    if field is None:
+        assert led.config is not None       # a bare string is a legal one-element list
+        return
+    assert led.config is None, f"a malformed {field} reached the code"
+    assert field in (led.config_error or "")
+    assert led.status()["config_ok"] is False
+
+
+def test_the_config_error_says_to_restart_rather_than_edit_back(tmp_path, config_dir):
+    """⚠ THE REMEDY MATTERS MORE THAN THE REFUSAL. The natural reading of "this value
+    is wrong" is to delete it — which would silently drop a `scope` somebody added
+    deliberately, on a stale build. The message has to name the other possibility."""
+    led = _broken(tmp_path, config_dir, scope=42)
+    assert "RESTART" in (led.config_error or "")
+
+
+def test_a_gated_action_refuses_rather_than_answering_on_a_bad_config(tmp_path,
+                                                                      config_dir):
+    """⚠ …and it must reach the CALLER as a refusal, not as an exception that a
+    swallowing client reads as 'nothing to do'."""
+    led = _broken(tmp_path, config_dir, scope=42)
+    with pytest.raises(ConfigError, match="every gated action refuses"):
+        led._require_config()
+
+
+def test_scope_exclude_subtracts(tmp_path, config_dir):
+    """⭐ SOME PROPERTIES ARE "ALL BUT THESE". `check_encoding`'s scope is tracked TEXT
+    files; there is no glob for "is this file text", and an extension allow-list fails
+    in the DANGEROUS direction — a new text extension appears, no glob matches it, and
+    the scope silently narrows. An exclusion re-arms the warning instead.
+
+    ⚠ Chosen over self-scoping (letting the record's subjects BE the scope), which is
+    tidier and destroys the field: nothing independent would say what a checker SHOULD
+    have looked at, so one that silently narrowed would read fully covered forever.
+    """
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical", "scope": ["*"],
+                                   "scope_exclude": ["*.pdf", "*.ttf"],
+                                   "reason": "text only"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    files = {"a.md": "a" * 40, "docs/b.md": "b" * 40,
+             "paper.pdf": "c" * 40, "fonts/x.ttf": "d" * 40}
+    inv = inventory_mod.build(config=led.config, records=[], action="commit",
+                              files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["scope"] == 2, "the exclusion did not subtract, or ate too much"
+
+
+def test_a_star_glob_crosses_slashes_and_double_star_does_not(ledger):
+    """⚠⚠ THE FOOTGUN, PINNED. fnmatch's `*` crosses `/`, so `*` alone is "every path"
+    — and a `**/` prefix is WRONG rather than redundant: `**/*` requires at least one
+    directory and therefore MISSES every top-level file. REQ-15 proposed `**/*` and
+    `**/*.pdf`, which would have silently mis-scoped in the direction this field
+    exists to prevent."""
+    import fnmatch
+    assert fnmatch.fnmatch("README.md", "*") is True
+    assert fnmatch.fnmatch("README.md", "**/*") is False
+    assert fnmatch.fnmatch("a.pdf", "**/*.pdf") is False
+    assert fnmatch.fnmatch("a.pdf", "*.pdf") is True

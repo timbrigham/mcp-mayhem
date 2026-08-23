@@ -94,6 +94,38 @@ class Config:
                 raise ConfigError(
                     f"required.types[{name!r}].family must be one of {FAMILIES}, got {fam!r}")
 
+            # ⚠⚠ SHAPE-CHECK EVERY FIELD THE CODE READS. A config is data read LIVE
+            # while the code that understands it needs a RESTART, so a value this build
+            # predates would otherwise surface as a TypeError from inside fnmatch --
+            # naming neither the file nor the field, and indistinguishable from the
+            # server being down to any caller that swallows errors.
+            for field in ("when",):
+                val = spec.get(field)
+                if val is not None and not isinstance(val, str):
+                    raise ConfigError(
+                        f"required.types[{name!r}].{field} must be a string glob, got "
+                        f"{type(val).__name__}. If this config was written for a newer "
+                        f"build, RESTART the ledger rather than editing it back.")
+            for field in ("scope", "switches", "scope_exclude"):
+                val = spec.get(field)
+                if val is None:
+                    continue
+                if isinstance(val, str):
+                    val = [val]
+                if not isinstance(val, list) or not all(
+                        isinstance(x, str) and x for x in val):
+                    raise ConfigError(
+                        f"required.types[{name!r}].{field} must be a string or a list "
+                        f"of non-empty strings, got {val!r}. If this config was written "
+                        f"for a newer build, RESTART the ledger rather than editing it "
+                        f"back — the config is read live and the code is not.")
+            acts = spec.get("actions")
+            if acts is not None and not (isinstance(acts, list) and all(
+                    isinstance(x, str) for x in acts)):
+                raise ConfigError(
+                    f"required.types[{name!r}].actions must be a list of action names, "
+                    f"got {acts!r}")
+
     # -- the values the rest of the system compares against -------------------
 
     @property
@@ -150,7 +182,8 @@ class Config:
                      # costs no stated reason. The reason-less-narrowing rule exists to
                      # stop silent WEAKENING; requiring one here would price the safe
                      # direction the same as the dangerous one.
-                     "switches": list(spec.get("switches") or [])}
+                     "switches": list(spec.get("switches") or []),
+                     "scope_exclude": None}
             reason = spec.get("reason")
             actions = spec.get("actions")
             when = spec.get("when")
@@ -158,7 +191,8 @@ class Config:
             # `scope` says which paths it examines when it does. A type with a narrow
             # scope is still REQUIRED -- it simply owes coverage of fewer paths.
             scope = spec.get("scope")
-            if (actions is not None or when is not None or scope is not None) and not (
+            if (actions is not None or when is not None or scope is not None
+                    or spec.get("scope_exclude") is not None) and not (
                     isinstance(reason, str) and reason.strip()):
                 # ⚠ Reason-less narrowing is IGNORED, not honoured.
                 entry["reason"] = ("narrowing ignored: no reason given, so the type "
@@ -172,6 +206,12 @@ class Config:
                     entry["required"] = False
             if when is not None:
                 entry["when"] = when
+                entry["narrowed"] = True
+                entry["reason"] = reason
+            excl = spec.get("scope_exclude")
+            if excl is not None:
+                entry["scope_exclude"] = [excl] if isinstance(excl, str) else list(excl)
+                # ⚠ An exclusion NARROWS, so it costs a stated reason like the rest.
                 entry["narrowed"] = True
                 entry["reason"] = reason
             if scope is not None:

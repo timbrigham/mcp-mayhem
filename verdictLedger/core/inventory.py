@@ -158,9 +158,14 @@ def build(*, config, records, action: str, files: dict,
         # ⚠ `scope` is a LIST of globs; a path is in scope if ANY matches. `when`
         # remains a single glob because it answers a different question -- whether the
         # type applies at all -- and no measured case needed more than one.
+        # ⚠⚠ fnmatch's `*` CROSSES `/`, so `*` alone is "every path" and a `**/`
+        # prefix is WRONG rather than redundant -- `**/*` requires at least one
+        # directory and misses every top-level file. Measured 2026-08-23.
         globs = spec.get("scope") or ([when] if when else [])
+        drop = spec.get("scope_exclude") or []
         scope = [p for p in files
-                 if not globs or any(fnmatch.fnmatch(p, g) for g in globs)]
+                 if (not globs or any(fnmatch.fnmatch(p, g) for g in globs))
+                 and not any(fnmatch.fnmatch(p, g) for g in drop)]
         unexamined = sum(1 for p in scope
                          if (step, p, files[p]) not in by_content
                          and (step, p) not in by_path)
