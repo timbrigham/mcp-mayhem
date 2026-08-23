@@ -144,8 +144,8 @@ class Store:
 
         The caller has already validated. This method owns durability only.
         """
-        if record.get("id") is None:
-            raise UsageError("record must carry its computed id before append")
+        if not record.get("id"):
+            raise UsageError("record must carry its key before append")
         started = time.monotonic()
         acquired = self._lock.acquire(timeout=self.hard)
         waited = time.monotonic() - started
@@ -163,7 +163,7 @@ class Store:
                 self.bump("edge_conditions")
                 record.setdefault("cost", {})["lock_wait_seconds"] = round(waited, 3)
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            line = schema.canonical(record) + "\n"
+            line = schema.serialise(record) + "\n"
             with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
                 fh.write(line)
                 fh.flush()

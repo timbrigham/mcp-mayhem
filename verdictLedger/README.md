@@ -46,16 +46,29 @@ Measured: a stdlib-only client speaks streamable-HTTP MCP fine (`initialize`,
 header; payload on the SSE `data:` line). No `mcp` dependency in the ZP repo, and
 no second write route.
 
-## The record, and what identifies it
+## ⚠⚠ Exactly one hash, and it is git's
 
 ```
-id = sha256(canonical({ step, basis, verdict, reason, subjects, revision }))
+id = step@basis#revision          e.g.  check_prose@b5912c5a223c…#0
 ```
 
-**No wall clock in the hash, ever.** `cost`, `run.started`, `run.id` and
-`run.policy_sha` are FIELDS — needed to interpret a verdict and to compute
-cost-per-run — but none of them identifies one. Hashing them made idempotency
-vacuous: two runs over identical content already differed, so nothing ever deduped.
+The record key is a **composite of things that already exist**, not a digest over a
+description of them. `basis.value` is a git object hash — a tree sha at commit
+time, a commit sha at push time — so git has already content-addressed the thing
+being judged. A second hash adds no identity the first one did not.
+
+It follows from V11: `(step, basis, revision)` is unique in the stream, so that
+triple **is** the primary key and everything else is payload determined by it.
+
+**What the removed hash was costing.** It required pinning a canonical JSON
+encoding (key order, separators, `ensure_ascii`) so a reimplementation could
+reproduce the digest to re-verify a deposit — and because free prose was in the
+digest, it required a rule forbidding nondeterministic `reason` text. Both were
+solving problems the hash created. A stranger re-verifying a deposit now reads the
+fields; there is nothing to recompute and no encoding contract to honour.
+
+`cost`, `run.started`, `run.id` and `run.policy_sha` are fields, never key parts —
+needed to interpret a verdict, never to identify one.
 
 `basis` is the content the check ran against, and it exists at check time in both
 phases:
@@ -74,17 +87,16 @@ chain never crosses bases and an accepted FAIL can never be carried onto content
 was not about. `(step, basis, revision)` is unique, which makes branching
 unrepresentable rather than detected.
 
-Canonical JSON is pinned — `sort_keys`, `(",", ":")`, `ensure_ascii=False`, UTF-8 —
-because the ten-year DOI claim promises a reimplementation can reproduce `id`, and
-the corpus is full of `⊥`, `σ`, `c₀`.
-
-## The rules — V1–V14
+## The rules — V1–V13
 
 Each makes a defect this project has already paid for unrepresentable. V1 basis
 stated · V2 no PASS over nothing · V3 real unanimity · V4 inputs exist · V5 no
 anonymous pass · V6 no unactionable block · V7 no smuggled keys · V8 unregistered
 step cannot record · V9 run id · V10 policy sha known · V11 no branching · V12 no
-self-override · V13 depth cap · V14 deterministic reason.
+self-override · V13 depth cap.
+
+⚠ **V14 (deterministic `reason`) was retired** along with the hash that required
+it. Prose is payload now — a checker may report whatever is most useful to a human.
 
 **Every one has a probe that turns the validator red**, plus the **neuter control**:
 stub the rules to return nothing and every probe must go green. Any that stays red
@@ -153,12 +165,12 @@ shared module path is actively collateral-killing.
 
 ## Status: what is built
 
-Built and running: config loader (fail-closed), schema and identity, V1–V14 with
+Built and running: config loader (fail-closed), schema and identity, V1–V13 with
 probes, the append-only store with the bounded-wait lock, genesis, `sign`/`override`,
 `validate`/`get`/`find`/`render`, `requirements`/`policy`, `inventory`, `coverage`,
 `crossref` P1–P4, six signal families, the CLI, the MCP server, and the stdlib client.
 
-**55 tests.** Not yet built: the remaining signal families (flake, disagreement,
+**57 tests.** Not yet built: the remaining signal families (flake, disagreement,
 escalation, time-to-clear, suppression growth, cost, first-failure latency), and the
 gitRobot side of the join — its commit rows must capture the tree sha and the
 inventory id, without which P1/P2 have nothing to join to.

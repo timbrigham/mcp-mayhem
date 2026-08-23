@@ -201,17 +201,17 @@ def test_a_different_verdict_over_the_same_content_is_a_second_record(ledger):
     assert len(ledger.store.records()) == 2
 
 
-def test_identity_ignores_timing_and_run(ledger):
+def test_the_key_ignores_timing_and_run(ledger):
     a = ledger.append(good(cost={"seconds": 0.1, "usd": 0.0},
                            run={"id": "run-1", "started": None,
                                 "policy_sha": None, "env": {}}))
     b = ledger.append(good(cost={"seconds": 99.9, "usd": 12.0},
                            run={"id": "run-2", "started": None,
                                 "policy_sha": None, "env": {}}))
-    assert a["id"] == b["id"], "wall clock or run id leaked into the identity hash"
+    assert a["id"] == b["id"], "wall clock or run id leaked into the key"
 
 
-def test_subject_order_does_not_change_identity(ledger):
+def test_subject_order_does_not_change_the_payload_comparison(ledger):
     s = [{"sha256": "1" * 40, "path": "a.md"}, {"sha256": "2" * 40, "path": "b.md"}]
     a = ledger.append(good(subjects=s))
     b = ledger.append(good(subjects=list(reversed(s))))

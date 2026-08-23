@@ -1,4 +1,8 @@
-"""V1–V14, each with a probe that must turn the validator RED.
+"""V1–V13, each with a probe that must turn the validator RED.
+
+⚠ V14 (deterministic `reason`) IS RETIRED. It existed only to keep an input
+to a per-record hash stable; with the key reduced to (step, basis, revision)
+the hash is gone and the rule it needed goes with it.
 
 ⚠ THE CONTROLS ARE THE DELIVERABLE, NOT THE AFTERTHOUGHT. Every probe here changes
 exactly ONE thing about a record that otherwise passes, so a red result can only
@@ -191,24 +195,44 @@ def test_v12_a_different_person_may_override(ledger):
     assert out["appended"] is True
 
 
-# -- V14: reason is in the identity, so it must be deterministic --------------
+# -- ⭐ ONE HASH, AND IT IS GIT'S ---------------------------------------------
+
+def test_the_key_is_readable_and_carries_no_second_hash(ledger):
+    """The record key is `step@basis#revision` — a composite of things that
+    already exist, not a digest over a description of them.
+
+    ⚠ V14 (deterministic `reason`) was RETIRED with the hash it protected. Prose
+    is payload now, free to say whatever is most useful to a human.
+    """
+    out = ledger.append(good(verdict="FAIL", reason="check took 1.4s on host xyz"))
+    assert out["appended"] is True
+    assert out["id"] == f"check_prose@{'a' * 40}#0"
+
 
 @pytest.mark.parametrize("reason", [
-    "check took 1.4s",
-    "failed at 2026-08-22T20:58:13Z",
-    "worker pid: 4821 died",
-    "wrote /tmp/abc123def/out.txt",
+    "check took 1.4s", "failed at 2026-08-22T20:58:13Z",
+    "worker pid: 4821 died", "wrote /tmp/abc123def/out.txt",
 ])
-def test_v14_nondeterministic_reason_is_refused(ledger, reason):
-    """⚠ The rule most likely to be violated by accident, by a checker that
-    helpfully reports its own duration. Two identical failures would hash
-    differently and dedupe would never fire."""
-    rule(ledger, good(verdict="FAIL", reason=reason), "V14")
+def test_a_nondeterministic_reason_is_now_fine(ledger, reason):
+    """Every one of these was refused while `reason` fed a digest. The rule was
+    solving a problem the hash created."""
+    assert errs(ledger, good(verdict="FAIL", reason=reason)) == []
 
 
-def test_v14_a_stable_reason_is_fine(ledger):
-    assert errs(ledger, good(verdict="FAIL",
-                             reason="blah.md is not formatted correctly")) == []
+def test_the_only_hash_in_a_record_is_gits(ledger):
+    """basis.value is a git object hash and subjects carry git blob hashes. The
+    ledger contributes none of its own."""
+    ledger.append(good())
+    rec = ledger.store.records()[0]
+    assert rec["id"] == f"check_prose@{'a' * 40}#0"
+    assert len(rec["id"]) < 64, "an opaque digest would have crept back in"
+
+
+def test_an_ambiguous_basis_is_refused_rather_than_escaped(ledger):
+    """Git permits '#' in a ref name. Refusing costs a rename; escaping would
+    reintroduce the encoding contract the digest needed."""
+    bad = good(basis={"kind": "ref", "value": "feature#7", "resolved_from": "explicit"})
+    assert any("ambiguous" in e for e in errs(ledger, bad))
 
 
 # -- ⭐ THE NEUTER CONTROL ------------------------------------------------------
@@ -233,7 +257,6 @@ def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
         good(step="check_prosee"),
         good(run={"id": "", "started": None, "policy_sha": None, "env": {}}),
         good(revision=6, verdict="FAIL", reason="deep"),
-        good(verdict="FAIL", reason="took 1.4s"),
     ]
     for p in probes:
         assert errs(ledger, p), "a probe was already green before neutering"

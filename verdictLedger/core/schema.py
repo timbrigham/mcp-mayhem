@@ -1,22 +1,30 @@
-"""The record shape, the canonical encoding, and the content-addressed id.
+"""The record shape and its primary key.
 
-⚠⚠ THE ENCODING IS PINNED HERE AND MUST NEVER BE INHERITED FROM DEFAULTS.
-§2a promises the stream/audit join is runnable against the Zenodo deposit in ten
-years. That promises a REIMPLEMENTATION can reproduce `id` — which is only true if
-key order, separators and unicode handling are specified rather than being
-whatever `json.dumps` happened to do that day. `ensure_ascii` is not cosmetic: the
-corpus is full of ⊥, σ, c₀, and escaping them changes every hash.
+⚠⚠ THERE IS EXACTLY ONE HASH IN THIS SYSTEM AND IT IS GIT'S (Tim, 2026-08-23).
 
-⚠ NO WALL CLOCK IN THE HASH (§4b). `cost`, `run.started`, `run.id` and
-`run.policy_sha` are all FIELDS — needed to interpret a verdict and to compute
-cost-per-run — but none of them identifies one. Hashing them made idempotency
-vacuous: two runs over identical content already differed, so nothing ever
-deduped and "appending the identical record twice is idempotent" could not fire.
+The first draft content-addressed each record with a sha256 over its own fields.
+That was inherited from the spec and kept unexamined, and it was wrong twice over:
+
+  * **It was redundant.** `basis.value` already carries a git object hash — a tree
+    sha at commit time, a commit sha at push time. Git has already content-
+    addressed the thing being judged. A second hash over a description of that
+    content adds no identity that the first one did not.
+  * **It manufactured its own problems.** Hashing fields required pinning a
+    canonical JSON encoding (key order, separators, `ensure_ascii`) because a
+    reimplementation had to reproduce the digest to re-verify a deposit. And
+    because free prose was in the digest, it required a rule forbidding
+    nondeterministic `reason` text — a validation rule invented to protect a hash
+    that need not have existed.
+
+**The key is composite and readable:** `step@basis#revision`. It follows directly
+from V11 — `(step, basis, revision)` is unique in the stream — so that triple IS
+the primary key and everything else is payload determined by it. A stranger
+re-verifying a deposit in ten years reads the fields; there is no encoding
+contract to honour and nothing to recompute.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any
 
@@ -28,51 +36,45 @@ BASIS_KINDS = ("range", "ref", "scope", "tree")
 RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 DECIDED_HOW = ("mechanical", "agreement", "signature", "override")
 
-# The fields that IDENTIFY a record. Everything else is provenance.
-IDENTITY_FIELDS = ("step", "basis", "verdict", "reason", "subjects", "revision")
+# The primary key. Everything else in the record is payload determined by it.
+KEY_FIELDS = ("step", "basis.value", "revision")
 
 TOP_LEVEL = ("schema", "id", "step", "tier", "verdict", "reason", "basis",
              "subjects", "decided", "inputs", "revision", "cost", "run")
 
+# Separators chosen so the key stays greppable and unambiguous. A git ref may
+# legally contain '#', so `basis.value` is checked for it rather than escaped —
+# a one-line guard, not an encoding contract.
+KEY_SEP_BASIS = "@"
+KEY_SEP_REVISION = "#"
 
-def canonical(obj: Any) -> str:
-    """The pinned encoding. Changing any argument here breaks every stored id."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False)
+
+def serialise(obj: Any) -> str:
+    """One JSONL line. Sorted keys only so diffs stay readable — nothing depends
+    on this encoding for identity any more."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _identity_payload(record: dict) -> dict:
-    """Only the identity fields, with subjects normalised.
+def record_key(record: dict) -> str:
+    """`step@basis#revision` — the whole identity, in a form a human can read.
 
-    Subjects are sorted by (path, sha256) so that a checker reporting the same
-    files in a different order does not mint a second identity for one fact.
+    `inputs` entries reference this, so a chain is legible in the raw stream:
+    `preflight@b5912c5a…#0` names its predecessor plainly instead of pointing at
+    a 64-character digest that has to be looked up to mean anything.
     """
-    subjects = sorted(
-        ({"path": s.get("path"), "sha256": s.get("sha256")}
-         for s in (record.get("subjects") or [])),
-        key=lambda s: (s.get("path") or "", s.get("sha256") or ""),
-    )
-    basis = record.get("basis") or {}
-    return {
-        "step": record.get("step"),
-        "basis": {"kind": basis.get("kind"), "value": basis.get("value")},
-        "verdict": record.get("verdict"),
-        "reason": record.get("reason"),
-        "subjects": subjects,
-        "revision": record.get("revision", 0),
-    }
+    basis = (record.get("basis") or {}).get("value") or ""
+    return (f"{record.get('step')}{KEY_SEP_BASIS}{basis}"
+            f"{KEY_SEP_REVISION}{record.get('revision', 0)}")
 
 
-def compute_id(record: dict) -> str:
-    """`id = sha256(canonical({step, basis, verdict, reason, subjects, revision}))`
+def key_is_ambiguous(record: dict) -> bool:
+    """True when `basis.value` contains the revision separator.
 
-    ⚠ `basis.resolved_from` is deliberately NOT hashed. Whether the basis was
-    stated or fell back is a fact about HOW the check was pointed at the content,
-    not about WHICH content — and V1 already surfaces a FALLBACK in the record and
-    in the rendered line. Hashing it would make the same verdict over the same
-    tree hash differently depending on how the range was derived.
+    Git permits '#' in a ref name, so a pathological ref could make the key
+    parse two ways. Refusing it costs a rename; escaping it would reintroduce the
+    encoding contract this design exists to avoid.
     """
-    return hashlib.sha256(canonical(_identity_payload(record)).encode("utf-8")).hexdigest()
+    return KEY_SEP_REVISION in ((record.get("basis") or {}).get("value") or "")
 
 
 def empty_record(**over: Any) -> dict:
@@ -98,3 +100,22 @@ def empty_record(**over: Any) -> dict:
     }
     rec.update(over)
     return rec
+
+
+def payload(record: dict) -> dict:
+    """Everything the key does NOT determine — used to tell a duplicate append
+    (same key, same payload: dedupe) from a conflict (same key, different payload:
+    V11 refuses). Observational fields are excluded: how long a write waited or
+    what a run was called must not make the same fact look like a different one.
+    """
+    return {
+        "verdict": record.get("verdict"),
+        "reason": record.get("reason"),
+        "tier": record.get("tier"),
+        "subjects": sorted(
+            ((s.get("path"), s.get("sha256")) for s in record.get("subjects") or []),
+            key=lambda t: (t[0] or "", t[1] or "")),
+        "decided": record.get("decided"),
+        "inputs": sorted(record.get("inputs") or []),
+        "basis_kind": (record.get("basis") or {}).get("kind"),
+    }

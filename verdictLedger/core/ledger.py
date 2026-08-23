@@ -75,7 +75,7 @@ class Ledger:
             rec["run"]["policy_sha"] = cfg.policy_sha
         if not rec["run"].get("started"):
             rec["run"]["started"] = _now()
-        rec["id"] = schema.compute_id(rec)
+        rec["id"] = schema.record_key(rec)
         return rec
 
     def validate(self, record: dict) -> dict:
@@ -98,8 +98,11 @@ class Ledger:
 
         existing = self.store.get(rec["id"])
         if existing is not None:
-            # Same identity = same fact. Not an error, and not a duplicate row.
-            return {"id": rec["id"], "appended": False, "reason": "identical record already present"}
+            # Same key AND same payload = the same fact stated twice. A same-key
+            # DIFFERENT-payload record never reaches here: V11 refuses it above as
+            # branching, which is the distinction the key alone cannot draw.
+            return {"id": rec["id"], "appended": False,
+                    "reason": "identical record already present"}
 
         self.store.append(rec)
         return {"id": rec["id"], "appended": True}

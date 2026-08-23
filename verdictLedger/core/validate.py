@@ -153,9 +153,10 @@ def rules(record: dict, *, config: Config, existing_ids: set,
             seen = tips.get(key)
             occupant = (seen or {}).get("revisions", {}).get(rev)
             # ⚠ Only a DIFFERENT record in this slot is branching. The same record
-            # appended twice is the same fact, and dedupes — checking the slot
-            # without comparing ids would make idempotency unreachable.
-            if occupant is not None and occupant.get("id") != record.get("id"):
+            # appended twice is the same fact and dedupes, so the slot check must
+            # compare PAYLOADS — the key alone cannot tell a duplicate from a
+            # conflict, because both share it by definition.
+            if occupant is not None and schema.payload(occupant) != schema.payload(record):
                 out.append(f"V11: revision {rev} already exists for step {step!r} at this "
                            f"basis — (step, basis, revision) is unique, so branching is "
                            f"unrepresentable rather than merely detected")
@@ -183,37 +184,18 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                                f"this key without unanimity — otherwise a finding is "
                                f"sudo-ed away by the person it was raised against")
 
-    # V14 — reason is in the identity, so a nondeterministic reason means two
-    # identical failures hash differently and dedupe never fires.
-    reason = record.get("reason")
-    if isinstance(reason, str):
-        out.extend(_nondeterministic(reason))
-    return out
+    # ⚠ V14 (deterministic `reason`) IS RETIRED. It existed only because `reason`
+    # was an input to a per-record hash, so a checker reporting its own duration
+    # would silently break dedupe. With the key reduced to (step, basis, revision)
+    # the prose is payload, free to say whatever is most useful to a human, and the
+    # rule it needed disappears with the hash that required it.
 
-
-_CLOCK_HINTS = (
-    (r"\b\d+\.\d+\s*s(ec|econds)?\b", "an elapsed time"),
-    (r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", "a timestamp"),
-    (r"\bpid[ =:]\s*\d+", "a pid"),
-    (r"[A-Za-z]:\\\\?Users\\\\?[^\\\\ ]+\\\\?AppData", "an absolute temp path"),
-    (r"/tmp/[A-Za-z0-9._-]{6,}", "an absolute temp path"),
-)
-
-
-def _nondeterministic(reason: str) -> list[str]:
-    """V14. Heuristic BY NECESSITY — determinism is not decidable from one sample —
-    so it flags the shapes that actually occur: a checker helpfully reporting its
-    own duration, a timestamp, a pid, a per-run temp path. A miss here costs
-    dedupe; a false positive costs a reworded reason. The asymmetry is deliberate.
-    """
-    import re
-
-    out = []
-    for pattern, what in _CLOCK_HINTS:
-        if re.search(pattern, reason):
-            out.append(f"V14: reason contains {what} and reason is part of the record "
-                       f"identity — two identical failures would hash differently and "
-                       f"never dedupe. Remove it from the reason.")
+    # The key must parse unambiguously. Git permits '#' in a ref name, so a
+    # pathological basis could make `step@basis#revision` read two ways. One line,
+    # rather than the escaping contract a digest would have needed.
+    if schema.key_is_ambiguous(record):
+        out.append(f"basis.value contains {schema.KEY_SEP_REVISION!r}, which would make "
+                   f"the record key ambiguous. Rename the ref.")
     return out
 
 
