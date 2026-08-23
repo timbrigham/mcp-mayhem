@@ -55,6 +55,23 @@ RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 #                is an ACCEPT of a standing FAIL as carried debt. V12 requires `who` and
 #                forbids overriding your own prior decision.
 #
+# ⚠⚠ `min_passes` GATES ONLY `agreement`. Measured 2026-08-23: a `signature` record
+# with `passes: 1` appends and reads SATISFIED, because V3 never fires on it. So a
+# single-pass review CAN satisfy a gate — via `signature`, and only with a signatory.
+#
+# THE TRAP THAT FOLLOWS, and it is the reason this paragraph exists: the four review
+# gates each run ONE agent, so `agreement` refuses them (V3 wants 3 unanimous). The
+# tempting fix is to record `signature` with the AGENT as `who`. Do not. `signature`
+# means a HUMAN accepted a verdict the round did not produce; putting an agent's name
+# there claims an accountability that does not exist, and is the anonymous-approval
+# hole V5 closes with a robot's name written in it.
+#
+# The honest shapes for a single agent round are: the agent produces findings and a
+# PERSON signs (who = the person, which is what Tim's cheap route is for), or the gate
+# genuinely runs three independent passes and records `agreement`. Adding a fifth enum
+# value for "one agent judged it" would re-open precisely what V3 exists to close —
+# single-pass AI verdicts wearing a consensus badge — under a new name.
+#
 # ⚠ `who` is enforced by HOW, never by family — signature and override require it,
 # mechanical and agreement do not. For an `agreement` record the accountability is
 # `passes >= 3` plus `run.id`; setting `who` to name the panel is good practice and is

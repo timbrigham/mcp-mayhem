@@ -390,3 +390,37 @@ def test_a_review_family_step_may_legitimately_record_mechanically(ledger):
                              decided={"how": "mechanical", "passes": 1, "agreed": 1,
                                       "who": None}))
     assert out["id"].startswith("claim_review@")
+
+
+def test_min_passes_gates_only_agreement_so_a_signature_can_satisfy(ledger):
+    """⭐ THE ANSWER TO REQ-22(b), pinned because it decides how four gate briefs get
+    written and could not be determined by trying it — the experiment IS a forged
+    review on a registered step.
+
+    `min_passes` is 3 and V3 requires `agreed == passes >= min_passes`, but V3 only
+    fires on `how: "agreement"`. A `signature` record never reaches it, so a
+    single-pass review CAN satisfy a gate — with a signatory, and only that way.
+    """
+    from core import inventory as inventory_mod
+    rec = {"schema": "zp.record.v1", "step": "editorial", "tier": "H",
+           "verdict": "PASS", "revision": 0, "inputs": [], "run": {"id": "r"},
+           "basis": {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"},
+           "subjects": [{"path": "docs/x.md", "git_blob_id": "b" * 40}],
+           "decided": {"how": "signature", "passes": 1, "agreed": 1, "who": "tim"}}
+    ledger.append(rec)
+    inv = inventory_mod.build(config=ledger.config, records=ledger.store.records(),
+                              action="push", files={"docs/x.md": "b" * 40},
+                              ref="a" * 40, admission=["editorial"])
+    assert next(r for r in inv["rows"]
+                if r["step"] == "editorial")["status"] == "SATISFIED"
+    assert inv["complete"] is True
+
+
+def test_a_signature_still_cannot_be_anonymous(ledger):
+    """⚠ THE HALF THAT KEEPS THE ABOVE FROM BEING A HOLE. If a single-pass review may
+    satisfy a gate through `signature`, then `who` is the entire accountability — and
+    V5 is what stops it becoming a `*_cleared.txt` with extra steps."""
+    with pytest.raises(ValidationFailure, match="V5"):
+        ledger.append(good(step="check_paths", verdict="PASS",
+                           decided={"how": "signature", "passes": 1, "agreed": 1,
+                                    "who": None}))
