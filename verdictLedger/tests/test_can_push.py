@@ -266,3 +266,57 @@ def test_an_absent_commit_admission_set_refuses(ledger, tmp_path):
                                admission=["check_prose"], commit_admission=None)
     assert result["allowed"] is False
     assert result["commits"][0]["admission_state"] == "UNSET"
+
+
+# -- ⭐ the gate names what the audit does not claim ---------------------------
+
+def test_can_push_reports_how_much_of_the_range_is_below_the_audit_floor(ledger,
+                                                                         tmp_path):
+    """⭐⭐ THE GAP BETWEEN TWO CORRECT TOOLS. Measured 2026-08-23: 174 unpushed
+    commits, 23 above the genesis floor, 151 below. Those 151 are in BOTH tools' scope
+    and NEITHER tool's answer — `can_push` walks the raw range and refuses them, while
+    `crossref` stops at the floor and claims nothing. Each is right under its own
+    scoping, and together they read as "the audit is clean and the push is refused,
+    about the same commits".
+
+    ⚠ The fix is NOT to move the floor. That would audit nothing; it would only lower
+    where judgement starts so the audit *says* something — a claim nobody made, and
+    the thing Tim declined. So the gate reports it instead.
+    """
+    base, shas = _repo(tmp_path, n=4)
+    records = [{"id": "genesis@x#0", "step": "genesis", "verdict": "PASS",
+                "revision": 0,
+                "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+                "subjects": [{"path": "<genesis>", "git_blob_id": shas[1]}],
+                "basis": {"kind": "tree", "value": shas[1]}}]
+
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}", records)
+    assert result["commits_in_range"] == 4
+    assert result["audit_floor"] == shas[1]
+    # the floor commit and everything under it inside this range
+    assert result["commits_below_audit_floor"] == 2
+    assert "BELOW the genesis floor" in result["audit_note"]
+    assert "Neither tool is wrong" in result["audit_note"]
+    assert result["audit_note"] in canpush_mod.render(result)
+
+
+def test_no_audit_note_when_the_whole_range_is_above_the_floor(ledger, tmp_path):
+    """⚠ …and it must stay quiet when the two scopes actually meet."""
+    base, shas = _repo(tmp_path, n=3)
+    records = [{"id": "genesis@x#0", "step": "genesis", "verdict": "PASS",
+                "revision": 0,
+                "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+                "subjects": [{"path": "<genesis>", "git_blob_id": base}],
+                "basis": {"kind": "tree", "value": base}}]
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}", records)
+    assert result["commits_below_audit_floor"] == 0
+    assert result["audit_note"] is None
+
+
+def test_no_floor_means_no_claim_either_way(ledger, tmp_path):
+    """⚠ With no genesis record there is no floor, so the gate must not invent one —
+    and must not imply the audit covered anything."""
+    base, shas = _repo(tmp_path, n=2)
+    result = _check(ledger, tmp_path, f"{base}..{shas[-1]}")
+    assert result["audit_floor"] is None
+    assert result["audit_note"] is None

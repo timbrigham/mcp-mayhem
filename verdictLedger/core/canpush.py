@@ -34,6 +34,7 @@ from __future__ import annotations
 import subprocess
 from typing import Optional
 
+from core import crossref as crossref_mod
 from core import inventory as inventory_mod
 
 
@@ -154,6 +155,25 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                 "why": "the range publishes no commits; nothing was gated because "
                        "nothing is being promoted"}
 
+    # ⚠⚠ HOW MUCH OF THIS RANGE THE AUDIT DOES NOT CLAIM. Measured 2026-08-23:
+    # 174 unpushed, 23 above the genesis floor, 151 below it -- and those 151 are in
+    # BOTH tools' scope and NEITHER tool's answer. This gate refuses them; `crossref`
+    # stops at the floor and says nothing about them. Each is right under its own
+    # scoping and together they read as "the audit is clean and the push is refused,
+    # about the same commits".
+    #
+    # Reported here rather than fixed by moving the floor, which would not audit
+    # anything -- it would only lower where judgement starts so the audit says
+    # something, which is a claim nobody made.
+    below_floor = 0
+    floor = crossref_mod._genesis_floor_commit(records)
+    if floor:
+        try:
+            above = {c for c in _git(repo, "rev-list", f"{floor}..{rev_range.split('..')[-1]}").split() if c}
+            below_floor = sum(1 for r in rows if r["commit"] not in above)
+        except ValueError:
+            below_floor = 0
+
     blocking = [r for r in rows if not r["complete"]]
     return {
         "ok": True,
@@ -162,6 +182,14 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
         "tip": rows[-1]["commit"],
+        "commits_below_audit_floor": below_floor,
+        "audit_floor": floor,
+        "audit_note": (
+            f"⚠ {below_floor} of {len(rows)} commit(s) in this range sit BELOW the "
+            f"genesis floor {(floor or '')[:12]}. `crossref` claims nothing about them "
+            f"— so they are refused here and unaudited there. Neither tool is wrong; "
+            f"the audit was scoped to when recording began and this gate was not."
+            if below_floor else None),
         "admitted": admitted,
         "admission_state": rows[-1]["admission_state"],
         "not_gating": rows[-1]["not_gating"],
@@ -210,6 +238,9 @@ def render(result: dict) -> str:
         step, seen, scope = min(thin, key=lambda t: t[1] / t[2] if t[2] else 1)
         lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
                      f"{seen}/{scope} in-scope paths (reported, not blocking)")
+
+    if result.get("audit_note"):
+        lines.append("  " + result["audit_note"])
 
     if result.get("admission_state") in ("EMPTY", "UNSET"):
         lines.append("  ⚠⚠ NOTHING GATES THIS PUSH — the admission set is "
