@@ -42,7 +42,7 @@ def test_inventory_on_an_empty_ledger_reports_everything_missing(ledger):
     """⭐ Day one. It must NEVER read "0 required, all satisfied"."""
     inv = inventory_mod.build(config=ledger.config, records=[], action="commit",
                               files={"docs/x.md": "b" * 40},
-                              admission=["build", "check_prose", "check_paths"])
+                              admission=["build", "check_prose", "check_invariants"])
     assert inv["required"] > 0, "an empty requirement set would render as success"
     assert inv["satisfied"] == 0
     assert inv["missing"] == inv["required"]
@@ -88,7 +88,7 @@ def test_a_minimal_entry_is_required_for_every_action(ledger):
     """⚠ `check_prose`, not `build`. build carries an actions:["tag"] narrowing now,
     so it is no longer a MINIMAL entry and asserting on it would test the narrowing
     while claiming to test the default. A minimal entry is `{"family": ...}` alone."""
-    minimal = "check_paths"
+    minimal = "check_invariants"
     # ⚠ Test the PROPERTY, not the key set. `switches` is not a narrowing — it makes a
     # type stricter — so its presence must not disqualify a type from being minimal
     # here. An exact-equality assertion said otherwise and would have pushed the next
@@ -141,7 +141,7 @@ def _basis(v="a" * 40):
 
 
 def test_stale_never_collapses_into_satisfied(ledger):
-    ledger.append(good(step="check_paths",
+    ledger.append(good(step="check_invariants",
                        subjects=[{"git_blob_id": "b" * 40, "path": "x.lean"}]))
     recs = ledger.store.records()
     fresh = inventory_mod.build(config=ledger.config, records=recs, action="commit",
@@ -149,8 +149,8 @@ def test_stale_never_collapses_into_satisfied(ledger):
     moved = inventory_mod.build(config=ledger.config, records=recs, action="commit",
                                 files={"x.lean": "c" * 40})
     assert next(r for r in fresh["rows"]
-                if r["step"] == "check_paths")["status"] == "SATISFIED"
-    stale = next(r for r in moved["rows"] if r["step"] == "check_paths")
+                if r["step"] == "check_invariants")["status"] == "SATISFIED"
+    stale = next(r for r in moved["rows"] if r["step"] == "check_invariants")
     # ⚠ STALE, not MISSING and never SATISFIED: the step DID examine this path, the
     # content moved underneath it. Re-run, versus run-at-all — different remedies.
     assert stale["status"] == "STALE"
@@ -1080,20 +1080,74 @@ def test_the_other_three_review_gates_still_block(ledger):
         assert reqs[step]["scope"], f"{step} lost its scope"
 
 
+# ⚠⚠ THE FULL SWITCH MAP, PINNED. A switch protects an exemption surface, and the
+# failure mode ZeroParadox surfaced (REQ-33) is a repair that satisfies the checker
+# while deleting what the checker was protecting: V15 asserts that DECLARED switches
+# are named by a record, and says nothing about whether a previously-declared switch
+# still exists. So a later edit could drop `pov_baseline.txt` while adding something
+# else, and every record would validate cleanly the whole way.
+#
+# This map is the only thing that fails when that happens. Removing an entry here to
+# make a test pass is removing the protection the entry exists for.
+SWITCH_MAP = {
+    "check_checkers":  ["tools/verify/vendored_files.txt"],
+    "check_classes":   ["tools/verify/class_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_encoding":  ["tools/verify/encoding_whitelist.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_figures":   ["tools/verify/figures_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_hashes":    ["tools/verify/shared_build_baseline.txt"],
+    "check_modal":     ["tools/verify/modal_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_moved":     ["tools/verify/vendored_files.txt"],
+    "check_negatives": ["tools/verify/negatives_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_paths":     ["tools/verify/vendored_files.txt"],
+    "check_pov":       ["tools/verify/pov_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "check_prose":     ["tools/verify/prose_baseline.txt",
+                        "tools/verify/vendored_files.txt"],
+    "guards":          ["tools/verify/vendored_files.txt"],
+}
+
+
 def test_the_vendored_allowlist_is_a_declared_switch(ledger):
     """⭐ STRONGER THAN THE BASELINE HOLE OF REQ-10, and found the same way — by
-    executing something. ZeroParadox planted a DENIAL, `check_pov` exited 1; one
-    appended line in `vendored_files.txt` and it exited 0, AND NO SUBJECT MOVED.
+    executing something. A planted DENIAL made `check_pov` exit 1; one appended line in
+    `vendored_files.txt` made it exit 0, AND NO SUBJECT MOVED.
 
-    An allowlist removes files from scope entirely rather than grandfathering sites,
-    so the record does not merely go unstale — the thing it covered stops existing.
-    Eight checkers were switched off by a file none of them named.
+    An allowlist removes files from scope entirely rather than grandfathering sites, so
+    the record does not merely go unstale — the thing it covered stops existing.
+
+    ⚠ ELEVEN types, not eight. The count landed in two passes because four had not
+    re-recorded, none of them being in the pre-commit hook — the second time that cause
+    has hidden a set.
     """
     V = "tools/verify/vendored_files.txt"
     reqs = ledger.config.requirements("push")
-    for step in ("check_classes", "check_encoding", "check_modal", "check_moved",
-                 "check_pov", "check_prose", "guards"):
-        assert V in reqs[step]["switches"], f"{step} can be switched off silently"
+    named = sorted(k for k, v in reqs.items() if V in (v.get("switches") or []))
+    assert len(named) == 11, f"the allowlist governs 11 types, declared on {len(named)}"
+
+
+def test_no_declared_switch_is_ever_silently_dropped(ledger):
+    """⭐⭐ THE SHAPE ZEROPARADOX'S NEAR-MISS EXPOSED, and it is a new one: a repair
+    that satisfies the checker while deleting what the checker was protecting.
+
+    Six types already carried a baseline switch when the allowlist was added. Writing
+    it over the top would have removed the REQ-10 protection while adding the REQ-31
+    one — and EVERY RECORD WOULD STILL HAVE PASSED V15, because V15 asserts that
+    declared switches are named by a record and says nothing about whether a
+    previously-declared switch survived.
+
+    V15 cannot catch this; only a pinned map can.
+    """
+    reqs = ledger.config.requirements("push")
+    for step, expected in SWITCH_MAP.items():
+        assert sorted(reqs[step]["switches"]) == sorted(expected), (
+            f"{step}'s switches changed; if that is intended, change SWITCH_MAP in the "
+            f"same commit and say why — a switch removed silently is an exemption "
+            f"surface that stopped being watched")
 
 
 def test_declaring_a_switch_did_not_displace_an_existing_one(ledger):

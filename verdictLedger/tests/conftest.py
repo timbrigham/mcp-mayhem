@@ -50,13 +50,20 @@ def set_policy(config_dir, **changes):
 def good(**over):
     """A record that passes every rule, so a probe changes exactly one thing.
 
-    ⚠ `check_paths` on purpose: it declares no `switches`, so a generic fixture does
+    ⚠ `check_invariants` on purpose: it declares neither `switches` NOR `scope`, so a
+    generic fixture does
     not have to carry somebody's baseline as a subject. Using a switched type here
     would make every unrelated test fail V15 and teach the next reader to weaken it.
+
+    ⚠ This has moved twice — check_prose, then check_paths — as each gained a
+    declaration. That is the fixture doing its job rather than churn: a generic record
+    must be generic, and the set of types with no declarations shrinks as the bar gets
+    described. If this moves again, pick from the no-switch no-scope set rather than
+    deleting a declaration to keep a test green.
     """
     rec = {
         "schema": "zp.record.v1",
-        "step": "check_paths",
+        "step": "check_invariants",
         "tier": "M",
         "verdict": "PASS",
         "reason": None,

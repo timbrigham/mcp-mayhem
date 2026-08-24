@@ -179,10 +179,10 @@ def test_v13_depth_cap_and_it_is_config(ledger, tmp_path, config_dir):
 def test_v12_cannot_override_your_own_prior_decision(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
     subj = [{"git_blob_id": "b" * 40, "path": "docs/x.md"}]
-    ledger.sign(step="check_paths", subjects=subj, who="tim",
+    ledger.sign(step="check_invariants", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
     with pytest.raises(ValidationFailure) as exc:
-        ledger.override(step="check_paths", subjects=subj, who="tim",
+        ledger.override(step="check_invariants", subjects=subj, who="tim",
                         reason="actually a false positive", basis=base)
     assert any(e.startswith("V12") for e in exc.value.violations)
 
@@ -190,9 +190,9 @@ def test_v12_cannot_override_your_own_prior_decision(ledger):
 def test_v12_a_different_person_may_override(ledger):
     base = {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"}
     subj = [{"git_blob_id": "b" * 40, "path": "docs/x.md"}]
-    ledger.sign(step="check_paths", subjects=subj, who="tim",
+    ledger.sign(step="check_invariants", subjects=subj, who="tim",
                 reason="accepted as known debt", basis=base)
-    out = ledger.override(step="check_paths", subjects=subj, who="reviewer-2",
+    out = ledger.override(step="check_invariants", subjects=subj, who="reviewer-2",
                           reason="the gate was wrong", basis=base)
     assert out["appended"] is True
 
@@ -208,7 +208,7 @@ def test_the_key_is_readable_and_carries_no_second_hash(ledger):
     """
     out = ledger.append(good(verdict="FAIL", reason="check took 1.4s on host xyz"))
     assert out["appended"] is True
-    assert out["id"] == f"check_paths@{'a' * 40}#0"
+    assert out["id"] == f"check_invariants@{'a' * 40}#0"
 
 
 @pytest.mark.parametrize("reason", [
@@ -226,7 +226,7 @@ def test_the_only_hash_in_a_record_is_gits(ledger):
     ledger contributes none of its own."""
     ledger.append(good())
     rec = ledger.store.records()[0]
-    assert rec["id"] == f"check_paths@{'a' * 40}#0"
+    assert rec["id"] == f"check_invariants@{'a' * 40}#0"
     assert len(rec["id"]) < 64, "an opaque digest would have crept back in"
 
 
@@ -357,14 +357,14 @@ def test_a_single_pass_agent_verdict_cannot_wear_an_agreement_badge(ledger):
     for this shape rather than probing it — because a probe record for `editorial`
     would, if accepted, SATISFY A GATE NO REVIEW RAN."""
     with pytest.raises(ValidationFailure, match="V3"):
-        ledger.append(good(step="check_paths", verdict="PASS",
+        ledger.append(good(step="check_invariants", verdict="PASS",
                            decided={"how": "agreement", "passes": 1, "agreed": 1,
                                     "who": None}))
 
 
 def test_agreement_requires_unanimity_not_just_a_quorum(ledger):
     with pytest.raises(ValidationFailure, match="agreed == passes"):
-        ledger.append(good(step="check_paths", verdict="PASS",
+        ledger.append(good(step="check_invariants", verdict="PASS",
                            decided={"how": "agreement", "passes": 3, "agreed": 2,
                                     "who": None}))
 
@@ -373,7 +373,7 @@ def test_a_genuine_agreement_round_validates_without_who(ledger):
     """⚠ `who` is enforced by HOW, never by family. For an agreement record the
     accountability is `passes >= 3` plus `run.id`; forcing `who` would produce
     placeholder attribution, which is worse than an honest absence."""
-    out = ledger.append(good(step="check_paths", verdict="PASS",
+    out = ledger.append(good(step="check_invariants", verdict="PASS",
                              decided={"how": "agreement", "passes": 3, "agreed": 3,
                                       "who": None}))
     assert out["id"]
@@ -421,6 +421,6 @@ def test_a_signature_still_cannot_be_anonymous(ledger):
     satisfy a gate through `signature`, then `who` is the entire accountability — and
     V5 is what stops it becoming a `*_cleared.txt` with extra steps."""
     with pytest.raises(ValidationFailure, match="V5"):
-        ledger.append(good(step="check_paths", verdict="PASS",
+        ledger.append(good(step="check_invariants", verdict="PASS",
                            decided={"how": "signature", "passes": 1, "agreed": 1,
                                     "who": None}))
