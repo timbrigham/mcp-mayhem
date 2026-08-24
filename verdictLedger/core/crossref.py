@@ -117,6 +117,22 @@ def check(*, records: list, config, repo: Optional[str] = None,
 
     rev_range = f"{floor}..{head}"
     commits = [c for c in _git(repo, "rev-list", "--reverse", rev_range).splitlines() if c]
+
+    # ⚠⚠ HOW MUCH IS BELOW THE FLOOR, counted and named. §9a scopes the audit to
+    # commits at or after genesis on purpose, and that is right -- an unactionable
+    # warning on every run trains people to scroll past it. But "reports nothing
+    # before the floor" was implemented as SILENCE, so a reader saw three zeroes and
+    # concluded the history was clean. Measured 2026-08-23: 23 audited, 151 below,
+    # counts all zero. The floor still bounds what is JUDGED; this only stops the
+    # result reading as a clean bill of health over commits nobody looked at.
+    # ⚠ This is the repository's ENTIRE history before the floor, most of which
+    # predates the ledger by years. It is context for the scoping sentence, NOT an
+    # alarm — the load-bearing half of the note is "the counts describe N commits
+    # only", and the number is there so nobody has to go and work it out.
+    try:
+        below = int((_git(repo, "rev-list", "--count", floor) or "0").strip())
+    except (ValueError, OSError):
+        below = 0
     truncated = len(commits) > limit > 0
     if truncated:
         commits = commits[-limit:]
@@ -170,6 +186,16 @@ def check(*, records: list, config, repo: Optional[str] = None,
         "genesis_floor": floor,
         "range": rev_range,
         "commits_audited": len(commits),
+        "commits_below_floor": below,
+        # ⚠ The sentence a human reads. "0 findings" over 23 of 174 commits is true
+        # and misleading; this is the half that makes it neither.
+        "floor_note": (
+            f"⚠ THE COUNTS BELOW DESCRIBE {len(commits)} COMMIT(S) ONLY. "
+            f"{below} commit(s) of prior history sit below the genesis floor and were "
+            f"NOT audited — nothing is claimed about them, neither that they passed "
+            f"nor that they failed. Zero findings here is not a clean bill of health "
+            f"for the repository; it is a clean bill of health for the range."
+            if below else None),
         "truncated": truncated,
         "truncation_note": (
             f"⚠ AUDIT CAPPED at the most recent {limit} commits of {rev_range}. Earlier "

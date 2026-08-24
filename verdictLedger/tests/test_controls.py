@@ -943,3 +943,59 @@ def test_the_genesis_config_value_is_dead_and_stays_dead(ledger):
                          "config" / "policy.v1.json").read_text(encoding="utf-8-sig"))
     assert "commit" not in policy.get("genesis", {}), (
         "the dead config field is back; the floor has two sources again")
+
+
+def test_crossref_says_how_much_it_did_not_audit(ledger, tmp_path):
+    """⭐⭐ A CORRECTION TO ADVICE, not just a defect. I told Tim twice that gating the
+    tip was survivable because "crossref will still report those commits as NOT_RUN —
+    the audit keeps saying they went unexamined." Measured 2026-08-23: it audits 23 of
+    174 unpushed commits and reports NOTHING about the 151 below the floor. All three
+    counts read zero.
+
+    §9a scopes it that way deliberately and correctly — an unactionable warning on
+    every run trains people to scroll past it. But "reports nothing before the floor"
+    was implemented as SILENCE, and a reader seeing three zeroes concludes the history
+    is clean.
+
+    ⚠ This changes no policy. The floor still bounds what is JUDGED; it only stops the
+    result reading as a clean bill of health over commits nobody looked at.
+    """
+    import subprocess
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True,
+                   capture_output=True)
+    for args in (["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                 ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    shas = []
+    for i in range(4):
+        (tmp_path / "f.md").write_text(f"rev {i}", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", f"c{i}"], cwd=tmp_path, check=True,
+                       capture_output=True)
+        shas.append(subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path,
+                                   capture_output=True, text=True).stdout.strip())
+
+    out = crossref_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
+                             since=shas[1])          # floor above two earlier commits
+    assert out["commits_below_floor"] == 2
+    assert "COUNTS BELOW DESCRIBE 2 COMMIT(S) ONLY" in out["floor_note"]
+    assert "not a clean bill of health for the repository" in out["floor_note"]
+
+
+def test_no_floor_note_when_nothing_is_below_it(ledger, tmp_path):
+    """⚠ …and it must not cry wolf when the audit really did cover everything."""
+    import subprocess
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True,
+                   capture_output=True)
+    for args in (["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                 ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "f.md").write_text("only", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "c0"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    first = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path,
+                           capture_output=True, text=True).stdout.strip()
+    out = crossref_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
+                             since=first)
+    assert out["commits_below_floor"] == 1     # the floor commit itself
