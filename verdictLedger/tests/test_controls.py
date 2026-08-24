@@ -1078,3 +1078,29 @@ def test_the_other_three_review_gates_still_block(ledger):
     for step in ("rely", "editorial", "adversary"):
         assert reqs[step]["required"] is True, f"{step} inherited prior_art's exemption"
         assert reqs[step]["scope"], f"{step} lost its scope"
+
+
+def test_the_vendored_allowlist_is_a_declared_switch(ledger):
+    """⭐ STRONGER THAN THE BASELINE HOLE OF REQ-10, and found the same way — by
+    executing something. ZeroParadox planted a DENIAL, `check_pov` exited 1; one
+    appended line in `vendored_files.txt` and it exited 0, AND NO SUBJECT MOVED.
+
+    An allowlist removes files from scope entirely rather than grandfathering sites,
+    so the record does not merely go unstale — the thing it covered stops existing.
+    Eight checkers were switched off by a file none of them named.
+    """
+    V = "tools/verify/vendored_files.txt"
+    reqs = ledger.config.requirements("push")
+    for step in ("check_classes", "check_encoding", "check_modal", "check_moved",
+                 "check_pov", "check_prose", "guards"):
+        assert V in reqs[step]["switches"], f"{step} can be switched off silently"
+
+
+def test_declaring_a_switch_did_not_displace_an_existing_one(ledger):
+    """⚠ THE MISTAKE THIS NEARLY WAS. Six of the seven already declared a baseline
+    switch; writing the allowlist over the top would have removed the REQ-10 protection
+    while adding the REQ-31 one, and both records would still validate."""
+    reqs = ledger.config.requirements("push")
+    assert "tools/verify/pov_baseline.txt" in reqs["check_pov"]["switches"]
+    assert "tools/verify/encoding_whitelist.txt" in reqs["check_encoding"]["switches"]
+    assert len(reqs["check_pov"]["switches"]) == 2

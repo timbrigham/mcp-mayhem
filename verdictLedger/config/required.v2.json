@@ -21,7 +21,8 @@
     "check_encoding": {
       "family": "mechanical",
       "switches": [
-        "tools/verify/encoding_whitelist.txt"
+        "tools/verify/encoding_whitelist.txt",
+        "tools/verify/vendored_files.txt"
       ],
       "scope": [
         "*"
@@ -59,25 +60,29 @@
     "check_prose": {
       "family": "mechanical",
       "switches": [
-        "tools/verify/prose_baseline.txt"
+        "tools/verify/prose_baseline.txt",
+        "tools/verify/vendored_files.txt"
       ]
     },
     "check_pov": {
       "family": "mechanical",
       "switches": [
-        "tools/verify/pov_baseline.txt"
+        "tools/verify/pov_baseline.txt",
+        "tools/verify/vendored_files.txt"
       ]
     },
     "check_modal": {
       "family": "mechanical",
       "switches": [
-        "tools/verify/modal_baseline.txt"
+        "tools/verify/modal_baseline.txt",
+        "tools/verify/vendored_files.txt"
       ]
     },
     "check_classes": {
       "family": "mechanical",
       "switches": [
-        "tools/verify/class_baseline.txt"
+        "tools/verify/class_baseline.txt",
+        "tools/verify/vendored_files.txt"
       ]
     },
     "check_invariants": {
@@ -101,7 +106,10 @@
       ]
     },
     "check_moved": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/vendored_files.txt"
+      ]
     },
     "check_negatives": {
       "family": "mechanical",
@@ -127,7 +135,10 @@
       "reason": "audits the 19 checker modules, not the tooling directory; stays dynamic because a checker added later matches check_*.py on its own"
     },
     "guards": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "switches": [
+        "tools/verify/vendored_files.txt"
+      ]
     },
     "decls": {
       "family": "mechanical"
@@ -211,5 +222,6 @@
       "reason": "a removal is a removal FROM those baselines"
     }
   },
-  "_switches_v15": "A subject set is everything the verdict DEPENDS ON, not merely everything the checker read. Found by ZeroParadox 2026-08-23: check_pov recorded 291 subjects and NOT pov_baseline.txt, so grandfathering a violation into that baseline left the record reading SATISFIED -- every file it named was unchanged. V15 refuses a record that omits a declared switch, which turns a convention into a contract: with the switch as a subject, editing a baseline moves a blob the record names, the key goes STALE, and the checker re-runs. Declaring switches is NOT a narrowing and costs no reason -- it makes a type stricter."
+  "_switches_v15": "A subject set is everything the verdict DEPENDS ON, not merely everything the checker read. Found by ZeroParadox 2026-08-23: check_pov recorded 291 subjects and NOT pov_baseline.txt, so grandfathering a violation into that baseline left the record reading SATISFIED -- every file it named was unchanged. V15 refuses a record that omits a declared switch, which turns a convention into a contract: with the switch as a subject, editing a baseline moves a blob the record names, the key goes STALE, and the checker re-runs. Declaring switches is NOT a narrowing and costs no reason -- it makes a type stricter.",
+  "_vendored_allowlist_2026_08_23": "vendored_files.txt switched EIGHT checkers off and was named by none of them -- found by ZeroParadox's /rely trial: a planted DENIAL made check_pov exit 1, one appended allowlist line made it exit 0, AND NO SUBJECT MOVED. Stronger than the baseline hole of REQ-10, because an allowlist removes files from scope entirely rather than grandfathering sites -- so the record does not merely go unstale, the thing it covered stops existing. Declared for the seven whose latest record already names it; V15 now holds them there."
 }
