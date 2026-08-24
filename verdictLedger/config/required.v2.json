@@ -143,7 +143,18 @@
         "push",
         "tag"
       ],
-      "reason": "prose gate; nothing is published at commit time"
+      "reason": "the published prose surface. The exclusions are policy, not tidying: CLAUDE.md exempts tools/verify/** and tools/process/** from both prose gates, and ZeroParadox/*.md are ride-along docs beside their .lean, reviewed as corpus rather than as publications.",
+      "scope": [
+        "*.md",
+        "scripts/build_*.py",
+        "scripts/PDF_Rendering_Standards.md"
+      ],
+      "scope_exclude": [
+        "ZeroParadox/*.md",
+        "tools/*.md",
+        ".claude/*.md",
+        ".github/*.md"
+      ]
     },
     "adversary": {
       "family": "review",
@@ -151,7 +162,18 @@
         "push",
         "tag"
       ],
-      "reason": "publication gate; nothing is published at commit time"
+      "reason": "the published prose surface. The exclusions are policy, not tidying: CLAUDE.md exempts tools/verify/** and tools/process/** from both prose gates, and ZeroParadox/*.md are ride-along docs beside their .lean, reviewed as corpus rather than as publications.",
+      "scope": [
+        "*.md",
+        "scripts/build_*.py",
+        "scripts/PDF_Rendering_Standards.md"
+      ],
+      "scope_exclude": [
+        "ZeroParadox/*.md",
+        "tools/*.md",
+        ".claude/*.md",
+        ".github/*.md"
+      ]
     },
     "prior_art": {
       "family": "review",
@@ -159,7 +181,8 @@
         "push",
         "tag"
       ],
-      "reason": "publication gate; nothing is published at commit time"
+      "reason": "publication gate; nothing is published at commit time",
+      "_scope_withheld_2026_08_23": "NOT SCOPED, deliberately. ZeroParadox proposed ZeroParadox/*.lean (218 files) and flagged in the same message that it would OVERCLAIM: that glob is prior_art's TRIGGER surface (a new .lean, or >=50 inserted lines), not its REVIEW surface. Its brief scopes it to synthesis and bridge claims and explicitly excludes claims that merely invoke a named classical theorem. A record naming 218 files would assert a reviewer examined the prior art for all of them, which no honest run does. Unscoped it stays MISSING and blocks -- which is the honest failure, since a wrong scope would let a review claim coverage it does not have. Needs a design answer, not a glob."
     },
     "release_ready": {
       "family": "review",
@@ -170,7 +193,11 @@
     },
     "rely": {
       "family": "review",
-      "_why": "the /rely round signal. Read by batch.py, ship.py AND guards.py; `rely_cleared.txt` was its only representation, so retiring the signal path without this type deletes the coverage rather than migrating it."
+      "_why": "the /rely round signal. Read by batch.py, ship.py AND guards.py; `rely_cleared.txt` was its only representation, so retiring the signal path without this type deletes the coverage rather than migrating it.",
+      "scope": [
+        "tools/verify/*"
+      ],
+      "reason": "governs the verification tooling. Its own brief FORBIDS running at full breadth -- rely.md step 1: 'SCOPE IT ... Do not run it at full' -- so with no scope the admission set demanded 477 paths from a gate that is not permitted to examine them. It was unsatisfiable by construction, not merely expensive."
     },
     "claim_review": {
       "family": "review",

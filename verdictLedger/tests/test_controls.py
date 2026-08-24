@@ -999,3 +999,38 @@ def test_no_floor_note_when_nothing_is_below_it(ledger, tmp_path):
     out = crossref_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
                              since=first)
     assert out["commits_below_floor"] == 1     # the floor commit itself
+
+
+def test_the_review_gates_are_scoped_to_what_they_govern(ledger):
+    """⭐ Tim chose the tip whole-state route, and his practical question was how you
+    run an agent round corpus-wide. You do not — you declare what each gate governs.
+
+    `claim_review` was the worked example: the only review-family type reading
+    SATISFIED, and the only structural difference was a declared scope. The other four
+    demanded all 477 paths from a reviewer who was never going to read 477 files, which
+    is why they were permanently MISSING — nothing to do with how hard the review is.
+    """
+    reqs = ledger.config.requirements("push")
+    assert reqs["rely"]["scope"] == ["tools/verify/*"]
+    assert "FORBIDS running at full breadth" in reqs["rely"]["reason"]
+    for step in ("editorial", "adversary"):
+        assert reqs[step]["scope"] == ["*.md", "scripts/build_*.py",
+                                       "scripts/PDF_Rendering_Standards.md"]
+        assert reqs[step]["scope_exclude"] == ["ZeroParadox/*.md", "tools/*.md",
+                                               ".claude/*.md", ".github/*.md"]
+
+
+def test_prior_art_stays_unscoped_because_a_glob_would_overclaim(ledger):
+    """⛔ THE ONE I REFUSED. ZeroParadox proposed `ZeroParadox/*.lean` (218 files) and
+    flagged in the same message that it would overclaim: that glob is prior_art's
+    TRIGGER surface, not its REVIEW surface. Its brief scopes it to synthesis and
+    bridge claims and excludes claims that merely invoke a named classical theorem.
+
+    A record naming 218 files would assert a reviewer examined the prior art for all
+    of them, which no honest run does. Unscoped it stays MISSING and blocks — the
+    honest failure, because a wrong scope would let a review claim coverage it does
+    not have. A glob cannot answer a claim-shaped question.
+    """
+    spec = ledger.config.required["types"]["prior_art"]
+    assert "scope" not in spec, "prior_art was scoped on a trigger surface"
+    assert "OVERCLAIM" in spec["_scope_withheld_2026_08_23"]
