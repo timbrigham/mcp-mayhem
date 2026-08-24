@@ -1020,17 +1020,61 @@ def test_the_review_gates_are_scoped_to_what_they_govern(ledger):
                                                ".claude/*.md", ".github/*.md"]
 
 
-def test_prior_art_stays_unscoped_because_a_glob_would_overclaim(ledger):
-    """⛔ THE ONE I REFUSED. ZeroParadox proposed `ZeroParadox/*.lean` (218 files) and
-    flagged in the same message that it would overclaim: that glob is prior_art's
-    TRIGGER surface, not its REVIEW surface. Its brief scopes it to synthesis and
-    bridge claims and excludes claims that merely invoke a named classical theorem.
+def test_prior_art_is_never_scoped_by_a_glob(ledger):
+    """⛔ THE REFUSAL THAT SURVIVED THE DECISION. ZeroParadox proposed
+    `ZeroParadox/*.lean` (218 files) and flagged in the same message that it would
+    overclaim: that glob is prior_art's TRIGGER surface, not its REVIEW surface. A
+    record naming 218 files would assert a reviewer examined the prior art for all of
+    them, which no honest run does.
 
-    A record naming 218 files would assert a reviewer examined the prior art for all
-    of them, which no honest run does. Unscoped it stays MISSING and blocks — the
-    honest failure, because a wrong scope would let a review claim coverage it does
-    not have. A glob cannot answer a claim-shaped question.
+    Tim then narrowed it as acknowledged debt — which resolves whether it BLOCKS, and
+    changes nothing about whether a glob could have expressed it. If a later pass
+    reaches for the trigger surface again, this fails.
     """
     spec = ledger.config.required["types"]["prior_art"]
-    assert "scope" not in spec, "prior_art was scoped on a trigger surface"
-    assert "OVERCLAIM" in spec["_scope_withheld_2026_08_23"]
+    assert "scope" not in spec, "prior_art was scoped on its trigger surface"
+    assert "overclaim" in spec["reason"]
+
+
+def test_prior_art_is_narrowed_as_DEBT_not_removed(ledger):
+    """⚠ A NARROWING IS A WEAKENING, so it carries its reason and its fences.
+
+    Tim's decision: prior_art has had disproportionate attention and becomes
+    acknowledged debt, re-engaged when `.lean` files are next touched or as a batch.
+    Expressed in the REGISTRY — §12-0-ter: "not quietly dropping it from
+    admission.v1.json, which is how a gate disappears without a diff anyone reads."
+
+    The type stays REGISTERED and its records stay valid, so promoting it later costs
+    one line. That is the difference between a debt and a deletion.
+    """
+    spec = ledger.config.required["types"]["prior_art"]
+    assert spec["actions"] == []
+    assert "ACKNOWLEDGED DEBT" in spec["reason"]
+    assert ledger.config.is_registered("prior_art"), "the type was removed, not narrowed"
+    for action in ("commit", "push", "tag"):
+        assert ledger.config.requirements(action)["prior_art"]["required"] is False
+
+
+def test_the_prior_art_narrowing_records_its_two_fences(ledger):
+    """⚠ THE FENCES ARE THE POINT, because a weakening travels if nothing stops it.
+
+    (1) It does not retire trigger 5 — a new `.lean` or ≥50 inserted lines still owes
+        a prior-art search. Discipline, where it was briefly a gate, and this project's
+        record is that discipline leaks.
+    (2) It is not precedent for rely/editorial/adversary. The distinguishing test is
+        whether a glob can express WHAT THE REVIEWER READ — yes for those three, no for
+        this one. A property of the gate, not a shortage of effort.
+    """
+    note = ledger.config.required["types"]["prior_art"]["_debt_not_closure_2026_08_23"]
+    assert "does NOT retire trigger 5" in note
+    assert "NOT precedent" in note
+    assert "CAN A GLOB EXPRESS WHAT THE REVIEWER READ" in note
+
+
+def test_the_other_three_review_gates_still_block(ledger):
+    """⭐ THE CONTROL THAT KEEPS THE NARROWING FROM TRAVELLING. If a later pass reads
+    prior_art's exemption as "review gates are hard, narrow them", this fails."""
+    reqs = ledger.config.requirements("push")
+    for step in ("rely", "editorial", "adversary"):
+        assert reqs[step]["required"] is True, f"{step} inherited prior_art's exemption"
+        assert reqs[step]["scope"], f"{step} lost its scope"

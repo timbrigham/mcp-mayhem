@@ -177,12 +177,9 @@
     },
     "prior_art": {
       "family": "review",
-      "actions": [
-        "push",
-        "tag"
-      ],
-      "reason": "publication gate; nothing is published at commit time",
-      "_scope_withheld_2026_08_23": "NOT SCOPED, deliberately. ZeroParadox proposed ZeroParadox/*.lean (218 files) and flagged in the same message that it would OVERCLAIM: that glob is prior_art's TRIGGER surface (a new .lean, or >=50 inserted lines), not its REVIEW surface. Its brief scopes it to synthesis and bridge claims and explicitly excludes claims that merely invoke a named classical theorem. A record naming 218 files would assert a reviewer examined the prior art for all of them, which no honest run does. Unscoped it stays MISSING and blocks -- which is the honest failure, since a wrong scope would let a review claim coverage it does not have. Needs a design answer, not a glob."
+      "actions": [],
+      "reason": "scoped to synthesis and bridge CLAIMS, not to files. Its trigger surface (ZeroParadox/*.lean, 218 files) is not its review surface, so no glob expresses what a run actually covers and a file-keyed record would overclaim. Narrowed 2026-08-23 by Tim's decision as ACKNOWLEDGED DEBT, not as a solved problem: re-engaged when .lean files are next touched, or as a dedicated batch. The gate is NOT retired and the type is NOT removed -- records remain valid and the type stays registered, so promoting it later costs one line.",
+      "_debt_not_closure_2026_08_23": "TWO FENCES, because a narrowing is a weakening and this one must not travel. (1) It does NOT retire trigger 5: a new .lean file or >=50 inserted .lean lines still owes a prior-art search under CLAUDE.md. What changed is that the obligation stops being enforced by a per-push key it cannot express -- DISCIPLINE where it was briefly a gate, and this project's own record is that discipline leaks. (2) It is NOT precedent for rely / editorial / adversary, which are file-shaped, now scoped to 56/59/59, and stay blocking. The distinguishing test is CAN A GLOB EXPRESS WHAT THE REVIEWER READ -- yes for those three, no for this one. That is a property of the gate, not a shortage of effort."
     },
     "release_ready": {
       "family": "review",

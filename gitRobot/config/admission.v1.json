@@ -49,7 +49,6 @@
       "pdf_coupling",
       "editorial",
       "adversary",
-      "prior_art",
       "rely",
       "claim_review"
     ],
@@ -72,12 +71,12 @@
       "pdf_coupling",
       "editorial",
       "adversary",
-      "prior_art",
       "release_ready",
       "rely",
       "claim_review"
     ]
   },
   "_req2_2026_08_23": "rely and claim_review admitted at every action on ZeroParadox's request. Both were live push-blocking properties whose ONLY representation was a *_cleared.txt file, so retiring the signal path without them would have deleted coverage rather than migrated it. cr_cleared.txt is the sharper loss: without a claim_review type, deleting a check_frozen baseline entry becomes free.",
-  "_check_frozen_retired_2026_08_23": "REMOVED from every action, mirroring the registry's actions:[] narrowing -- the same shape as `genesis`, which is admitted by nothing because the registry narrows it with a reason. The REASON lives in required.v2.json and not here: a list of names cannot explain itself, and a gate that vanished from a list nobody diffed is how a bar drops silently. check_frozen remains REGISTERED and its records remain valid; it simply no longer gates."
+  "_check_frozen_retired_2026_08_23": "REMOVED from every action, mirroring the registry's actions:[] narrowing -- the same shape as `genesis`, which is admitted by nothing because the registry narrows it with a reason. The REASON lives in required.v2.json and not here: a list of names cannot explain itself, and a gate that vanished from a list nobody diffed is how a bar drops silently. check_frozen remains REGISTERED and its records remain valid; it simply no longer gates.",
+  "_prior_art_narrowed_2026_08_23": "REMOVED here only because the REGISTRY narrowed it to actions: [] with a stated reason -- admission mirrors the registry, it never carries the exception. The reason lives in required.v2.json: prior_art is claim-shaped, no glob expresses what a run covers, and Tim recorded it as ACKNOWLEDGED DEBT rather than solved. Same shape as genesis and check_frozen."
 }
