@@ -143,21 +143,6 @@ def build(*, config, records, action: str, files: dict,
                          "needs_rerun": False, "rerun_reason": None})
             continue
 
-        # ⚠⚠ THE VERDICT MUST COME FROM A RECORD THAT EXAMINED *THESE* BYTES.
-        # Keeping one `record` for both covered and stale hits let a stale record
-        # supply the verdict for a step that also had a covering one -- whichever
-        # path happened to be iterated first won.
-        covered, stale = 0, 0
-        covered_rec, stale_rec = None, None
-        for path, sha in files.items():
-            rec = by_content.get((step, path, sha))
-            if rec is not None:
-                covered += 1
-                covered_rec = covered_rec or rec
-            elif (step, path) in by_path:
-                # examined, but never at THIS content
-                stale += 1
-                stale_rec = stale_rec or by_path[(step, path)]
         # ⭐⭐ HOW MUCH OF THE SCOPE WAS NEVER EXAMINED AT ALL.
         #
         # Measured 2026-08-23: a step that examined ONE file out of 201 reported
@@ -224,6 +209,50 @@ def build(*, config, records, action: str, files: dict,
                           and p not in in_scope and p not in switch_set
                           and p not in ev_set)
 
+        # ⚠⚠ THE VERDICT MUST COME FROM A RECORD THAT EXAMINED *THESE* BYTES.
+        # Keeping one `record` for both covered and stale hits let a stale record
+        # supply the verdict for a step that also had a covering one -- whichever
+        # path happened to be iterated first won.
+        #
+        # ⭐⭐ LED-2, measured by ZeroParadox 2026-08-24: THE DENOMINATOR IS THE
+        # STEP'S SCOPE, NEVER EVERY FILE. This loop used to walk all of `files`, so a
+        # path the step had examined at some earlier basis but which its declared
+        # `scope`/`scope_exclude` now puts OUTSIDE it still counted as `stale` --
+        # with the record's blob IDs 4/4 IDENTICAL to the index, the row returned
+        # STALE, "recorded against different bytes", remedy "re-run".
+        #
+        # Every part of that was wrong, and the remedy was the worst part: a checker
+        # that correctly honours its own scope will never examine that path again, so
+        # RE-RUNNING IS THE ONE ACTION THAT CAN NEVER CLEAR IT. It costs rounds and
+        # teaches the operator that the gate is broken rather than that the scope is.
+        # STALE and UNSCOPED are different facts with different remedies -- the same
+        # collapse-of-distinct-statuses this module's own docstring forbids.
+        #
+        # ⚠ THIS IS A WEAKENING AND IT IS NAMED AS ONE. Out-of-scope residue used to
+        # block an action; it no longer does. That block was unclearable, so it was
+        # never a gate, only a wedge -- but the residue does not go quiet: it is on
+        # every row as `subjects_unscoped`, in the inventory as `unscoped`, and it now
+        # carries the MISSING row's `why` below. The scope is the thing to look at,
+        # and `LED-1` is the standing example of a scope that is wrong.
+        #
+        # ⚠ SWITCHES AND V16 EVIDENCE ARE IN THE DENOMINATOR, not the scope. Both are
+        # SUPPOSED to sit outside what a checker scans, and both must still be able to
+        # stale the key -- that is the entire mechanism of V15 and of V16's expiry.
+        # Dropping them here would silently disarm two rules from a third one's fix.
+        judged = [p for p in files
+                  if p in in_scope or p in switch_set or p in ev_set]
+        covered, stale = 0, 0
+        covered_rec, stale_rec = None, None
+        for path in judged:
+            rec = by_content.get((step, path, files[path]))
+            if rec is not None:
+                covered += 1
+                covered_rec = covered_rec or rec
+            elif (step, path) in by_path:
+                # examined, but never at THIS content
+                stale += 1
+                stale_rec = stale_rec or by_path[(step, path)]
+
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
                            if (step, p) in legacy_tips), None)
@@ -239,6 +268,17 @@ def build(*, config, records, action: str, files: dict,
                    "compared to a git blob id; re-record it (or let it age out)")
         elif covered == 0 and stale == 0:
             status = "MISSING"
+            if unscoped:
+                # ⭐ LED-2's other half. "Never ran" and "ran, but everything it read
+                # is outside its declared scope" are different facts, and only the
+                # second one is fixed by editing the registry. Naming it here is what
+                # stops the operator re-running a checker that cannot help.
+                why = (f"nothing IN SCOPE has been examined -- but this step DID record "
+                       f"{len(unscoped)} path(s) that its `scope`/`scope_exclude` puts "
+                       f"outside it ({', '.join(unscoped[:3])}"
+                       f"{', …' if len(unscoped) > 3 else ''}). If those are the paths "
+                       f"it is meant to cover, the SCOPE is what needs fixing; "
+                       f"re-running cannot move this row.")
         elif covered and covered_rec.get("verdict") == "FAIL":
             status = "FAIL"
         elif covered and covered_rec.get("verdict") == "UNDECIDED":

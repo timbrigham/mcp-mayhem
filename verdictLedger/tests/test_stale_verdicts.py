@@ -122,3 +122,124 @@ def test_the_crossref_examined_filter_excludes_stale():
     src = inspect.getsource(crossref_mod.check)
     assert '("SATISFIED", "FAIL", "UNDECIDED")' in src
     assert '("SATISFIED", "STALE", "FAIL", "UNDECIDED")' not in src
+
+
+# -- ⭐⭐ LED-2: STALE and UNSCOPED are different facts -------------------------
+#
+# Measured by ZeroParadox 2026-08-24. `editorial`/`adversary` exclude `.claude/*.md`,
+# so the twelve gate briefs sit outside both prose gates. A review recorded over those
+# briefs -- blob IDs 4/4 IDENTICAL to the index -- came back STALE, "recorded against
+# different bytes", remedy "re-run".
+#
+# The bytes had not moved. The subjects were out of scope. And re-running is the ONE
+# action that can never clear it, because a checker honouring its scope will never
+# examine those paths again. A remedy that cannot work costs rounds and teaches the
+# operator that the gate is broken rather than that the scope is.
+#
+# ⚠ `check_hashes` is used throughout below because it is the shipped registry's only
+# type that declares a scope, an exclusion AND a switch outside that scope -- so one
+# fixture exercises the denominator from all three sides. A synthetic type would not
+# have caught the switch case.
+
+SWITCH = "tools/verify/shared_build_baseline.txt"
+EXCLUDED = "scripts/build_manifest.py"          # in `scope_exclude`, by name
+MODULE = "tools/verify/check_hashes.py"
+
+
+def _hashes(subjects, evidence=(), verdict="PASS"):
+    return {"id": "check_hashes@t#0", "step": "check_hashes", "verdict": verdict,
+            "revision": 0, "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": p, "git_blob_id": b} for p, b in subjects],
+            "evidence": [{"path": p, "git_blob_id": b} for p, b in evidence],
+            "basis": {"kind": "tree", "value": "t"}}
+
+
+def _row(ledger, records, files):
+    inv = inventory_mod.build(config=ledger.config, records=records, action="push",
+                              files=files, ref="t", admission=["check_hashes"])
+    return next(r for r in inv["rows"] if r["step"] == "check_hashes"), inv
+
+
+def test_an_out_of_scope_subject_does_not_make_a_step_stale(ledger):
+    """⭐⭐ THE HEADLINE. The step examined a path its own `scope_exclude` names.
+    That path moving is not this step going stale -- it is a scope that does not
+    match what the checker read."""
+    row, _ = _row(ledger, [_hashes([(EXCLUDED, "old")])], {EXCLUDED: "new"})
+    assert row["status"] != "STALE"
+    assert row["status"] == "MISSING"
+
+
+def test_the_row_says_the_scope_is_the_problem_not_the_run(ledger):
+    """⚠ Silence would be a different bug. MISSING alone reads "never ran", and the
+    operator runs it -- forever. The row must name the residue and say what re-running
+    can and cannot do."""
+    row, inv = _row(ledger, [_hashes([(EXCLUDED, "old")])], {EXCLUDED: "new"})
+    assert EXCLUDED in row["why"]
+    assert "scope" in row["why"] and "re-running cannot move this row" in row["why"]
+    assert inv["unscoped"] == [EXCLUDED]
+
+
+def test_every_in_scope_byte_identical_still_read_as_moved(ledger):
+    """⭐ THE REPORTED SHAPE: "recorded against different bytes" while the bytes it is
+    supposed to judge had not moved at all. It takes the COMPOUND case to reproduce --
+    an in-scope subject matching exactly, plus out-of-scope residue that has moved. The
+    residue supplied `stale`, `stale` beat SATISFIED, and the row announced a staleness
+    that was not about anything in scope.
+
+    ⚠ An earlier version of this test used the out-of-scope path ALONE and passed
+    against the unfixed code, because a lone matching subject reads covered. It was
+    testing a proxy. Left in this shape, and said out loud, so the next reader does not
+    re-simplify it back.
+    """
+    rec = [_hashes([("register.md", "same"), (EXCLUDED, "old")])]
+    row, _ = _row(ledger, rec, {"register.md": "same", EXCLUDED: "new"})
+    assert row["status"] == "SATISFIED"
+    assert not (row["why"] and "different bytes" in row["why"])
+
+
+def test_an_in_scope_path_still_goes_stale(ledger):
+    """⚠⚠ THE CONTROL THAT KEEPS THE FIX FROM BEING A HOLE. Narrowing the denominator
+    must not stop a step's actual corpus from staling it."""
+    row, inv = _row(ledger, [_hashes([("register.md", "old")])], {"register.md": "new"})
+    assert row["status"] == "STALE"
+    assert inv["complete"] is False
+
+
+def test_a_switch_outside_the_scope_still_stales_the_key(ledger):
+    """⭐⭐ V15's WHOLE MECHANISM, and the denominator is where it could be disarmed
+    by accident. `shared_build_baseline.txt` is a declared switch and is NOT in
+    check_hashes' scope -- if the fix above narrowed to `scope` alone, editing an
+    exemption list would silently stop staling the key and a suppression would land
+    unverified. That is the defect V15 exists to prevent, re-entering through the fix
+    for a different one."""
+    rec = [_hashes([("register.md", "a"), (SWITCH, "b")])]
+    fresh, _ = _row(ledger, rec, {"register.md": "a", SWITCH: "b"})
+    edited, inv = _row(ledger, rec, {"register.md": "a", SWITCH: "c"})
+    assert fresh["status"] == "SATISFIED"
+    assert edited["status"] == "STALE"
+    assert inv["complete"] is False
+
+
+def test_v16_evidence_outside_the_scope_still_stales_the_key(ledger):
+    """⭐⭐ THE SAME HAZARD FOR V16. A checker's own module is outside its scanned
+    scope by construction, so if the denominator were `scope` alone, editing a checker
+    would stop expiring its records -- removing the only non-forgeable half of V16."""
+    rec = [_hashes([("register.md", "a")], evidence=[(MODULE, "m")])]
+    fresh, _ = _row(ledger, rec, {"register.md": "a", MODULE: "m"})
+    edited, _ = _row(ledger, rec, {"register.md": "a", MODULE: "n"})
+    assert fresh["status"] == "SATISFIED"
+    assert edited["status"] == "STALE"
+
+
+def test_an_unscoped_step_still_owes_the_whole_tree(ledger):
+    """⚠ A type that has not said what it examines owes every path, and this fix must
+    not quietly turn that default around. `decls` declares no scope, so its
+    denominator is the tree."""
+    rec = [{"id": "decls@t#0", "step": "decls", "verdict": "PASS", "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": "anything.md", "git_blob_id": "old"}],
+            "basis": {"kind": "tree", "value": "t"}}]
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="push",
+                              files={"anything.md": "new"}, ref="t",
+                              admission=["decls"])
+    assert next(r for r in inv["rows"] if r["step"] == "decls")["status"] == "STALE"
