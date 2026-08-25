@@ -165,6 +165,49 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                     f"mechanical verdict must name the module the registry says "
                     f"implements it, or the evidence field certifies some other file.")
 
+    # V17 — ⭐⭐ A DELEGATED VERDICT NAMES THE BRIEF IT RAN UNDER.
+    # Tim, 2026-08-25: "the entire idea having these agents is so that I can delegate
+    # trust to them." Before this, no delegated review could record a PASS at all --
+    # `agreement` refuses one round (V3), `mechanical` is a lie about a computation,
+    # and `signature` means a HUMAN accepted. Measured the same day: NINE agent review
+    # records in the stream, every one a FAIL.
+    #
+    # ⚠ THE ACCOUNTABILITY IS THE BRIEF, NOT A PROCESS IDENTITY. §2 rules out keys and
+    # `sign` concedes attribution is not authentication, so "prove you are that agent"
+    # was never on the table. What IS checkable: which instructions governed the round,
+    # and whether they have changed since. `evidence` names the brief's blob, so
+    # `inventory` stales the key the moment the brief is edited and the gate re-runs.
+    # A delegated verdict cannot outlive the instructions it was made under.
+    #
+    # ⚠ STRICT FROM DAY ONE, and this is the one place that is free. A NEW enum value
+    # has no existing traffic to brick -- every rule here could only ever refuse a
+    # record that does not exist yet. V16 needed a relaxation and a cutover precisely
+    # because it constrained records already flowing.
+    if how == "delegated":
+        who = (decided.get("who") or "").strip()
+        if not who:
+            out.append(
+                "V17: how 'delegated' requires `who` — the gate or brief that judged "
+                "this. A finding attributed to nobody is the anonymous-approval hole "
+                "V5 closes, arriving through the review door instead of the human one.")
+        if record.get("tier") != "A":
+            # ⚠ The NARROW case of LED-7 (tier and `how` disagreeing), closed here for
+            # `delegated` only. A delegated round is an AI round: 'M' claims a
+            # computation and 'H' claims a person. LED-7 stays open for the rest --
+            # one moving part at a time.
+            out.append(
+                f"V17: how 'delegated' is an AI round, so tier must be 'A', got "
+                f"{record.get('tier')!r}. 'M' claims a computation and 'H' claims a "
+                f"person decided; both are a different verdict than the one that "
+                f"happened.")
+        if verdict == "PASS" and not (record.get("evidence") or []):
+            out.append(
+                "V17: a delegated PASS must carry `evidence` naming the brief it ran "
+                "under — [{path, git_blob_id}] for e.g. `.claude/commands/<gate>.md`. "
+                "That is what makes the verdict expire when the brief changes, and it "
+                "is the whole of the accountability: not who ran it, but under which "
+                "instructions, over which bytes.")
+
     # V1 — a silent fallback to a permissive basis is FRZ-4. Recording it as
     # FALLBACK is what makes basis drift visible without probing for it.
     if basis.get("resolved_from") not in schema.RESOLVED_FROM:

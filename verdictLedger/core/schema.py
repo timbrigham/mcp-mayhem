@@ -59,12 +59,17 @@ RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 # with `passes: 1` appends and reads SATISFIED, because V3 never fires on it. So a
 # single-pass review CAN satisfy a gate — via `signature`, and only with a signatory.
 #
-# THE TRAP THAT FOLLOWS, and it is the reason this paragraph exists: the four review
-# gates each run ONE agent, so `agreement` refuses them (V3 wants 3 unanimous). The
-# tempting fix is to record `signature` with the AGENT as `who`. Do not. `signature`
-# means a HUMAN accepted a verdict the round did not produce; putting an agent's name
-# there claims an accountability that does not exist, and is the anonymous-approval
-# hole V5 closes with a robot's name written in it.
+# THE TRAP THAT FOLLOWS, and it is still a trap: the review gates each run ONE agent,
+# so `agreement` refuses them (V3 wants 3 unanimous). The tempting fix is to record
+# `signature` with the AGENT as `who`. Do not, and this is now enforced by V17 rather
+# than asked for: `signature` means a HUMAN accepted a verdict the round did not
+# produce, and putting an agent's name there claims an accountability that does not
+# exist. Measured 2026-08-25: the server ACCEPTED `signature` with `who:
+# "adversary-agent"` -- LED-6's shape one field over, and it was the only route to a
+# review PASS that worked, so it was the one an agent under pressure would take.
+#
+# ⭐ THE ROUTE FOR A DELEGATED AGENT IS `delegated`, which is honest about being one
+# round and names the brief it ran under.
 #
 # The honest shapes for a single agent round are: the agent produces findings and a
 # PERSON signs (who = the person, which is what Tim's cheap route is for), or the gate
@@ -83,7 +88,35 @@ RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 # verdict to content by git blob id. §2 rules a key out — a local key is readable by
 # the actor it defends against, and the value here is capability removal and
 # auditability, not authentication.
-DECIDED_HOW = ("mechanical", "agreement", "signature", "override")
+#   delegated    ONE agent round, judged under a NAMED BRIEF, claiming no consensus.
+#                V17 requires `who` (which gate) and, on a PASS, `evidence` naming the
+#                brief's blob. Added 2026-08-25.
+#
+# ⚠⚠ THE COMMENT ABOVE USED TO REFUSE THIS VALUE, AND ITS ARGUMENT WAS A NON-SEQUITUR.
+# It said a fifth value for "one agent judged it" would "re-open precisely what V3
+# exists to close — single-pass AI verdicts wearing a consensus badge — under a new
+# name." V3 closes MISLABELLING: a single pass claiming `agreed == passes >= 3`. The
+# defect is the false consensus claim, not the fact that an agent judged. A value that
+# says honestly "one delegated agent, under this brief" wears no badge at all. V3 is
+# untouched and still closes exactly what it closed.
+#
+# ⚠⚠ AND THE ROUTE IT RECOMMENDED INSTEAD WAS TRANSITIONAL SCAFFOLDING READ AS DESIGN.
+# "A human accepting... the sanctioned cheap route WHILE EMITTERS ARE LANDING" — its
+# own expiry condition, written into it. The emitters landed 2026-08-25. Meanwhile the
+# stream proved the cost: NINE agent review records, every one a FAIL. No delegated
+# review had ever recorded a PASS, because there was no honest way to.
+#
+# ⚠ Tim, 2026-08-25: "the entire idea having these agents is so that I can delegate
+# trust to them." That intent appeared in NEITHER contract, which is why a stale
+# comment could quietly overrule it.
+#
+# ⚠ ACCOUNTABILITY WITHOUT AUTHENTICATION, WHICH IS ALL THIS SYSTEM EVER CLAIMED (§2
+# rules out keys; `sign` concedes attribution is not authentication). The answer to
+# "who decided this" for a delegated agent is NOT a process identity — it is the BRIEF.
+# `evidence` names it, so editing the brief moves a blob the record names, the key goes
+# STALE and the gate re-runs. A delegated verdict cannot outlive the instructions it
+# was made under. Same machinery as V16, pointed at review instead of checkers.
+DECIDED_HOW = ("mechanical", "agreement", "signature", "override", "delegated")
 
 # The primary key. Everything else in the record is payload determined by it.
 KEY_FIELDS = ("step", "basis.value", "revision")

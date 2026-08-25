@@ -25,7 +25,7 @@ def render(record: dict) -> str:
     tally = ""
     if how == "agreement":
         tally = f" {decided.get('agreed')}/{decided.get('passes')}"
-    elif how in ("signature", "override") and decided.get("who"):
+    elif how in ("signature", "override", "delegated") and decided.get("who"):
         tally = f" {decided['who']}"
 
     rev = record.get("revision", 0)
