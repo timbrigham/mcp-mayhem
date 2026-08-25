@@ -321,3 +321,100 @@ def test_an_exclusion_cancels_an_inclusion_however_specific(ledger, config_dir,
     assert row["scope"] == 1, (
         "the blanket exclusion cancelled the specific inclusion — which is exactly "
         "the no-op-wearing-a-rationale that was nearly recorded as a measured fact")
+
+
+# -- ⭐⭐ PDFC-1: a gate that can NEVER fire, told apart from one idle today -----
+#
+# Found by ZeroParadox 2026-08-25, one hour after the glob semantics were written
+# down — and found BY that document. `pdf_coupling` gates on `when: "**/*.pdf"`. Every
+# tracked PDF in ZeroParadox is root-level (the layout rule requires it; formal
+# documents live at the root under flat filenames) and `**/*.pdf` cannot match a
+# root-level path. The gate had never fired on one artifact it exists to protect.
+#
+# ⚠⚠ IT RENDERED AS `NOT_APPLICABLE — "no path matched '**/*.pdf'"`. True, calm, and
+# the worst available shape: nothing separated "does not apply to this push" from
+# "applies to nothing, ever". The rule it was protecting is that a changed PDF arrives
+# with the scripts/ builder that produced it, and the cost of it not firing is a PDF
+# drifting from its builder and being minted into a permanent DOI.
+
+def _pdfish(ledger, config_dir, tmp_path, when, files):
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["pdf_coupling"] = {"family": "mechanical", "when": when,
+                                    "reason": "only meaningful when a PDF changed"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "p.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    inv = inventory_mod.build(config=led.config, records=[], action="push",
+                              files=files, ref="t", admission=["pdf_coupling"])
+    return inv, next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+
+
+def test_the_measured_dead_gate_is_named_as_dead(ledger, config_dir, tmp_path):
+    """⭐⭐ THE EXACT SHAPE: root-level PDFs, a `**/` pattern that cannot reach them."""
+    inv, row = _pdfish(ledger, config_dir, tmp_path, "**/*.pdf",
+                       {"fmc.pdf": "a", "snap.pdf": "b", "README.md": "c"})
+    assert row["status"] == "NOT_APPLICABLE"
+    assert "DEAD PATTERN" in row["why"]
+    assert "*.pdf" in row["why"] and "2" in row["why"]
+    assert inv["dead_patterns"][0]["suggestion"] == "*.pdf"
+    assert inv["dead_patterns"][0]["would_match"] == 2
+
+
+def test_it_does_not_fire_when_the_narrowing_is_honest(ledger, config_dir, tmp_path):
+    """⚠⚠ THE CONTROL THAT KEEPS THIS FROM BECOMING NOISE, and it is the whole reason
+    the test is not "matches zero paths". A push carrying no PDFs at all is the
+    ORDINARY case — zero now and zero loosened — and it must stay a calm
+    NOT_APPLICABLE. A signal that fires on every push is one people scroll past, which
+    is the failure this detector exists to prevent, not to cause."""
+    inv, row = _pdfish(ledger, config_dir, tmp_path, "**/*.pdf",
+                       {"README.md": "c", "src/x.py": "d"})
+    assert row["status"] == "NOT_APPLICABLE"
+    assert "DEAD PATTERN" not in (row["why"] or "")
+    assert inv["dead_patterns"] == []
+
+
+def test_a_correct_pattern_is_never_flagged(ledger, config_dir, tmp_path):
+    """⚠ And the fix must actually clear it, or the detector is unactionable."""
+    inv, row = _pdfish(ledger, config_dir, tmp_path, "*.pdf",
+                       {"fmc.pdf": "a", "README.md": "c"})
+    assert inv["dead_patterns"] == []
+    assert row["status"] != "NOT_APPLICABLE"
+
+
+def test_a_nested_match_keeps_the_pattern_alive(ledger, config_dir, tmp_path):
+    """⚠ `**/*.pdf` is not wrong everywhere — it is wrong for TOP-LEVEL files. Where a
+    nested PDF exists the pattern matches, the gate applies, and nothing is flagged."""
+    inv, row = _pdfish(ledger, config_dir, tmp_path, "**/*.pdf",
+                       {"docs/deep/x.pdf": "a"})
+    assert inv["dead_patterns"] == []
+    assert row["status"] != "NOT_APPLICABLE"
+
+
+def test_a_dead_scope_glob_is_reported_too(ledger, config_dir, tmp_path):
+    """⚠ Same hazard, different field. A `scope` that cannot match means the step
+    examines nothing while looking perfectly configured."""
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["decls"] = {"family": "mechanical", "scope": ["**/*.md"],
+                             "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "q.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    inv = inventory_mod.build(config=led.config, records=[], action="push",
+                              files={"README.md": "a"}, ref="t", admission=["decls"])
+    assert inv["dead_patterns"][0]["field"] == "scope"
+    assert inv["dead_patterns"][0]["suggestion"] == "*.md"
+
+
+def test_the_detector_reports_and_does_not_block(ledger, config_dir, tmp_path):
+    """⚠⚠ REPORTED, NOT BLOCKING — the same line `subjects_unexamined` draws. Making a
+    dead pattern refuse a push would be a policy change that Tim decides, not a side
+    effect of a detector landing. `complete` is untouched; the loudness is the row's
+    `why`, the row's `dead_patterns`, and the inventory's."""
+    inv, _ = _pdfish(ledger, config_dir, tmp_path, "**/*.pdf",
+                     {"fmc.pdf": "a", "README.md": "c"})
+    assert inv["dead_patterns"], "the detector must have fired for this to mean anything"
+    assert inv["complete"] is True

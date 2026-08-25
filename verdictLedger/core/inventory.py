@@ -93,6 +93,60 @@ def _subject_index(records) -> tuple:
     return by_content, by_path, legacy, evidence
 
 
+def _loosen(glob: str) -> str:
+    """The same pattern with its `**/` segments removed.
+
+    ⚠ `**/` is the ONE loosening applied, deliberately. It is not a general "try
+    easier patterns until something matches" search — that would find a match for
+    almost any typo and report confident nonsense. `**/` is the specific construct
+    that LOOKS like it broadens a glob and in `fnmatch` narrows it, because it
+    requires at least one `/`. Shell and gitignore intuitions produce it; nothing
+    else here produces a silently-dead pattern.
+    """
+    out = glob
+    while out.startswith("**/"):
+        out = out[3:]
+    return out.replace("/**/", "/")
+
+
+def _dead_pattern(glob: str, files, field: str):
+    """⭐⭐ A NARROWING THAT CANNOT EVER FIRE, TOLD APART FROM ONE THAT DOES NOT FIRE TODAY.
+
+    Found by ZeroParadox 2026-08-25, one hour after the glob semantics were written
+    down. `pdf_coupling` gates on `when: "**/*.pdf"`. Every tracked PDF in ZeroParadox
+    is root-level — the layout rule REQUIRES it, formal documents live at the root
+    under flat filenames — and `**/*.pdf` cannot match a root-level path. So the gate
+    had never fired on a single artifact it exists to protect, and never could have.
+
+    ⚠⚠ AND IT RENDERED AS `NOT_APPLICABLE — "no path matched '**/*.pdf'"`, WHICH IS
+    TRUE. That is what makes this the worst shape available: a correct, calm sentence
+    covering a gate that is structurally incapable of applying. Nothing distinguished
+    *this gate does not apply to this push* from *this gate applies to nothing, ever*.
+
+    ⚠ THE TEST CANNOT BE "MATCHES ZERO PATHS". That fires legitimately every time a
+    push carries no PDFs, and a signal that fires constantly is one people learn to
+    scroll past — the exact failure this module warns about elsewhere. The question
+    that separates the two is: does the SAME pattern, loosened, match things that are
+    sitting right here? Zero now and zero loosened is an honest narrowing. Zero now
+    and FORTY loosened is a typo.
+
+    The rule it was protecting: a changed PDF must arrive with the `scripts/` builder
+    that produced it. The cost of it not firing is a PDF drifting from its builder and
+    then being minted into a permanent DOI — four releases already carry latent flaws
+    that cannot be withdrawn.
+    """
+    if any(fnmatch.fnmatch(p, glob) for p in files):
+        return None
+    loosened = _loosen(glob)
+    if loosened == glob:
+        return None
+    hits = sorted(p for p in files if fnmatch.fnmatch(p, loosened))
+    if not hits:
+        return None
+    return {"field": field, "pattern": glob, "suggestion": loosened,
+            "matches_now": 0, "would_match": len(hits), "example": hits[0]}
+
+
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
@@ -133,13 +187,33 @@ def build(*, config, records, action: str, files: dict,
                          "needs_rerun": False, "rerun_reason": None})
             continue
         when = spec.get("when")
+        dead = [d for d in
+                ([_dead_pattern(when, files, "when")] if when else [])
+                + [_dead_pattern(g, files, "scope")
+                   for g in (spec.get("scope") or [])]
+                if d]
         if when and not any(fnmatch.fnmatch(p, when) for p in files):
             # ⚠ "It did not apply" and "it passed" must never render the same, and
             # the status carries the glob that excluded it.
+            #
+            # ⭐⭐ AND "it does not apply TODAY" must not render like "it applies to
+            # NOTHING, EVER". `no path matched '**/*.pdf'` is a true, calm sentence
+            # that covered a gate which had never once fired on the artifacts it
+            # exists to protect. When the same pattern LOOSENED matches things
+            # sitting right here, say so where the misleading sentence was.
+            d = next((x for x in dead if x["field"] == "when"), None)
+            why = (f"no path matched {when!r}"
+                   if d is None else
+                   f"⚠ DEAD PATTERN, not a narrowing: {when!r} matched 0 paths, but "
+                   f"{d['suggestion']!r} matches {d['would_match']} of them "
+                   f"(e.g. {d['example']!r}). `**/` requires at least one '/', so this "
+                   f"glob cannot match a top-level file and this gate has almost "
+                   f"certainly never fired. Fix the pattern; do not re-run.")
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
-                         "why": f"no path matched {when!r}", "record_id": None,
+                         "why": why, "record_id": None,
                          "subjects_covered": 0, "subjects_stale": 0,
                          "subjects_unexamined": 0, "scope": 0, "subjects_unscoped": [],
+                         "dead_patterns": dead,
                          "needs_rerun": False, "rerun_reason": None})
             continue
 
@@ -308,6 +382,7 @@ def build(*, config, records, action: str, files: dict,
 
         rows.append({"step": step, "family": family, "status": status,
                      "record_id": (record or {}).get("id"),
+                     "dead_patterns": dead,
                      "subjects_covered": covered, "subjects_stale": stale,
                      "subjects_unexamined": unexamined, "scope": len(scope),
                      "subjects_unscoped": unscoped,
@@ -374,6 +449,16 @@ def build(*, config, records, action: str, files: dict,
         # currently admits is still an undeclared switch, and promoting that type later
         # would inherit the hole silently.
         "unscoped": sorted({p for r in rows for p in (r.get("subjects_unscoped") or [])}),
+        # ⭐⭐ ALL rows, gating or not, and REPORTED RATHER THAN BLOCKING. A dead
+        # pattern on a type nothing currently admits is still a gate that can never
+        # fire, and promoting that type later would inherit the hole silently.
+        #
+        # ⚠ Making it BLOCK would refuse every push until every such glob is fixed,
+        # and that is Tim's call rather than a side effect of a detector landing --
+        # the same line `subjects_unexamined` draws. But a gate that cannot fire is
+        # not a quiet fact, so it is on the row, in the `why` where the misleading
+        # sentence used to be, and here.
+        "dead_patterns": [d for r in rows for d in (r.get("dead_patterns") or [])],
         # ⚠ ALL registered steps, not just gating ones. The caller deciding what to RUN
         # is a different question from what GATES -- a hook has emitters for types that
         # may not be admitted, and must not be told to skip them just because nothing
