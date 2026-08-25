@@ -90,7 +90,7 @@ def _files(ref: str) -> dict:
 
 @mcp.tool()
 async def append(record: dict) -> dict:
-    """Validate against V1-V14, then append. Returns {id}. REFUSES invalid records.
+    """Validate against V1-V16, then append. Returns {id}. REFUSES invalid records.
 
     Idempotent on identity — (step, basis, verdict, reason, subjects, revision).
     No wall clock is in the hash, so the same verdict over the same content is the
@@ -142,7 +142,7 @@ async def genesis(commit: str, note: Optional[str] = None) -> dict:
 
 @mcp.tool()
 async def validate(record: dict) -> dict:
-    """Schema plus V1-V14. Pure, no write. Returns {ok, errors[]} with EVERY
+    """Schema plus V1-V16. Pure, no write. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
     up and works around the thing."""
     return await _guard(_ledger().validate, record)

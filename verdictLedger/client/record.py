@@ -152,8 +152,46 @@ def blobs_at(ref: str, *, repo: str = ".") -> dict:
     return out
 
 
+def module_evidence(*paths, repo: str = ".") -> list:
+    """[{path, git_blob_id}] for the checker's OWN source — what V16 requires.
+
+    ⚠⚠ CALL IT WITH `__file__` AND LET IT DO THE REST. The path recorded must be
+    REPO-RELATIVE with forward slashes, because that is what `git ls-files` prints and
+    what `inventory` compares against; an absolute Windows path appends cleanly and
+    then matches nothing forever, which is the same shape as the sha256 defect above.
+
+        evidence = record.module_evidence(__file__)                    # this checker
+        evidence = record.module_evidence(__file__, common.__file__)   # and its library
+
+    ⚠ It hashes the WORKING-TREE file, on purpose: the bytes that ran are the bytes on
+    disk, not whatever is staged. A checker running against a modified copy of itself
+    must record THAT copy, or the evidence describes code that did not execute.
+    """
+    import os
+    import subprocess
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=repo,
+                          capture_output=True, text=True, encoding="utf-8")
+    top = (root.stdout or "").strip()
+    out = []
+    for path in paths:
+        rel = path
+        if top:
+            try:
+                rel = os.path.relpath(os.path.abspath(path), top)
+            except ValueError:
+                # A different drive on Windows: outside the repo entirely, so there is
+                # nothing honest to record. Refuse rather than record the absolute path,
+                # which would never match and would read as a staleness bug forever.
+                raise RuntimeError(
+                    f"{path!r} is not inside the repository at {top!r}; a checker "
+                    f"outside the tree cannot name itself as evidence")
+        out.append({"path": rel.replace(os.sep, "/"),
+                    "git_blob_id": blob_id(path, repo=repo)})
+    return out
+
+
 def emit(step, tier, verdict, subjects, basis, reason=None,
-         inputs=(), decided=None, cost=None, revision=0):
+         inputs=(), decided=None, cost=None, revision=0, evidence=()):
     """Append one record. Returns its id, or None if refused or unreachable.
 
     `subjects` is a list of {"path", "git_blob_id"} — WHAT THIS VERDICT IS ABOUT, not
@@ -168,6 +206,9 @@ def emit(step, tier, verdict, subjects, basis, reason=None,
         "reason": reason,
         "basis": basis,
         "subjects": list(subjects or []),
+        # ⚠ V16: a mechanical PASS is REFUSED without this. It is not `inputs` —
+        # V4 requires every inputs entry to name a record already in the stream.
+        "evidence": list(evidence or []),
         "decided": decided or {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": list(inputs or []),
         "revision": revision,

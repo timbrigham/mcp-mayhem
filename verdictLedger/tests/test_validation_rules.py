@@ -259,6 +259,7 @@ def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
         good(step="check_prosee"),
         good(run={"id": "", "started": None, "policy_sha": None, "env": {}}),
         good(revision=6, verdict="FAIL", reason="deep"),
+        good(evidence=[]),
     ]
     for p in probes:
         assert errs(ledger, p), "a probe was already green before neutering"

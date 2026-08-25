@@ -69,6 +69,12 @@ def good(**over):
         "reason": None,
         "basis": {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"},
         "subjects": [{"git_blob_id": "b" * 40, "path": "docs/x.md"}],
+        # ⚠ V16 — a mechanical PASS is refused without evidence. Carried by the
+        # generic fixture rather than added per-probe on purpose: a probe must change
+        # exactly ONE thing, and a fixture that fails a rule it is not testing makes
+        # every other probe ambiguous.
+        "evidence": [{"git_blob_id": "c" * 40,
+                      "path": "tools/verify/check_invariants.py"}],
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,

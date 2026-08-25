@@ -89,7 +89,25 @@ DECIDED_HOW = ("mechanical", "agreement", "signature", "override")
 KEY_FIELDS = ("step", "basis.value", "revision")
 
 TOP_LEVEL = ("schema", "id", "step", "tier", "verdict", "reason", "basis",
-             "subjects", "decided", "inputs", "revision", "cost", "run")
+             "subjects", "evidence", "decided", "inputs", "revision", "cost", "run")
+
+# ⚠⚠ `evidence` IS NOT `inputs`, AND THE DISTINCTION IS WHY THIS FIELD EXISTS.
+# V16 was specified as "the checker module's blob ID in `inputs`". It cannot go
+# there: V4 requires every `inputs` entry to name a RECORD ALREADY IN THE STREAM
+# (§9b: "aggregate steps must name every record they aggregated"), so a blob id in
+# `inputs` is refused by V4 before V16 ever reads it. The two fields answer
+# different questions and collapsing them would make V4 unable to tell an
+# aggregate's predecessor from a checker's own source:
+#
+#   inputs     WHICH VERDICTS this one rests on   -> record keys, step@basis#revision
+#   evidence   WHICH CODE reached this verdict    -> {path, git_blob_id}, same shape
+#              as `subjects`, because it is the same kind of claim about content
+#
+# ⚠ It is NOT `subjects` either. `subjects` is what the verdict is ABOUT, and it
+# feeds `coverage()` — putting the checker module there would have the checker
+# certifying its own source as reviewed corpus. `inventory` does treat evidence
+# like a switch for STALENESS (edit the checker, the key goes stale), which is the
+# whole point of recording it; it just never counts as coverage.
 
 # Separators chosen so the key stays greppable and unambiguous. A git ref may
 # legally contain '#', so `basis.value` is checked for it rather than escaped —
@@ -141,6 +159,7 @@ def empty_record(**over: Any) -> dict:
         "reason": None,
         "basis": {"kind": None, "value": None, "resolved_from": None},
         "subjects": [],
+        "evidence": [],
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,
@@ -163,6 +182,9 @@ def payload(record: dict) -> dict:
         "tier": record.get("tier"),
         "subjects": sorted(
             ((s.get("path"), s.get("git_blob_id")) for s in record.get("subjects") or []),
+            key=lambda t: (t[0] or "", t[1] or "")),
+        "evidence": sorted(
+            ((e.get("path"), e.get("git_blob_id")) for e in record.get("evidence") or []),
             key=lambda t: (t[0] or "", t[1] or "")),
         "decided": record.get("decided"),
         "inputs": sorted(record.get("inputs") or []),

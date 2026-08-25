@@ -99,11 +99,11 @@ class Config:
             # predates would otherwise surface as a TypeError from inside fnmatch --
             # naming neither the file nor the field, and indistinguishable from the
             # server being down to any caller that swallows errors.
-            for field in ("when",):
+            for field in ("when", "module"):
                 val = spec.get(field)
                 if val is not None and not isinstance(val, str):
                     raise ConfigError(
-                        f"required.types[{name!r}].{field} must be a string glob, got "
+                        f"required.types[{name!r}].{field} must be a string, got "
                         f"{type(val).__name__}. If this config was written for a newer "
                         f"build, RESTART the ledger rather than editing it back.")
             for field in ("scope", "switches", "scope_exclude"):
@@ -196,6 +196,20 @@ class Config:
                      # stop silent WEAKENING; requiring one here would price the safe
                      # direction the same as the dangerous one.
                      "switches": list(spec.get("switches") or []),
+                     # ⚠ NOT a narrowing either: `module` names the file whose
+                     # execution a `mechanical` verdict is claiming, so declaring it
+                     # makes V16 STRICTER — from "carry some evidence" to "carry THIS
+                     # module". A stated reason is the price of weakening; this is the
+                     # other direction and is free.
+                     #
+                     # ⚠ It is OPTIONAL, and that is a graduated bar, not an oversight.
+                     # With no `module` declared V16 still refuses an empty `evidence`
+                     # array, which is the forgery measured on 2026-08-24; declaring it
+                     # additionally pins WHICH file. A required `module` would have
+                     # refused every mechanical record until every type in a registry
+                     # this server does not own had been annotated — the correct
+                     # implementation bricking the system, again.
+                     "module": spec.get("module"),
                      "scope_exclude": None}
             reason = spec.get("reason")
             actions = spec.get("actions")

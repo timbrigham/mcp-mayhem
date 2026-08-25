@@ -16,7 +16,7 @@ class LedgerError(Exception):
 
 
 class ValidationFailure(LedgerError):
-    """A record broke one or more of V1–V14. NEVER retried.
+    """A record broke one or more of V1–V16. NEVER retried.
 
     Carries every violation, not just the first — a caller fixing one rule at a
     time across three round trips is a caller that gives up and works around it.

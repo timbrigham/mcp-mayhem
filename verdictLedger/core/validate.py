@@ -1,4 +1,4 @@
-"""V1–V14. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
+"""V1–V16. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
 
 ⚠ Every violation is returned, never just the first. A caller fixing one rule per
 round trip is a caller who stops using the thing.
@@ -59,6 +59,18 @@ def structural(record: dict) -> list[str]:
             if bad:
                 out.append(f"subjects[{i}] {bad}")
 
+    ev = record.get("evidence")
+    if not isinstance(ev, list):
+        out.append("evidence must be an array")
+    else:
+        for i, e in enumerate(ev):
+            if not isinstance(e, dict) or not e.get("git_blob_id") or not e.get("path"):
+                out.append(f"evidence[{i}] needs both git_blob_id and path")
+                continue
+            bad = _not_a_blob_id(e["git_blob_id"], e.get("path"))
+            if bad:
+                out.append(f"evidence[{i}] {bad}")
+
     decided = record.get("decided")
     if not isinstance(decided, dict):
         out.append("decided must be an object")
@@ -77,7 +89,7 @@ def structural(record: dict) -> list[str]:
 
 def rules(record: dict, *, config: Config, existing_ids: set,
           tips: Optional[dict] = None, known_policy_shas: Optional[set] = None) -> list[str]:
-    """V1–V14. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
+    """V1–V16. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
     out: list[str] = []
     basis = record.get("basis") or {}
     decided = record.get("decided") or {}
@@ -108,6 +120,50 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                 f"its subjects. A verdict that depends on an exemption list must NAME "
                 f"it, or editing that list cannot make the key stale and a suppression "
                 f"lands unverified.")
+
+    # V16 — ⭐⭐ A MECHANICAL PASS MUST CARRY EVIDENCE ONLY A RUN PRODUCES.
+    # Measured by ZeroParadox 2026-08-24 with `validate` (pure, no write): a record
+    # claiming `tier:"M"`, `decided.how:"mechanical"`, `verdict:"PASS"` over real blob
+    # IDs at a real basis returned `ok: true, errors: []`. An agent can certify that a
+    # checker ran when it did not, and a spawned agent already reaches `append`.
+    #
+    # The only rule forbidding it lived in a CLIENT — `record.py`'s CLI mirror, whose
+    # `--tier` accepts A/H and whose `--how` refuses `mechanical` — while that file's
+    # own docstring says the rules live in the server "in exactly one place… what makes
+    # the mirror defect unrepresentable rather than avoided by discipline". That rule
+    # was the exception, and its only enforcing copy was on a path §12j removes.
+    #
+    # ⚠ THIS IS NOT AUTHENTICATION AND MUST NOT PRETEND TO BE. §2 rules out keys and
+    # tokens; `sign` already concedes that a signature is an ATTRIBUTION. Naming the
+    # module is forgeable by anyone willing to copy a blob id. The bar is CHECKABLE,
+    # which the previous state was not, and it buys a second property that is not
+    # forgeable at all: `inventory` treats evidence like a switch, so editing the
+    # checker moves a blob the record names and the key goes STALE. A forged verdict
+    # then expires the next time the code it lied about changes.
+    #
+    # ⚠ PASS ONLY, exactly like V2. A forged mechanical FAIL blocks, and blocking
+    # wrongly is not the failure this system defends against; requiring evidence there
+    # would also stop a checker that died before it could hash itself from recording
+    # the fact that it died.
+    if how == "mechanical" and verdict == "PASS":
+        evidence = record.get("evidence") or []
+        if not evidence:
+            out.append(
+                "V16: a mechanical PASS must carry `evidence` — at minimum "
+                "[{path, git_blob_id}] for the checker module that produced it, so the "
+                "verdict names the code that reached it. Emitters: pass "
+                "`evidence=record.module_evidence(__file__)` through "
+                "`common.record_if_asked`. `inputs` is NOT the place for it: V4 requires "
+                "every inputs entry to name a record already in the stream.")
+        else:
+            module = (spec or {}).get("module")
+            named = {e.get("path") for e in evidence if isinstance(e, dict)}
+            if module and module not in named:
+                out.append(
+                    f"V16: step {step_name!r} declares module {module!r}, which is not "
+                    f"among its evidence paths {sorted(p for p in named if p)}. A "
+                    f"mechanical verdict must name the module the registry says "
+                    f"implements it, or the evidence field certifies some other file.")
 
     # V1 — a silent fallback to a permissive basis is FRZ-4. Recording it as
     # FALLBACK is what makes basis drift visible without probing for it.

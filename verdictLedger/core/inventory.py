@@ -45,9 +45,34 @@ def _subject_index(records) -> tuple:
     by_content: dict = {}      # (step, path, blob) -> the record that examined it
     by_path: dict = {}         # (step, path)        -> some record, for STALE
     legacy: dict = {}
+    evidence: dict = {}        # step -> {path, ...} recorded as V16 evidence
     for r in records:
         step = r.get("step")
         rev = r.get("revision", 0)
+        # ⭐⭐ V16 EVIDENCE IS INDEXED EXACTLY LIKE A SUBJECT, AND THAT IS THE HALF OF
+        # V16 THAT IS NOT FORGEABLE. Naming the checker module is forgeable by anyone
+        # willing to copy a blob id; what is not is that the record now names a blob,
+        # so editing the checker moves it, the key reads STALE, and the step re-runs.
+        # A forged mechanical PASS therefore expires the next time the code it lied
+        # about changes, instead of standing for ever.
+        #
+        # ⚠ Tracked SEPARATELY from subjects and never merged into them: `coverage()`
+        # reads `subjects` directly, and folding evidence in would have every checker
+        # certifying its own source as reviewed corpus. It is a dependency of the
+        # verdict, not a thing the verdict is about — the same relationship `switches`
+        # have, and it is treated the same way below.
+        for e in r.get("evidence") or []:
+            path, blob = e.get("path"), e.get("git_blob_id")
+            if not (path and blob):
+                continue
+            evidence.setdefault(step, set()).add(path)
+            key = (step, path, blob)
+            prior = by_content.get(key)
+            if prior is None or rev >= prior.get("revision", 0):
+                by_content[key] = r
+            seen = by_path.get((step, path))
+            if seen is None or rev >= seen.get("revision", 0):
+                by_path[(step, path)] = r
         for s in r.get("subjects") or []:
             path, blob = s.get("path"), s.get("git_blob_id")
             if not blob:
@@ -65,7 +90,7 @@ def _subject_index(records) -> tuple:
             seen = by_path.get((step, path))
             if seen is None or rev >= seen.get("revision", 0):
                 by_path[(step, path)] = r
-    return by_content, by_path, legacy
+    return by_content, by_path, legacy, evidence
 
 
 def build(*, config, records, action: str, files: dict,
@@ -94,7 +119,7 @@ def build(*, config, records, action: str, files: dict,
     as an empty one and must never read as satisfied — see `admission_state`.
     """
     reqs = config.requirements(action)
-    by_content, by_path, legacy_tips = _subject_index(records)
+    by_content, by_path, legacy_tips, evidence_paths = _subject_index(records)
 
     rows = []
     how_counts: dict = {}
@@ -187,9 +212,17 @@ def build(*, config, records, action: str, files: dict,
         # which someone should look at.
         in_scope = set(scope)
         switch_set = set(spec.get("switches") or [])
+        # ⚠ V16 evidence is subtracted for the same reason switches are: the checker
+        # module is SUPPOSED to sit outside the scanned scope. Reporting a step's own
+        # source as "examined but unscoped" would make the signal fire on every
+        # mechanical record ever written, and a signal that fires on everything is one
+        # people learn to scroll past -- which is what `subjects_unscoped` exists to
+        # avoid being.
+        ev_set = evidence_paths.get(step, set())
         unscoped = sorted(p for p in files
                           if (step, p) in by_path
-                          and p not in in_scope and p not in switch_set)
+                          and p not in in_scope and p not in switch_set
+                          and p not in ev_set)
 
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
