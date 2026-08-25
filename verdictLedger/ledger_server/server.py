@@ -73,16 +73,46 @@ async def _guard(fn, *args, **kwargs) -> dict:
 
 
 def _files(ref: str) -> dict:
+    """path -> GIT BLOB ID for the content being promoted.
+
+    ⚠⚠ THE BLOB IS NOT IN THE SAME FIELD IN THE TWO COMMANDS, AND READING IT FROM THE
+    WRONG ONE COST THE ENTIRE STAGED BASIS.
+
+        git ls-files -s   ->  <mode> <blob> <stage> TAB <path>     blob is field 1
+        git ls-tree  -r   ->  <mode> blob  <sha>    TAB <path>     sha  is field 2
+
+    This took field 2 for BOTH. For `ls-tree` that is the sha and correct; for
+    `ls-files` it is the STAGE, which is `0` on every unconflicted entry. So
+    `ref="staged"` returned {path: "0"} for all 503 tracked files, no subject could
+    ever match one, and EVERY key at the staged basis read STALE or MISSING for ever.
+
+    ⚠ IT FAILED CLOSED, WHICH IS WHY IT SURVIVED. `complete` requires stale == 0, so
+    actions were refused rather than admitted — and an unsatisfiable gate and a
+    correctly-blocking gate look identical from outside. Found 2026-08-25 only because
+    a `pdf_coupling` PASS whose 40 subjects matched the index EXACTLY still reported
+    `STALE, covered 0`.
+
+    ⚠⚠ THE MIRROR DEFECT, THREE IMPLEMENTATIONS DEEP. `client/record.py` parses
+    `ls-files -s` with field 1 (right); gitRobot's `_blobs` takes the field as a
+    parameter and names the difference (right); this took field 2 (wrong). And the
+    unit tests never reached it: every inventory test passes a `files` dict in
+    directly, so the one function that builds that dict in production had no coverage
+    at all.
+    """
     import subprocess
-    args = (["ls-files", "-s"] if ref == "staged" else ["ls-tree", "-r", ref])
+    staged = (ref == "staged")
+    args = (["ls-files", "-s"] if staged else ["ls-tree", "-r", ref])
+    blob_field = 1 if staged else 2
     proc = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     out = {}
     for line in proc.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 4:
-            path = line.split("\t", 1)[-1].strip() if "\t" in line else parts[-1]
-            out[path] = parts[2]
+        if "\t" not in line:
+            continue                  # git always TAB-separates the path; no guessing
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        if len(parts) > blob_field:
+            out[path.strip()] = parts[blob_field]
     return out
 
 

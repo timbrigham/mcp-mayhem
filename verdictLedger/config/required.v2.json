@@ -153,8 +153,8 @@
     },
     "pdf_coupling": {
       "family": "mechanical",
-      "when": "**/*.pdf",
-      "reason": "only meaningful when a PDF changed"
+      "when": "*.pdf",
+      "reason": "only meaningful when a PDF changed. WAS '**/*.pdf' until 2026-08-25, which under fnmatch requires at least one / and so matched NONE of the 40 root-level PDFs -- the gate could never fire and rendered a benign NOT_APPLICABLE. Filed as PDFC-1."
     },
     "editorial": {
       "family": "review",

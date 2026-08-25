@@ -45,7 +45,8 @@ def _subject_index(records) -> tuple:
     by_content: dict = {}      # (step, path, blob) -> the record that examined it
     by_path: dict = {}         # (step, path)        -> some record, for STALE
     legacy: dict = {}
-    evidence: dict = {}        # step -> {path, ...} recorded as V16 evidence
+    evidence: dict = {}        # step -> {path, ...} recorded as V16/V17 evidence
+    ev_content: dict = {}      # (step, path, blob) -> the record that ran under it
     for r in records:
         step = r.get("step")
         rev = r.get("revision", 0)
@@ -67,12 +68,9 @@ def _subject_index(records) -> tuple:
                 continue
             evidence.setdefault(step, set()).add(path)
             key = (step, path, blob)
-            prior = by_content.get(key)
+            prior = ev_content.get(key)
             if prior is None or rev >= prior.get("revision", 0):
-                by_content[key] = r
-            seen = by_path.get((step, path))
-            if seen is None or rev >= seen.get("revision", 0):
-                by_path[(step, path)] = r
+                ev_content[key] = r
         for s in r.get("subjects") or []:
             path, blob = s.get("path"), s.get("git_blob_id")
             if not blob:
@@ -90,7 +88,7 @@ def _subject_index(records) -> tuple:
             seen = by_path.get((step, path))
             if seen is None or rev >= seen.get("revision", 0):
                 by_path[(step, path)] = r
-    return by_content, by_path, legacy, evidence
+    return by_content, by_path, legacy, evidence, ev_content
 
 
 def _loosen(glob: str) -> str:
@@ -173,7 +171,8 @@ def build(*, config, records, action: str, files: dict,
     as an empty one and must never read as satisfied — see `admission_state`.
     """
     reqs = config.requirements(action)
-    by_content, by_path, legacy_tips, evidence_paths = _subject_index(records)
+    (by_content, by_path, legacy_tips, evidence_paths,
+     ev_content) = _subject_index(records)
 
     rows = []
     how_counts: dict = {}
@@ -313,8 +312,22 @@ def build(*, config, records, action: str, files: dict,
         # SUPPOSED to sit outside what a checker scans, and both must still be able to
         # stale the key -- that is the entire mechanism of V15 and of V16's expiry.
         # Dropping them here would silently disarm two rules from a third one's fix.
-        judged = [p for p in files
-                  if p in in_scope or p in switch_set or p in ev_set]
+        # ⚠⚠ EVIDENCE IS *NOT* IN THE SUBJECT DENOMINATOR. Found by ZeroParadox
+        # 2026-08-25 from arithmetic alone: `pdf_coupling` reported
+        # `subjects_covered: 42` against `scope: 40`, and its record has exactly 40
+        # subjects and 2 evidence entries. Evidence had been folded into the same
+        # buckets as subjects, so it counted as coverage.
+        #
+        # ⚠ `covered > scope` SHOULD BE IMPOSSIBLE, and it rendered as a bigger number
+        # — coverage looking BETTER than it is, which is the direction that matters.
+        #
+        # ⚠ It hid everywhere else because for almost every mechanical step the
+        # evidence files are ALREADY subjects: `check_encoding` covers all 450 tracked
+        # text files including `batch.py` and `common.py`, so 450 + 2 deduped to 451
+        # and the double count was invisible. `pdf_coupling` is the first step whose
+        # subjects are DISJOINT from its evidence, so it is the first place the two
+        # could be told apart at all.
+        judged = [p for p in files if p in in_scope or p in switch_set]
         covered, stale = 0, 0
         covered_rec, stale_rec = None, None
         for path in judged:
@@ -326,6 +339,20 @@ def build(*, config, records, action: str, files: dict,
                 # examined, but never at THIS content
                 stale += 1
                 stale_rec = stale_rec or by_path[(step, path)]
+
+        # ⭐⭐ THE PRODUCER MOVING IS A DIFFERENT FACT FROM THE CORPUS MOVING, and
+        # ZeroParadox asked the exact right question: does editing `common.py` stale a
+        # step via its EVIDENCE (correct — that is what V16/V17 are for) or via a
+        # phantom SUBJECT (wrong, and it would misreport which content moved)? Merged
+        # into one bucket the two were indistinguishable in the row. They are counted
+        # apart now, and the `why` says which one it was.
+        ev_stale, ev_moved = 0, []
+        for path in sorted(ev_set):
+            if path not in files:
+                continue
+            if (step, path, files[path]) not in ev_content:
+                ev_stale += 1
+                ev_moved.append(path)
 
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
@@ -373,6 +400,16 @@ def build(*, config, records, action: str, files: dict,
             if stale_rec is not None and stale_rec.get("verdict") in ("FAIL", "UNDECIDED"):
                 why = (f"last verdict was {stale_rec['verdict']} but against different "
                        f"bytes ({stale_rec['id']}) -- it does not judge this content")
+        elif ev_stale:
+            # ⚠ Every subject still matches; what changed is the code or the brief
+            # that PRODUCED the verdict. Re-running is exactly the right remedy here,
+            # unlike LED-2's unclearable case — so the row says so plainly.
+            status = "STALE"
+            why = (f"every subject still matches, but the producer changed: "
+                   f"{', '.join(ev_moved[:3])}"
+                   f"{', …' if len(ev_moved) > 3 else ''} moved since this verdict was "
+                   f"recorded. A verdict cannot outlive the code or brief that reached "
+                   f"it — re-run the step.")
         else:
             status = "SATISFIED"
 
@@ -384,6 +421,7 @@ def build(*, config, records, action: str, files: dict,
                      "record_id": (record or {}).get("id"),
                      "dead_patterns": dead,
                      "subjects_covered": covered, "subjects_stale": stale,
+                     "evidence_stale": ev_stale, "evidence_moved": ev_moved,
                      "subjects_unexamined": unexamined, "scope": len(scope),
                      "subjects_unscoped": unscoped,
                      "why": why,
@@ -465,6 +503,8 @@ def build(*, config, records, action: str, files: dict,
         # currently gates on them.
         "needs_rerun": sorted(r["step"] for r in rows if r["needs_rerun"]),
         "missing": n("MISSING"), "stale": n("STALE"),
+        "evidence_moved": sorted({p for r in rows
+                                  for p in (r.get("evidence_moved") or [])}),
         "legacy_identity": n("LEGACY_IDENTITY"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),
         "not_applicable": sum(1 for r in rows if r["status"] == "NOT_APPLICABLE"),
