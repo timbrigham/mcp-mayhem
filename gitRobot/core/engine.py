@@ -1013,29 +1013,47 @@ class GitRobot:
                     f"{res.output.strip()}. An unmerged index is the usual cause; "
                     f"resolve the conflict and stage it.")
             tree = res.stdout.strip()
-            blobs = self._blobs(["ls-files", "-s"], col=1)
+            blobs = self._blobs(["ls-files"])
         else:
             res = self.git.run(["rev-parse", f"{ref}^{{tree}}"], timeout=60)
             if not res.ok:
                 raise RepoError(f"cannot resolve {ref!r} to a tree: "
                                 f"{res.output.strip()}")
             tree = res.stdout.strip()
-            blobs = self._blobs(["ls-tree", "-r", ref], col=2)
+            blobs = self._blobs(["ls-tree", "-r", ref])
         return ({"kind": "tree", "value": tree, "resolved_from": "explicit"}, blobs)
 
-    def _blobs(self, args, *, col: int) -> dict:
-        """path -> blob id. ⚠ The column differs: `ls-files -s` prints
-        `<mode> <blob> <stage>\\t<path>` and `ls-tree -r` prints
-        `<mode> blob <blob>\\t<path>`."""
+    # ⭐⭐ ASK GIT FOR THE FIELD BY NAME. This used to take the blob COLUMN as a
+    # parameter, because `ls-files -s` and `ls-tree -r` put it in different places.
+    # That was correct HERE — and the verdictLedger copy of the same parse took the
+    # wrong one, returned the STAGE (`0`) for every staged file, and made every key at
+    # that basis permanently unsatisfiable. `--format` deletes the field to count:
+    # `%(objectname)` cannot accidentally be the stage.
+    #
+    # ⚠ STILL THE GIT BINARY, AND THAT IS A CHOICE. A native binding (libgit2) would
+    # remove the parse too, and would REIMPLEMENT git in exchange. These ids are only
+    # meaningful because they equal what `git add` actually wrote, filters included —
+    # and filters are live in this repo (`.gitattributes` mandates LF for *.json; CRLF
+    # moved `policy_sha` on 2026-08-25). A binding computing a filtered blob even
+    # slightly differently would produce records that append cleanly and read STALE
+    # for ever: the 2026-08-23 sha256 defect again, subtler and harder to find.
+    _FMT = "--format=%(objectname)%x09%(path)"
+
+    def _blobs(self, args) -> dict:
+        """path -> blob id, from either command, in one shape."""
+        res = self.git.run([*args, self._FMT], timeout=180)
+        if not res.ok or not res.stdout.strip():
+            raise RepoError(
+                f"git {' '.join(args)} produced no file list: "
+                f"{res.output.strip()[:200]}. `--format` needs git >= 2.38 "
+                f"(ls-files) / 2.36 (ls-tree). An empty list is never served as an "
+                f"empty repository — every path would silently fence as untracked.")
         out = {}
-        res = self.git.run(args, timeout=180)
         for line in res.stdout.splitlines():
             if "\t" not in line:
                 continue
-            meta, path = line.split("\t", 1)
-            parts = meta.split()
-            if len(parts) > col:
-                out[path.strip()] = parts[col]
+            blob, path = line.split("\t", 1)
+            out[path.strip()] = blob.strip()
         return out
 
     # -- the sanctioned escape from Tier 1 -------------------------------------

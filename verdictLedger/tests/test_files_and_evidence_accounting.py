@@ -159,3 +159,49 @@ def test_a_moved_subject_is_not_blamed_on_the_producer(ledger):
     assert row["status"] == "STALE"
     assert row["evidence_stale"] == 0
     assert "producer changed" not in (row["why"] or "")
+
+
+# -- ⭐ ask git for the field BY NAME ------------------------------------------
+
+def test_a_path_containing_spaces_survives(tiny_repo, monkeypatch):
+    """⚠ `--format=%(objectname)%x09%(path)` is TAB-separated on purpose. Splitting
+    on whitespace would break the moment a tracked path contained a space — and the
+    breakage would look like an untracked file, not like a parse error."""
+    from ledger_server import server
+    monkeypatch.setattr(server, "REPO", str(tiny_repo))
+    (tiny_repo / "a file with spaces.md").write_text("x\n", encoding="utf-8")
+    _git(tiny_repo, "add", "a file with spaces.md")
+
+    staged = server._files("staged")
+    assert "a file with spaces.md" in staged
+    assert staged["a file with spaces.md"] == _git(
+        tiny_repo, "hash-object", "--", "a file with spaces.md").strip()
+
+
+def test_an_empty_file_list_is_refused_not_served(tmp_path, monkeypatch):
+    """⚠⚠ THE FAIL-QUIET THIS GUARD EXISTS FOR. An unsupported `--format` prints
+    `fatal:` to stderr and NOTHING to stdout, so the parse would yield {} — every key
+    MISSING, the gate unsatisfiable, and fail-closed in the way that hides. That is
+    exactly how the stage-column bug survived: refused actions and an unsatisfiable
+    gate are indistinguishable from outside.
+
+    Simulated with a directory that is not a repository at all, which produces the
+    same shape: non-zero exit, empty stdout."""
+    from core.errors import Unavailable
+    from ledger_server import server
+    notrepo = tmp_path / "notrepo"
+    notrepo.mkdir()
+    monkeypatch.setattr(server, "REPO", str(notrepo))
+    with pytest.raises(Unavailable, match="NOT served as an empty repository"):
+        server._files("staged")
+
+
+def test_both_commands_are_parsed_by_the_same_two_columns(tiny_repo, monkeypatch):
+    """⭐ THE POINT OF `--format`: there is no per-command field position left to get
+    wrong. The parse is identical for ls-files and ls-tree, so the two copies of it
+    cannot drift the way they did."""
+    import inspect
+    from ledger_server import server
+    src = inspect.getsource(server._files)
+    assert "%(objectname)%x09%(path)" in src
+    assert "parts[2]" not in src and "col=" not in src

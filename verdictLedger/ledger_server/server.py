@@ -100,19 +100,43 @@ def _files(ref: str) -> dict:
     at all.
     """
     import subprocess
+    from core.errors import Unavailable
+    # ⭐⭐ ASK GIT FOR THE FIELD BY NAME. `--format` (ls-tree 2.36, ls-files 2.38)
+    # makes both commands print the SAME two columns, so there is no field to count
+    # and no per-command layout to remember. That is what actually removes the class:
+    # `%(objectname)` cannot accidentally be the stage.
+    #
+    # ⚠ STILL THE GIT BINARY, ON PURPOSE. A native binding (libgit2) would remove the
+    # parse too, and would introduce something worse in exchange: it REIMPLEMENTS git,
+    # and this comparison is only meaningful if the id equals what `git add` actually
+    # wrote. Filters are live here — ZeroParadox's .gitattributes mandates LF for
+    # *.json, and CRLF moved `policy_sha` on 2026-08-25 — so a binding that computed a
+    # filtered blob even slightly differently would produce records that append
+    # cleanly and read STALE for ever. That is the 2026-08-23 sha256 defect again,
+    # subtler and harder to find. `client/record.py` already refuses to hash files
+    # itself for exactly this reason.
     staged = (ref == "staged")
-    args = (["ls-files", "-s"] if staged else ["ls-tree", "-r", ref])
-    blob_field = 1 if staged else 2
+    fmt = "--format=%(objectname)%x09%(path)"
+    args = (["ls-files", fmt] if staged else ["ls-tree", "-r", ref, fmt])
     proc = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
+    # ⚠⚠ AN UNSUPPORTED `--format` PRINTS `fatal:` TO STDERR AND NOTHING TO STDOUT,
+    # which would yield {} — every key MISSING, the whole gate unsatisfiable, and
+    # fail-closed in the way that hides. Exactly how the stage-column bug survived.
+    # Refuse loudly instead of returning an empty world.
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise Unavailable(
+            f"git {' '.join(args[:2])} produced nothing for ref {ref!r} in {REPO}: "
+            f"{(proc.stderr or '').strip()[:200]}. `--format` needs git >= 2.38 "
+            f"(ls-files) / 2.36 (ls-tree). An empty file list is NOT served as an "
+            f"empty repository — every key would read MISSING and the gate would be "
+            f"unsatisfiable rather than merely blocking.")
     out = {}
     for line in proc.stdout.splitlines():
         if "\t" not in line:
-            continue                  # git always TAB-separates the path; no guessing
-        meta, path = line.split("\t", 1)
-        parts = meta.split()
-        if len(parts) > blob_field:
-            out[path.strip()] = parts[blob_field]
+            continue
+        blob, path = line.split("\t", 1)
+        out[path.strip()] = blob.strip()
     return out
 
 
