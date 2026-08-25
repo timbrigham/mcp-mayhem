@@ -92,7 +92,7 @@ def test_a_relaxation_written_as_a_string_refuses_the_whole_config(tmp_path, con
     load at all — and an unloadable config serves UNDECIDED and gates everything."""
     path = config_dir / "policy.v1.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
-    doc["migration"]["v16_evidence_required"] = "false"
+    doc["migration"] = {"v16_evidence_required": "false"}
     path.write_text(json.dumps(doc), encoding="utf-8")
     led = Ledger(tmp_path / "r.jsonl", policy_path=path,
                  required_path=config_dir / "required.v2.json")
@@ -123,23 +123,28 @@ def test_status_is_silent_when_nothing_is_relaxed(tmp_path, config_dir):
     assert _led(config_dir, tmp_path, True).status()["relaxations"] == []
 
 
-# -- ⭐⭐ the shipped value is pinned, so the flip cannot be silent -------------
+# -- ⭐⭐ what ships is what enforces --------------------------------------------
 
-def test_the_shipped_policy_is_still_mid_cutover():
-    """⭐⭐ DELETE-ME TEST, AND IT IS THE POINT OF THE WHOLE FILE.
+def test_the_shipped_policy_relaxes_nothing():
+    """⭐⭐ THE CUTOVER'S DELETE-ME TEST, GRADUATED INTO A PERMANENT ONE.
 
-    The suite runs strict (see `conftest.config_dir`), so nothing else here would
-    notice what the SHIPPED file actually says. This asserts it, which means the real
-    flip — ZeroParadox's emitter lands, we set the key true — turns this test red and
-    forces the relaxation to be removed rather than left standing.
+    While V16 was landing this asserted the opposite — that the shipped policy was
+    still mid-cutover — so that flipping it for real would turn a test RED and force
+    the scaffolding out. It did: the `migration` block is gone from
+    `config/policy.v1.json`, `conftest.config_dir` no longer overrides it, and
+    ABSENT MEANS STRICT does the rest.
 
-    ⚠ WHEN THIS GOES RED, THAT IS THE SIGNAL, NOT A FAILURE. Set the key true, confirm
-    the stream's mechanical PASSes carry evidence, then DELETE the `migration` block,
-    the override in `conftest.config_dir`, and this test.
+    ⚠ IT IS KEPT, INVERTED, RATHER THAN DELETED. The next relaxation will be added by
+    someone under the same pressure that produced this one, and the failure mode is
+    not adding it — it is leaving it. This test makes shipping a live relaxation a
+    deliberate act that turns the suite red, which is the only version of "we will
+    remember to remove it" that has ever worked.
     """
     from pathlib import Path
     doc = json.loads((Path(__file__).resolve().parents[1] / ROOT_POLICY)
                      .read_text(encoding="utf-8-sig"))
-    assert doc["migration"]["v16_evidence_required"] is False, (
-        "the shipped policy now ENFORCES V16 — if that is intended, this test and the "
-        "whole `migration` block have done their job and should be deleted together")
+    assert "migration" not in doc, (
+        f"the shipped policy carries a live relaxation: {doc.get('migration')!r}. If "
+        f"that is a deliberate cutover, invert this assertion for its duration and "
+        f"say what removes it — the machinery below is built for exactly that, and "
+        f"`status().relaxations` will announce it on every call meanwhile.")
