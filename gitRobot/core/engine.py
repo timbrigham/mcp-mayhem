@@ -22,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -894,7 +896,23 @@ class GitRobot:
                 raise UsageError(f"{ref!r} is a flag, not a ref")
             self.scratch.mkdir(parents=True, exist_ok=True)
             safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in (name or ref))
-            path = self.scratch / f"{safe}-{_refusal_id('wt', str(self.scratch / safe))}"
+            # ⚠⚠ UNIQUE PER PROVISION, NEVER DERIVED FROM THE REF. The name used to be
+            # `<ref>-<hash of that same path>`, which is a pure function of the ref --
+            # so two provisions at one ref COLLIDE BY CONSTRUCTION. Measured by
+            # ZeroParadox 2026-08-25: an aborted `add` left `HEAD-7c335d652168` holding
+            # a partial checkout, and every later `add` at HEAD hit
+            # `fatal: '…' already exists` for ever.
+            #
+            # `mkdtemp` reserves the name ATOMICALLY, which is the property a
+            # "does it exist yet?" probe cannot have: two concurrent rounds at one tree
+            # is precisely the case the review-snapshot design would make routine, and
+            # a check-then-create races exactly there.
+            #
+            # ⚠ It creates the directory, and git accepts adding into an EXISTING EMPTY
+            # one -- verified 2026-08-25, exit 0. An empty directory and a partial
+            # checkout are different things to git, which is the whole distinction the
+            # old scheme lost.
+            path = Path(tempfile.mkdtemp(prefix=f"{safe}-", dir=self.scratch))
             result = self.git.run(["worktree", "add", "--detach", str(path), ref],
                                   timeout=300)
             decision = "allowed" if result.ok else "failed"
@@ -926,11 +944,42 @@ class GitRobot:
                     "other guard here exists to protect.",
                 )
             if resolved not in known:
+                # ⚠⚠ THE ORPHAN CASE, AND THE OLD REFUSAL NAMED TWO REMEDIES THAT BOTH
+                # CANNOT WORK. Measured by ZeroParadox 2026-08-25: an aborted `add`
+                # leaves a directory holding a partial checkout that git never
+                # registered. `list` cannot show it -- git does not know it exists.
+                # `prune` is the OPPOSITE case: it clears records whose directories are
+                # gone, and here the directory is present and the record is not. So
+                # every sanctioned route was closed while the refusal confidently named
+                # two of them, and the only way out was a raw `Remove-Item` -- which is
+                # a session with shell access working around this server, i.e. the
+                # bypass §2 says a refusal without a workable alternative invents.
+                #
+                # ⚠ BOUNDED TO gitRobot'S OWN SCRATCH ROOT, which it created and which
+                # holds nothing else. That is what makes a recursive delete safe to
+                # offer here and nowhere else: outside it, a path git does not know is
+                # somebody's actual work and the refusal below stands.
+                scratch = self.scratch.resolve()
+                orphan = (resolved != scratch and resolved.is_dir()
+                          and scratch in resolved.parents)
+                if orphan:
+                    # Prune first: if git DID hold a stale record, this is the ordinary
+                    # path and the rmtree below is then merely tidying the directory.
+                    self.git.run(["worktree", "prune"], timeout=120)
+                    shutil.rmtree(resolved, ignore_errors=False)
+                    return self._receipt(
+                        "worktree.remove_orphan", {"name": str(resolved)}, "allowed",
+                        detail=f"removed an unregistered directory under {scratch}",
+                        extra={"path": str(resolved), "orphan": True, "ok": True})
                 raise self._refuse(
                     "worktree.remove", {"name": name},
-                    f"{name!r} is not a worktree of this repository.",
-                    f"worktree(action='list') shows what can be removed. If the directory is "
-                    f"already gone, worktree(action='prune') clears its leftover record.",
+                    f"{name!r} is not a worktree of this repository, and it is not a "
+                    f"leftover directory under {self.scratch}.",
+                    f"worktree(action='list') shows what git can remove. If the directory "
+                    f"is gone but its record remains, worktree(action='prune') clears "
+                    f"that. Neither applies to a path git never knew about outside "
+                    f"gitRobot's own scratch root -- if that path is real work, removing "
+                    f"it is not this server's call.",
                 )
             result = self.git.run(["worktree", "remove", "--force", str(path)], timeout=300)
             decision = "allowed" if result.ok else "failed"

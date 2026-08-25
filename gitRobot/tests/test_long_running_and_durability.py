@@ -176,3 +176,115 @@ def test_worktree_prune_clears_records_for_vanished_directories(robot, tmp_path)
 
     assert robot.worktree("prune")["decision"] == "allowed"
     assert str(foreign) not in robot.worktree("list")["output"]
+
+
+# -- ⭐⭐ the aborted provision, measured by ZeroParadox 2026-08-25 -------------
+#
+# `worktree(action='add', ref='HEAD')` failed partway and left a directory holding
+# only `.git` and `tracked.txt` -- a partial checkout git had never registered. From
+# then on:
+#
+#   add    -> fatal: '…/gitrobot-worktrees/HEAD-7c335d652168' already exists
+#   remove -> REFUSED, "is not a worktree of this repository"
+#   prune  -> the OPPOSITE case; it clears records whose directories are GONE
+#
+# Every sanctioned route closed, while the refusal confidently named two of them.
+# It was cleared with a raw `Remove-Item` -- a session working AROUND this server,
+# which §2 says is what a refusal without a workable alternative invents.
+#
+# Two independent defects, and each gets its own control below: the path was a pure
+# function of the ref, so provisions collided by construction; and `remove` keyed
+# only on git's list, so an unregistered directory was unreachable.
+
+def _listed(robot):
+    """git prints worktree paths with FORWARD slashes even on Windows. Comparing raw
+    strings makes an `in` assertion pass for the wrong reason -- it can never match,
+    so a "not in" check would go green against a worktree that is still registered."""
+    return robot.worktree("list")["output"].replace("\\", "/")
+
+
+def _fwd(path):
+    return str(path).replace("\\", "/")
+
+
+def _orphan(robot, name="HEAD-deadbeef"):
+    """A partial provision: the shape an aborted `add` leaves behind."""
+    d = robot.scratch / name
+    d.mkdir(parents=True)
+    (d / ".git").write_text("gitdir: nowhere\n", encoding="utf-8")
+    (d / "tracked.txt").write_text("half a checkout\n", encoding="utf-8")
+    return d
+
+
+def test_two_adds_at_one_ref_do_not_collide(robot):
+    """⭐⭐ THE ROOT CAUSE. The directory name used to be `<ref>-<hash of that same
+    path>` -- a pure function of the ref, so a second provision at one ref could only
+    ever land on the first one's directory. Concurrent rounds at a single tree is
+    exactly what the review-snapshot design would make routine."""
+    first = robot.worktree("add", ref="HEAD")
+    second = robot.worktree("add", ref="HEAD")
+    assert first["ok"] and second["ok"], (first, second)
+    assert first["path"] != second["path"]
+    listed = _listed(robot)
+    assert _fwd(first["path"]) in listed and _fwd(second["path"]) in listed
+
+
+def test_an_aborted_provision_does_not_block_the_next_add(robot):
+    """⚠ THE SYMPTOM AS REPORTED, end to end: a leftover directory in the scratch
+    root must not poison every future `add` at that ref."""
+    _orphan(robot)
+    assert robot.worktree("add", ref="HEAD")["ok"] is True
+
+
+def test_an_orphaned_directory_can_be_removed(robot):
+    """⭐⭐ THE REFUSAL THAT NAMED TWO IMPOSSIBLE REMEDIES. git cannot list what it
+    never registered, and prune is for the opposite case. Under gitRobot's own scratch
+    root -- which it created and which holds nothing else -- removing it IS the
+    workable alternative the refusal owed."""
+    d = _orphan(robot)
+    out = robot.worktree("remove", name=str(d))
+    assert out["decision"] == "allowed"
+    assert out["orphan"] is True
+    assert not d.exists()
+
+
+def test_the_orphan_cleanup_is_audited_as_its_own_operation(robot):
+    """⚠ An orphan cleanup and a real worktree removal are different facts. Logging
+    both as `worktree.remove` would make "gitRobot deleted a directory git knew
+    nothing about" indistinguishable from an ordinary teardown, afterwards."""
+    d = _orphan(robot)
+    robot.worktree("remove", name=str(d))
+    assert robot.audit.read()[-1]["op"] == "worktree.remove_orphan"
+
+
+def test_an_unknown_path_outside_the_scratch_root_is_still_refused(robot, tmp_path):
+    """⚠⚠ THE CONTROL THAT KEEPS THE FIX FROM BEING A HOLE, and it is the whole
+    reason the orphan branch is bounded to one directory. Outside that root, a path
+    git does not know about is somebody's actual work, and deleting it is not this
+    server's call."""
+    real = tmp_path / "someones-work"
+    real.mkdir()
+    (real / "notes.md").write_text("not a worktree\n", encoding="utf-8")
+    with pytest.raises(RefusalError):
+        robot.worktree("remove", name=str(real))
+    assert (real / "notes.md").exists()
+
+
+def test_the_scratch_root_itself_is_not_removable(robot):
+    """⚠ The bound must exclude its own edge, or one call empties every live
+    worktree gitRobot has provisioned."""
+    robot.scratch.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(RefusalError):
+        robot.worktree("remove", name=str(robot.scratch))
+    assert robot.scratch.exists()
+
+
+def test_a_registered_worktree_is_still_removed_by_git_not_by_rmtree(robot):
+    """⚠ The orphan branch must not swallow the ordinary case: a REGISTERED worktree
+    under the scratch root still goes through `git worktree remove`, so git's record
+    is cleared rather than left behind as the exact orphan this fixes."""
+    added = robot.worktree("add", ref="HEAD")
+    out = robot.worktree("remove", name=added["path"])
+    assert out["decision"] == "allowed"
+    assert out.get("orphan") is None
+    assert _fwd(added["path"]) not in _listed(robot)
