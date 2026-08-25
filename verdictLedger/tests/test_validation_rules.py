@@ -425,3 +425,57 @@ def test_a_signature_still_cannot_be_anonymous(ledger):
         ledger.append(good(step="check_invariants", verdict="PASS",
                            decided={"how": "signature", "passes": 1, "agreed": 1,
                                     "who": None}))
+
+
+# -- ⭐⭐ AN AGREEMENT ROUND IS ONE RECORD, NEVER A REVISION CHAIN -------------
+
+def test_three_concurring_passes_are_one_record_carrying_passes(ledger):
+    """⭐⭐ THE ANSWER TO ZeroParadox's Q3, pinned because it was asked as a choice
+    between two shapes and only one of them is representable.
+
+    `min_passes: 3` and `(step, basis, revision)` unique looked like a contradiction:
+    three passes over one basis, and V11 refusing the second and third. It is not a
+    contradiction — it is V11 correctly refusing a MISREADING. `passes`/`agreed` are
+    fields on ONE record precisely so a panel needs one key.
+    """
+    out = ledger.append(good(step="editorial", tier="A", verdict="PASS",
+                             decided={"how": "agreement", "passes": 3, "agreed": 3,
+                                      "who": None}))
+    assert out["appended"] is True
+
+
+def test_a_revision_per_pass_is_refused_and_would_have_lied(ledger):
+    """⚠⚠ THE OTHER SHAPE, AND WHY IT IS WORSE THAN MERELY REFUSED. `revision` is an
+    ordinal of SUPERSESSION, not a counter of attempts: revision 1 says "this regrades
+    revision 0". Three concurring passes written as revisions 0,1,2 therefore claim
+    that two of the three were OVERRULED, and the tip — a single pass's verdict —
+    inherits the chain's authority. V13 would then cap the panel at
+    `supersede.max_depth` and tell an operator that "the step or the subject needs
+    fixing", about a round that agreed with itself.
+
+    The chain is refused for a different reason first (V11: no revision 0 to
+    supersede, since a chain never crosses bases), which is the rule doing its job at
+    the earliest point.
+    """
+    ledger.append(good(step="editorial", tier="A", verdict="PASS",
+                       decided={"how": "agreement", "passes": 3, "agreed": 3,
+                                "who": None}))
+    with pytest.raises(ValidationFailure, match="V11"):
+        ledger.append(good(step="editorial", tier="A", verdict="PASS", revision=1,
+                           basis={"kind": "tree", "value": "z" * 40,
+                                  "resolved_from": "explicit"},
+                           decided={"how": "agreement", "passes": 3, "agreed": 3,
+                                    "who": None}))
+
+
+def test_a_split_panel_is_expressible_and_three_records_could_not_be(ledger):
+    """⭐ THE POSITIVE CASE FOR THE ONE-RECORD SHAPE. Two of three agreeing is a real
+    outcome, and the fields say so exactly — `passes: 3, agreed: 2` with V3 refusing
+    the PASS. Three separate records would have to represent that as two PASSes and a
+    FAIL at one key, which is branching: two defensible answers, neither operative."""
+    split = good(step="editorial", tier="A", verdict="PASS",
+                 decided={"how": "agreement", "passes": 3, "agreed": 2, "who": None})
+    assert any(e.startswith("V3") for e in errs(ledger, split))
+    honest = dict(split, verdict="UNDECIDED",
+                  reason="panel split 2/3; no unanimity, so no pass")
+    assert errs(ledger, honest) == []

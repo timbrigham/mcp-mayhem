@@ -9,6 +9,12 @@
     "_comment": "V13. `revision` is an ordinal scoped to one (step, basis); a chain never crosses bases. At the cap, refuse AND surface it: regraded to the cap means the step or the subject needs fixing, not another regrade.",
     "max_depth": 5
   },
+  "migration": {
+    "_comment": "⚠⚠ TEMPORARY DEBT WITH A DELETION CONDITION, NOT A POLICY KNOB. Each key here relaxes a rule for exactly as long as a cutover needs, and `status()` NAMES every active relaxation on every call so it cannot go quiet. Delete the key and the block when the condition below is met -- a migration aid that outlives its migration is the weaker of two copies of the bar.",
+    "_v16_why": "V16 requires a mechanical PASS to carry `evidence`. The emitter half lives in ZeroParadox's `common.record_if_asked`, and V7 rejects unknown top-level keys -- so BOTH orderings brick: enforce first and every mechanical PASS is refused for missing evidence; emit first against a server that predates the field and V7 refuses it as unknown. Measured against the running server 2026-08-25 by ZeroParadox: `V7: unknown top-level key(s) ['evidence']`. Expand, migrate, contract: this build ACCEPTS evidence and does not REQUIRE it; ZeroParadox flips the emitter; then this key flips to true. The config is read live, so the third step costs NO restart -- which is the config-is-data property (§9d) doing migration work rather than a flag.",
+    "_v16_delete_when": "`common.record_if_asked` passes evidence AND the stream's mechanical PASSes carry it. Then set true, confirm, and delete this key -- ABSENT MEANS STRICT, so deleting it is the safe direction and forgetting to add it back cannot open the hole.",
+    "v16_evidence_required": false
+  },
   "lock": {
     "_comment": "The bounded wait. Appends are sub-millisecond, so crossing soft can only mean a stuck writer or a stalled fsync, never contention. WARNING: hard_seconds is the process supervisor's poll interval, and a wait that long is safe ONLY because every MCP tool is async-offloaded so the health endpoint keeps answering. Make one tool a plain def and this trips the supervisor precisely.",
     "soft_seconds": 5,

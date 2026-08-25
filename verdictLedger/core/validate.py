@@ -145,7 +145,7 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     # wrongly is not the failure this system defends against; requiring evidence there
     # would also stop a checker that died before it could hash itself from recording
     # the fact that it died.
-    if how == "mechanical" and verdict == "PASS":
+    if how == "mechanical" and verdict == "PASS" and config.v16_required:
         evidence = record.get("evidence") or []
         if not evidence:
             out.append(

@@ -23,6 +23,16 @@ def config_dir(tmp_path):
     dst.mkdir()
     for name in ("policy.v1.json", "required.v2.json"):
         shutil.copy(ROOT / "config" / name, dst / name)
+    # ⚠⚠ THE SUITE RUNS STRICT, THE SHIPPED FILE IS MID-CUTOVER, AND THAT GAP IS
+    # DELIBERATE AND PINNED. `policy.migration.v16_evidence_required` is false in the
+    # shipped config only until ZeroParadox's emitter lands (see the block's own
+    # `_v16_delete_when`). Tests must exercise the TARGET state, or every V16 control
+    # would go quiet exactly while the hole is open.
+    #
+    # `test_migration_switch.py::test_the_shipped_policy_is_still_mid_cutover` asserts
+    # the shipped value, so flipping it for real turns a test red and the relaxation
+    # cannot expire unnoticed. Delete this override in the same change.
+    set_policy(dst, **{"migration.v16_evidence_required": True})
     return dst
 
 

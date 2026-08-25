@@ -201,6 +201,11 @@ class Ledger:
             "config_ok": self.config is not None,
             "config_error": self.config_error,
             "policy_sha": self.config.policy_sha if self.config else None,
+            # ⚠ ON EVERY CALL, empty list included. A relaxation that only reports
+            # itself when someone asks the right question is a relaxation nobody will
+            # remember to remove.
+            "relaxations": self.config.relaxations if self.config else [
+                "CONFIG UNREADABLE — every rule is moot; the ledger serves UNDECIDED"],
             "undecided_steps": sorted(s for s in undecided_steps if s),
             # ⚠ NAME THE SOURCE. This is derived from the genesis RECORD in the
             # stream, never from config -- and rendering it without saying so read as

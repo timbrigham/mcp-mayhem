@@ -83,6 +83,19 @@ class Config:
             raise ConfigError("policy.agreement.min_passes must be an integer")
         if not isinstance(p.get("supersede", {}).get("max_depth"), int):
             raise ConfigError("policy.supersede.max_depth must be an integer")
+        mig = p.get("migration")
+        if mig is not None:
+            if not isinstance(mig, dict):
+                raise ConfigError("policy.migration must be an object")
+            for key, val in mig.items():
+                if not key.startswith("_") and not isinstance(val, bool):
+                    # ⚠ A relaxation misspelt as the string "false" is TRUTHY, and a
+                    # relaxation that silently reads as ON is the one failure this block
+                    # must not have. Refuse the config outright rather than guess.
+                    raise ConfigError(
+                        f"policy.migration.{key} must be a boolean, got {val!r} — a "
+                        f"relaxation written as a string reads as ON, which is the "
+                        f"wrong direction to be wrong in")
         types = r.get("types")
         if not isinstance(types, dict) or not types:
             raise ConfigError("required.types must be a non-empty object")
@@ -131,6 +144,37 @@ class Config:
     @property
     def min_passes(self) -> int:
         return int(self.policy["agreement"]["min_passes"])
+
+    @property
+    def v16_required(self) -> bool:
+        """Whether V16 REFUSES a mechanical PASS with no evidence.
+
+        ⚠⚠ ABSENT MEANS STRICT, and that direction is the whole safety of the switch.
+        A relaxation must be written down to exist, so deleting the key at the end of
+        the cutover re-arms the rule rather than disarming it, and a policy file that
+        predates this build is strict rather than silently permissive. It is the
+        reason-less-narrowing convention again: suppression costs effort, never
+        absent-mindedness.
+        """
+        return bool((self.policy.get("migration") or {}).get(
+            "v16_evidence_required", True))
+
+    @property
+    def relaxations(self) -> list[str]:
+        """Every rule currently relaxed by `policy.migration`, with its consequence.
+
+        ⚠ Read by `status()` on EVERY call, clean or not. A migration aid that stops
+        announcing itself is how a temporary relaxation becomes the permanent bar --
+        the same reason `signals` prints its counts when they are zero.
+        """
+        out = []
+        if not self.v16_required:
+            out.append(
+                "V16 RELAXED: a mechanical PASS may carry no `evidence`, so the ledger "
+                "cannot presently tell 'the checker ran and exited 0' from 'an agent "
+                "said it did'. Set policy.migration.v16_evidence_required = true (read "
+                "live, no restart) once emitters pass evidence, then delete the key.")
+        return out
 
     @property
     def max_depth(self) -> int:
