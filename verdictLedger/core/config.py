@@ -19,6 +19,7 @@ must fail safe. Inclusion is free; exclusion is the thing that takes effort.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
@@ -49,7 +50,36 @@ def _read(path: Path, label: str) -> dict:
 
 
 def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """The identity of a config file, NORMALISED so that transport cannot change it.
+
+    ⚠⚠ MEASURED 2026-08-25, AND IT IS THE DEFECT CLASS THIS SERVER EXISTS TO END.
+    `policy.v1.json` moved from `6c62b62b…` to `380f4a70…` on being copied into
+    ZeroParadox, because that repo's `.gitattributes` mandates LF for `*.json` and the
+    file arrived CRLF. **Not one byte of the bar changed** — proved two ways, equal
+    after newline normalisation and equal as parsed objects — yet the value that says
+    "this is the policy your verdict was judged under" moved.
+
+    Every reader was then wrong in a different direction: the migration check reads a
+    correct move as a failed one, and V10 sees a policy it has never seen. Worse, it
+    RECURS — a checkout with a different `core.autocrlf`, a new `.gitattributes` line,
+    an editor that rewrites on save. Pinning the new value would have fixed one
+    instance of a class.
+
+    So line endings and a BOM are stripped before hashing. Both are invisible to
+    `_read`, which parses with `utf-8-sig`, so two files that this loader cannot tell
+    apart must not have different identities.
+
+    ⚠ THIS IS NOT §4d's CANONICAL-JSON CONTRACT RETURNING. That was retired because
+    RECORD identity needed a reproducible digest over a data structure, and git had
+    already content-addressed the thing being judged. This hashes BYTES, as before —
+    it merely declines to treat two encodings of one byte sequence as two files. No
+    key order, no separators, nothing to reproduce.
+    """
+    raw = path.read_bytes()
+    if raw.startswith(codecs.BOM_UTF8):
+        raw = raw[len(codecs.BOM_UTF8):]
+    raw = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+    return hashlib.sha256(raw).hexdigest()
 
 
 class Config:

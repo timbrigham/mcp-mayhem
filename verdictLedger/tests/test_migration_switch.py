@@ -191,3 +191,58 @@ def test_an_explicit_config_directory_is_named_as_the_source(tmp_path, config_di
     src = led.config.paths()["config_source"]
     assert src.startswith("ZPLEDGER_CONFIG=")
     assert "last-resort" not in src
+
+
+# -- ⭐⭐ the bar's identity survives transport ---------------------------------
+
+def test_policy_sha_is_the_same_across_line_endings(tmp_path, config_dir):
+    """⭐⭐ MEASURED 2026-08-25 DURING THE REGISTRY MOVE. `policy.v1.json` went from
+    `6c62b62b…` to `380f4a70…` on being copied into ZeroParadox, because that repo's
+    `.gitattributes` mandates LF for `*.json` and the file arrived CRLF.
+
+    NOT ONE BYTE OF THE BAR CHANGED — proved equal after newline normalisation and
+    equal as parsed objects. Yet the value that says "this is the policy your verdict
+    was judged under" moved, so the migration check would read a correct move as a
+    failed one and V10 would see a policy it had never seen.
+
+    ⚠ PINNING THE NEW VALUE WOULD HAVE FIXED ONE INSTANCE OF A CLASS. It recurs on any
+    checkout with a different `core.autocrlf`, any new `.gitattributes` line, any
+    editor that rewrites on save.
+    """
+    src = config_dir / "policy.v1.json"
+    lf = src.read_bytes().replace(b"\r\n", b"\n")
+    crlf = lf.replace(b"\n", b"\r\n")
+    assert lf != crlf, "fixture must actually differ in bytes or this proves nothing"
+
+    a, b = tmp_path / "lf.json", tmp_path / "crlf.json"
+    a.write_bytes(lf)
+    b.write_bytes(crlf)
+    req = config_dir / "required.v2.json"
+    sha_a = Ledger(tmp_path / "1.jsonl", policy_path=a, required_path=req).config.policy_sha
+    sha_b = Ledger(tmp_path / "2.jsonl", policy_path=b, required_path=req).config.policy_sha
+    assert sha_a == sha_b
+
+
+def test_a_bom_does_not_change_the_bar(tmp_path, config_dir):
+    """⚠ Same argument, same door. `_read` parses with `utf-8-sig`, so a BOM is
+    invisible to the loader — two files this server cannot tell apart must not have
+    different identities."""
+    src = config_dir / "policy.v1.json"
+    plain, bommed = tmp_path / "p.json", tmp_path / "b.json"
+    plain.write_bytes(src.read_bytes())
+    bommed.write_bytes(b"\xef\xbb\xbf" + src.read_bytes())
+    req = config_dir / "required.v2.json"
+    assert (Ledger(tmp_path / "3.jsonl", policy_path=plain,
+                   required_path=req).config.policy_sha
+            == Ledger(tmp_path / "4.jsonl", policy_path=bommed,
+                      required_path=req).config.policy_sha)
+
+
+def test_a_real_policy_change_still_moves_the_sha(tmp_path, config_dir):
+    """⚠⚠ THE CONTROL, AND WITHOUT IT THE FIX IS INDISTINGUISHABLE FROM BREAKING V10.
+    Normalising encoding must not normalise away CONTENT — a changed threshold is a
+    changed bar and the sha must say so."""
+    before = _led(config_dir, tmp_path, True).config.policy_sha
+    set_policy(config_dir, **{"agreement.min_passes": 4})
+    after = _led(config_dir, tmp_path, True).config.policy_sha
+    assert before != after
