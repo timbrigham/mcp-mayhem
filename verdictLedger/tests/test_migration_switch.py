@@ -148,3 +148,46 @@ def test_the_shipped_policy_relaxes_nothing():
         f"that is a deliberate cutover, invert this assertion for its duration and "
         f"say what removes it — the machinery below is built for exactly that, and "
         f"`status().relaxations` will announce it on every call meanwhile.")
+
+
+# -- ⭐⭐ WHERE the bar was read from, not just WHAT it says --------------------
+
+def test_status_reports_the_resolved_config_paths(tmp_path, config_dir):
+    """⭐⭐ THE THREE-DAY DRIFT, CLOSED AT ITS ROOT. The deployment served the registry
+    from the ledger's own repo while §7, `config.py`'s docstring and §0's build table
+    all said it came from ZeroParadox's `tools/verify`. Every reader of all three came
+    away believing the correct thing, and nothing in the system could contradict them:
+    `policy()` returned the CONTENT and the sha, never the PATH.
+
+    ⚠ A `policy_sha` proves two readers see the same BYTES. It cannot say which FILE
+    those bytes came from — which was the unanswerable question, and the reason this
+    surfaced only when a sibling session went looking for a file and could not find it.
+    """
+    led = _led(config_dir, tmp_path, True)
+    st = led.status()
+    assert st["policy_path"] == str(config_dir / "policy.v1.json")
+    assert st["required_path"] == str(config_dir / "required.v2.json")
+
+
+def test_the_last_resort_location_says_it_is_the_last_resort(tmp_path, config_dir,
+                                                             monkeypatch):
+    """⚠ NAMING THE PATH IS NOT ENOUGH — a path only reads as wrong to someone who
+    already knows where it should be. When the bar is being served from the ledger's
+    own `config/`, the field must SAY that is not where §7 puts it. That sentence is
+    what would have ended the drift on day one instead of day three."""
+    for var in ("ZPLEDGER_CONFIG", "ZPLEDGER_POLICY", "ZPLEDGER_REQUIRED"):
+        monkeypatch.delenv(var, raising=False)
+    led = _led(config_dir, tmp_path, True)
+    assert "NOT where §7 says the bar belongs" in led.config.paths()["config_source"]
+
+
+def test_an_explicit_config_directory_is_named_as_the_source(tmp_path, config_dir,
+                                                             monkeypatch):
+    """⚠ The control: when the operator HAS pointed the server somewhere, the field
+    reports that rather than the warning above — or the warning becomes noise that
+    fires on every healthy deployment."""
+    monkeypatch.setenv("ZPLEDGER_CONFIG", str(config_dir))
+    led = _led(config_dir, tmp_path, True)
+    src = led.config.paths()["config_source"]
+    assert src.startswith("ZPLEDGER_CONFIG=")
+    assert "last-resort" not in src

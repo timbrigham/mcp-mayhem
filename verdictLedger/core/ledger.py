@@ -201,6 +201,8 @@ class Ledger:
             "config_ok": self.config is not None,
             "config_error": self.config_error,
             "policy_sha": self.config.policy_sha if self.config else None,
+            # ⚠ WHERE, not just WHAT. See `Config.paths`.
+            **(self.config.paths() if self.config else {}),
             # ⚠ ON EVERY CALL, empty list included. A relaxation that only reports
             # itself when someone asks the right question is a relaxation nobody will
             # remember to remove.

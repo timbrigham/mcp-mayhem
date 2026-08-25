@@ -211,7 +211,20 @@ def _sync_policy() -> dict:
     cfg = led._require_config()
     return {"policy": cfg.policy, "policy_sha": cfg.policy_sha,
             "actions": cfg.actions, "min_passes": cfg.min_passes,
-            "max_depth": cfg.max_depth, "genesis": cfg.genesis}
+            "max_depth": cfg.max_depth, "genesis": cfg.genesis,
+            # ⚠⚠ WHERE THE BAR WAS ACTUALLY READ FROM. Added 2026-08-25 after a
+            # deployment served the registry from the ledger's own repo for three days
+            # while §7, `config.py`'s docstring and §0's build table all said it came
+            # from ZeroParadox's `tools/verify`. Every reader of every one of those
+            # came away believing the correct thing, and nothing could contradict them:
+            # this call returned the CONTENT and the sha, never the PATH. It surfaced
+            # only because a sibling session went looking for the file and could not
+            # find it.
+            #
+            # ⚠ A `policy_sha` proves two readers see the same BYTES. It cannot tell
+            # either of them which FILE those bytes came from, which is the question
+            # that was unanswerable.
+            **cfg.paths()}
 
 
 @mcp.tool()

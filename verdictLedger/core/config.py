@@ -145,6 +145,23 @@ class Config:
     def min_passes(self) -> int:
         return int(self.policy["agreement"]["min_passes"])
 
+    def paths(self) -> dict:
+        """The resolved locations of both config files, and how they were chosen.
+
+        ⚠ `policy_sha` answers "are we reading the same bytes?"; this answers "from
+        where?". They are different questions and only the first one had an answer.
+        """
+        return {"policy_path": str(self.policy_path),
+                "required_path": str(self.required_path),
+                "config_source": (
+                    f"ZPLEDGER_CONFIG={os.environ['ZPLEDGER_CONFIG']}"
+                    if os.environ.get("ZPLEDGER_CONFIG") else
+                    "per-file ZPLEDGER_POLICY/ZPLEDGER_REQUIRED"
+                    if (os.environ.get("ZPLEDGER_POLICY")
+                        or os.environ.get("ZPLEDGER_REQUIRED")) else
+                    "the ledger's own config/ — the last-resort location, and NOT "
+                    "where §7 says the bar belongs")}
+
     @property
     def v16_required(self) -> bool:
         """Whether V16 REFUSES a mechanical PASS with no evidence.
