@@ -247,6 +247,33 @@ async def remove_files(paths: list[str], reason: str, cached: bool = False,
 
 
 @mcp.tool()
+async def ledger_subjects(observed: dict, ref: str = "INDEX") -> dict:
+    """{basis, subjects, skipped} — the identity of what a gate is about to certify.
+
+    `observed` is REQUIRED: {path: the git blob id YOU ACTUALLY READ}. This tool
+    VERIFIES your reading against `ref`; it will NOT derive one for you.
+
+    That inversion is the whole point. A deriving implementation reads the index at
+    RECORD time, which for a checker is milliseconds after the read and fine — but for
+    a review agent it is minutes, and the silent case is: you read blob X, the file
+    changes to Y and is STAGED, and at record time index == worktree == Y so no fence
+    fires and the record names Y. The verdict then certifies content nobody examined.
+    Supplying what you saw makes that unrepresentable.
+
+    `ref="INDEX"` (the default) is the case that matters — a gate reviews what is
+    STAGED, before the commit exists — and it is why this is Tier 2 rather than a
+    read: it runs `write-tree`, which materialises the index into tree objects. That
+    touches no ref, no index and no working tree, and is idempotent for an unchanged
+    index. HEAD and any tree-ish also work, for post-commit recording.
+
+    ⚠ `skipped` is never silent. Every fenced path returns with its reason and BOTH
+    blob ids — untracked, not repo-relative, or drifted since you read it. A caller
+    that hands over eight paths and records four subjects without noticing has
+    recorded a narrower verdict than it believes."""
+    return await _guard(_robot().ledger_subjects, observed, ref=ref)
+
+
+@mcp.tool()
 async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] = None) -> dict:
     """Private throwaway checkouts — the sanctioned alternative to every refused operation.
 

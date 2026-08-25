@@ -882,6 +882,152 @@ class GitRobot:
                              reason=reason, detail=result.output,
                              extra={"output": result.output, "ok": result.ok}, target=target)
 
+    # -- §12j: the identity of what a caller is about to certify ---------------
+
+    def ledger_subjects(self, observed: dict, ref: str = "INDEX") -> dict:
+        """`{basis, subjects, skipped}` — what a gate may honestly claim it examined.
+
+        ⚠⚠ IT VERIFIES; IT DOES NOT DERIVE, AND THAT INVERSION IS THE WHOLE POINT.
+        `observed` is MANDATORY and maps path -> the blob id THE GATE ACTUALLY READ.
+        ZeroParadox's `common.ledger_subjects` derives the blob from the index AT
+        RECORD TIME instead, and for a mechanical checker that is sound: read and
+        record are milliseconds apart in one process, and its worktree-vs-index fence
+        closes the remainder.
+
+        For a REVIEW agent the same call sits MINUTES after the read, and the
+        guarantee does not transfer. The silent case, measured by ZeroParadox
+        2026-08-25: agent reads blob X -> the file changes to Y AND IS STAGED -> at
+        record time worktree == index == Y -> no fence fires -> the record names Y.
+        **The record then certifies content nobody examined, and nothing reports it.**
+        Drift-and-revert is harmless for the same reason the fence looked sufficient
+        (same content, same blob); it is drift-and-STAY that lies, and it is invisible
+        to a deriving implementation by construction rather than by oversight.
+
+        Taking the observed blob as an input makes that case unrepresentable: a
+        mismatch is a `skipped` entry with both ids, and there is nothing to fence
+        because nothing was assumed.
+
+        ⚠ MANDATORY, NOT OPTIONAL-WITH-A-FALLBACK. An `observed=None` that quietly
+        derived would put the silent case back for every caller that forgot — the
+        two-route shape §12-0-alpha exists to refuse, where the weaker route wins
+        exactly when you least want it to.
+
+        ⚠ `skipped` IS THE FAIL-CLOSED SURFACE. A caller handed eight paths and four
+        subjects with no explanation records a narrower verdict than it believes it
+        recorded, and coverage shrinking silently is what §12a exists to prevent.
+        Every fenced path comes back with its reason and both blob ids.
+
+        ⚠⚠ TIER 2, NOT TIER 3, AND §3's TABLE NOW SAYS SO. `write-tree` materialises
+        the index into tree OBJECTS. That is a mutation of the object database by any
+        honest reading — which is why the read allow-list refuses it and why this
+        tool, not that list, is the right home for it. It is as small as a mutation
+        gets: it touches no ref, no index and no working tree, it is idempotent for an
+        unchanged index, and its output is unreachable garbage until something names
+        it. Audited like every other Tier 2 call.
+        """
+        if not isinstance(observed, dict) or not observed:
+            raise UsageError(
+                "ledger_subjects(observed={path: blob_id_you_read}) — `observed` is "
+                "required and must be non-empty. Hash each file WHEN YOU READ IT "
+                "(record.module_evidence does exactly this) and pass what you saw. "
+                "This tool verifies your reading against the index; it will not "
+                "derive one for you, because a derived blob can name content you "
+                "never examined.")
+        for path, blob in observed.items():
+            v = blob.strip() if isinstance(blob, str) else ""
+            # ⚠ FULL-LENGTH, LOWERCASE HEX ONLY. An abbreviated id is the dangerous
+            # input here, not a malformed one: it compares unequal to what `ls-files`
+            # prints, so it would land in `skipped` reading "DRIFTED SINCE YOU READ
+            # IT" — sending the caller to re-read a file that never moved. Refused at
+            # the door with the reason, rather than mis-diagnosed downstream.
+            if (not v or v != v.lower()
+                    or any(c not in "0123456789abcdef" for c in v)
+                    or len(v) not in (40, 64)):
+                raise UsageError(
+                    f"observed[{path!r}] must be a FULL git blob id (40 or 64 "
+                    f"lowercase hex), got {blob!r}. Use `git hash-object -- <path>` "
+                    f"when you READ the file, or column 3 of `git ls-tree -r <ref>`. "
+                    f"An abbreviated id would be reported as drift against content "
+                    f"that never moved.")
+
+        basis, at_ref = self._basis_and_blobs(ref)
+
+        subjects, skipped = [], []
+        for path in sorted(observed):
+            seen = observed[path].strip()
+            rel = path.replace("\\", "/").lstrip("./")
+            if rel != path.replace("\\", "/") or path.startswith("/") or ":" in path:
+                skipped.append({"path": path, "why": "not a repo-relative path; "
+                                "`git ls-files` prints forward-slashed relative paths "
+                                "and that is what a subject must carry"})
+                continue
+            actual = at_ref.get(rel)
+            if actual is None:
+                skipped.append({"path": rel, "observed": seen, "at_ref": None,
+                                "why": f"not tracked at {ref} — an untracked file "
+                                       f"cannot be a subject, because nothing will "
+                                       f"ever be able to tell whether it changed"})
+                continue
+            if actual != seen:
+                # ⭐⭐ THE CASE THE DERIVING IMPLEMENTATION CANNOT SEE.
+                skipped.append({"path": rel, "observed": seen, "at_ref": actual,
+                                "why": f"DRIFTED SINCE YOU READ IT: you examined "
+                                       f"{seen[:12]}…, {ref} holds {actual[:12]}…. "
+                                       f"Re-read this path and judge it again; a "
+                                       f"verdict over the bytes you saw would name "
+                                       f"bytes nobody examined"})
+                continue
+            subjects.append({"path": rel, "git_blob_id": actual})
+
+        return self._receipt(
+            "ledger_subjects", {"ref": ref, "paths": len(observed)}, "allowed",
+            detail=f"{len(subjects)} subject(s), {len(skipped)} skipped at {ref}",
+            extra={"basis": basis, "subjects": subjects, "skipped": skipped,
+                   "ok": True})
+
+    def _basis_and_blobs(self, ref: str):
+        """The tree a record should name, and every blob under it.
+
+        ⚠ `INDEX` is the case that matters and the one `write-tree` is needed for: a
+        gate reviews what is STAGED, before the commit exists. `ledger_basis`'s own
+        docstring calls it "the tree the commit will carry", and ZeroParadox verified
+        2026-08-25 that a record made against the index tree SURVIVES the commit of
+        that index — the ledger resolves a commit ref to its tree, so committing an
+        unchanged index re-stales nothing.
+        """
+        if ref == "INDEX":
+            res = self.git.run(["write-tree"], timeout=120)
+            if not res.ok:
+                raise RepoError(
+                    f"git write-tree failed, so there is no tree to certify against: "
+                    f"{res.output.strip()}. An unmerged index is the usual cause; "
+                    f"resolve the conflict and stage it.")
+            tree = res.stdout.strip()
+            blobs = self._blobs(["ls-files", "-s"], col=1)
+        else:
+            res = self.git.run(["rev-parse", f"{ref}^{{tree}}"], timeout=60)
+            if not res.ok:
+                raise RepoError(f"cannot resolve {ref!r} to a tree: "
+                                f"{res.output.strip()}")
+            tree = res.stdout.strip()
+            blobs = self._blobs(["ls-tree", "-r", ref], col=2)
+        return ({"kind": "tree", "value": tree, "resolved_from": "explicit"}, blobs)
+
+    def _blobs(self, args, *, col: int) -> dict:
+        """path -> blob id. ⚠ The column differs: `ls-files -s` prints
+        `<mode> <blob> <stage>\\t<path>` and `ls-tree -r` prints
+        `<mode> blob <blob>\\t<path>`."""
+        out = {}
+        res = self.git.run(args, timeout=180)
+        for line in res.stdout.splitlines():
+            if "\t" not in line:
+                continue
+            meta, path = line.split("\t", 1)
+            parts = meta.split()
+            if len(parts) > col:
+                out[path.strip()] = parts[col]
+        return out
+
     # -- the sanctioned escape from Tier 1 -------------------------------------
 
     def worktree(self, action: str, *, ref: Optional[str] = None,
