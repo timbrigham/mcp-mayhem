@@ -53,15 +53,22 @@ def _git(repo: str, *args: str) -> str:
 
 
 def _files_at(repo: str, ref: str) -> dict:
-    """path -> git blob id for a commit. The whole comparison is this lookup."""
+    """path -> git blob id for a commit. The whole comparison is this lookup.
+
+    ⚠ THE FOURTH COPY OF THIS PARSE, now asking git for the field BY NAME like the
+    other three. It happened to be correct — `ls-tree -r` does put the sha in field 2
+    — but "happened to be correct" is exactly what the ledger's `_files` looked like
+    until 2026-08-25, when it turned out to be reading the STAGE for staged entries,
+    and every key at that basis had been unsatisfiable since the day it shipped.
+    `%(objectname)` cannot be the wrong field.
+    """
     out = {}
-    for line in _git(repo, "ls-tree", "-r", ref).splitlines():
+    for line in _git(repo, "ls-tree", "-r", ref,
+                     "--format=%(objectname)%x09%(path)").splitlines():
         if "\t" not in line:
             continue
-        meta, path = line.split("\t", 1)
-        parts = meta.split()
-        if len(parts) >= 3:
-            out[path.strip()] = parts[2]
+        blob, path = line.split("\t", 1)
+        out[path.strip()] = blob.strip()
     return out
 
 
