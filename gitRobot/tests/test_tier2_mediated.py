@@ -213,7 +213,7 @@ def test_a_verdict_does_not_survive_a_later_commit(robot, repo, tmp_path, fake_g
         return {"ok": True, "allowed": not short, "range": rev_range,
                 "commits_in_range": len(out), "blocking_count": len(short),
                 "tip": out[0] if out else None, "admitted": ["build"],
-                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "admission_state": "SET", "not_gating": [], "config_sha": "p",
                 "commits": [], "line": "ALLOWED" if not short else "REFUSED"}
 
     monkeypatch.setattr(ledger_client, "can_push", only_good)
@@ -254,7 +254,7 @@ def test_push_records_what_authorised_it_on_the_clean_path(robot, repo, tmp_path
     assert record["op"] == "push" and record["decision"] == "allowed"
     assert record["reason"] == "shipping"
     assert record["args"]["inventory_ref"] == robot.git.head()
-    assert record["args"]["policy_sha"] == "policy-sha"
+    assert record["args"]["config_sha"] == "policy-sha"
     assert record["args"]["admission"] == ["build"]
 
 

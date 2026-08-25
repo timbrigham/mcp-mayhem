@@ -128,12 +128,12 @@ def test_v8_unregistered_step_cannot_record(ledger):
 # -- V9 / V10 ------------------------------------------------------------------
 
 def test_v9_run_id_is_required(ledger):
-    rule(ledger, good(run={"id": "", "started": None, "policy_sha": None, "env": {}}), "V9")
+    rule(ledger, good(run={"id": "", "started": None, "config_sha": None, "env": {}}), "V9")
 
 
-def test_v10_policy_sha_must_name_a_known_policy(ledger):
+def test_v10_config_sha_must_name_a_known_config(ledger):
     rule(ledger, good(run={"id": "r", "started": None,
-                           "policy_sha": "0" * 64, "env": {}}), "V10")
+                           "config_sha": "0" * 64, "env": {}}), "V10")
 
 
 def test_v10_current_policy_is_accepted(ledger):
@@ -257,7 +257,7 @@ def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
         good(decided={"how": "signature", "passes": 1, "agreed": 1, "who": None}),
         good(verdict="FAIL", reason=None),
         good(step="check_prosee"),
-        good(run={"id": "", "started": None, "policy_sha": None, "env": {}}),
+        good(run={"id": "", "started": None, "config_sha": None, "env": {}}),
         good(revision=6, verdict="FAIL", reason="deep"),
         good(evidence=[]),
     ]
@@ -479,3 +479,43 @@ def test_a_split_panel_is_expressible_and_three_records_could_not_be(ledger):
     honest = dict(split, verdict="UNDECIDED",
                   reason="panel split 2/3; no unanimity, so no pass")
     assert errs(ledger, honest) == []
+
+
+# -- ⭐ the rename: run.policy_sha -> run.config_sha (2026-08-25) --------------
+
+def test_the_old_key_is_refused_by_name_not_silently_ignored(ledger):
+    """⭐⭐ THE FAIL-QUIET THIS RENAME NEARLY SHIPPED WITH. `_prepare` stamps
+    `config_sha` when it is blank — so a caller still sending a REAL value under
+    `run.policy_sha` would have had it silently ignored and overwritten with the
+    current sha. That caller believes it has PINNED the bar its verdict is judged
+    against. Honouring neither the value nor the intent, without saying so, leaves its
+    next question — "why does my record name a different config?" — with no findable
+    answer.
+
+    ⚠ The message must name the RENAME. "run.config_sha is required" would send
+    someone looking for a field they are certain they already set.
+    """
+    rec = good(run={"id": "r", "started": None, "policy_sha": "0" * 64, "env": {}})
+    found = [e for e in errs(ledger, rec) if e.startswith("V10")]
+    assert found, f"V10 did not fire; got {errs(ledger, rec)}"
+    assert "RENAMED" in found[0] and "run.config_sha" in found[0]
+
+
+def test_a_null_old_key_is_the_ordinary_client_and_is_ignored(ledger):
+    """⚠⚠ THE CONTROL, and without it the rename is an outage. Every pre-rename client
+    sends `"policy_sha": None` and lets the server fill it in — including the one
+    installed in ZeroParadox right now. It pinned nothing, so nothing is being
+    overridden, and it must keep working untouched."""
+    rec = good(run={"id": "r", "started": None, "policy_sha": None, "env": {}})
+    assert errs(ledger, rec) == []
+
+
+def test_history_written_under_the_old_key_stays_known(ledger):
+    """⚠ 235 records carry `run.policy_sha` and are NEVER rewritten — the stream is
+    append-only, and editing history to tidy a field name is the one operation this
+    design exists to make impossible. So the known-set reads both keys; V10 asks a
+    set-membership question, and for that question the two carry the same fact."""
+    ledger.store.append(dict(good(), id="legacy@old#0",
+                             run={"id": "r", "started": None,
+                                  "policy_sha": "1" * 64, "env": {}}))
+    assert "1" * 64 in ledger.store.config_shas()

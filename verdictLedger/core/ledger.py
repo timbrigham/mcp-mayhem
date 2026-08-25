@@ -62,7 +62,7 @@ class Ledger:
         ⚠ `validate` and `append` MUST share this. A preview that judges the raw
         record while the write judges a stamped one is a preview that lies — it
         would report V10 against every client record, since the client leaves
-        `policy_sha` for the server to fill in.
+        `config_sha` for the server to fill in.
         """
         cfg = self._require_config()
         rec = schema.empty_record()
@@ -71,8 +71,19 @@ class Ledger:
             for extra in sorted(set(record) - set(schema.TOP_LEVEL)):
                 rec[extra] = record[extra]    # kept so V7 can reject it BY NAME
         rec.setdefault("run", {})
-        if not (rec["run"].get("policy_sha") or "").strip():
-            rec["run"]["policy_sha"] = cfg.policy_sha
+        if not (rec["run"].get("config_sha") or "").strip():
+            # ⚠⚠ DO NOT STAMP OVER A CALLER WHO USED THE OLD NAME. `run.policy_sha`
+            # was renamed to `run.config_sha` on 2026-08-25. A caller still sending a
+            # real value under the old key believes it has pinned the bar its verdict
+            # is judged against; stamping the current sha would honour neither the
+            # value nor the intent, and would do it SILENTLY — the caller's next
+            # question ("why does my record name a different config?") has no
+            # findable answer. Left blank, V10 fires and names the rename.
+            #
+            # ⚠ A null or empty old key is the ordinary pre-rename client and is
+            # ignored, not refused: it pinned nothing, so nothing is being overridden.
+            if not (rec["run"].get("policy_sha") or "").strip():
+                rec["run"]["config_sha"] = cfg.config_sha
         if not rec["run"].get("started"):
             rec["run"]["started"] = _now()
         rec["id"] = schema.record_key(rec)
@@ -83,7 +94,7 @@ class Ledger:
         rec = self._prepare(record)
         violations = validate_mod.validate(
             rec, config=cfg, existing_ids=self.store.ids(), tips=self.store.tips(),
-            known_policy_shas=self.store.policy_shas() | {cfg.policy_sha})
+            known_config_shas=self.store.config_shas() | {cfg.config_sha})
         return {"ok": not violations, "errors": violations}
 
     # -- writing ---------------------------------------------------------------
@@ -126,7 +137,7 @@ class Ledger:
             decided={"how": "signature", "passes": 1, "agreed": 1,
                      "who": os.environ.get("ZPLEDGER_ACTOR", "operator")},
             run={"id": f"genesis-{commit[:12]}", "started": _now(),
-                 "policy_sha": cfg.policy_sha,
+                 "config_sha": cfg.config_sha,
                  "env": {"note": note or "records begin here; nothing before it is claimed"}},
         )
         return {**self.append(rec), "commit": commit}
@@ -161,7 +172,7 @@ class Ledger:
             basis=basis, subjects=list(subjects or []), revision=revision,
             decided={"how": how, "passes": 1, "agreed": 1, "who": who},
             run={"id": run_id or os.environ.get("ZPLEDGER_RUN") or f"manual-{_now()}",
-                 "started": _now(), "policy_sha": cfg.policy_sha, "env": {}},
+                 "started": _now(), "config_sha": cfg.config_sha, "env": {}},
         )
         return self.append(rec)
 
@@ -200,7 +211,7 @@ class Ledger:
             **health,
             "config_ok": self.config is not None,
             "config_error": self.config_error,
-            "policy_sha": self.config.policy_sha if self.config else None,
+            "config_sha": self.config.config_sha if self.config else None,
             # ⚠ WHERE, not just WHAT. See `Config.paths`.
             **(self.config.paths() if self.config else {}),
             # ⚠ ON EVERY CALL, empty list included. A relaxation that only reports

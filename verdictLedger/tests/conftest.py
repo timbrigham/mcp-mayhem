@@ -79,7 +79,7 @@ def good(**over):
         "inputs": [],
         "revision": 0,
         "cost": {"seconds": 0.1, "usd": 0.0},
-        "run": {"id": "run-1", "started": None, "policy_sha": None, "env": {}},
+        "run": {"id": "run-1", "started": None, "config_sha": None, "env": {}},
     }
     rec.update(over)
     return rec

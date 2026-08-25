@@ -214,7 +214,7 @@ def emit(step, tier, verdict, subjects, basis, reason=None,
         "revision": revision,
         "cost": cost or {"seconds": None, "usd": 0.0},
         "run": {"id": os.environ.get("ZPLEDGER_RUN"), "started": None,
-                "policy_sha": None, "env": {}},
+                "config_sha": None, "env": {}},
     }
 
     last_error = None

@@ -209,7 +209,7 @@ async def policy() -> dict:
 def _sync_policy() -> dict:
     led = _ledger()
     cfg = led._require_config()
-    return {"policy": cfg.policy, "policy_sha": cfg.policy_sha,
+    return {"policy": cfg.policy, "config_sha": cfg.config_sha,
             "actions": cfg.actions, "min_passes": cfg.min_passes,
             "max_depth": cfg.max_depth, "genesis": cfg.genesis,
             # ⚠⚠ WHERE THE BAR WAS ACTUALLY READ FROM. Added 2026-08-25 after a
@@ -221,7 +221,7 @@ def _sync_policy() -> dict:
             # only because a sibling session went looking for the file and could not
             # find it.
             #
-            # ⚠ A `policy_sha` proves two readers see the same BYTES. It cannot tell
+            # ⚠ A `config_sha` proves two readers see the same BYTES. It cannot tell
             # either of them which FILE those bytes came from, which is the question
             # that was unanswerable.
             **cfg.paths()}
@@ -255,7 +255,7 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
     inv = inventory_mod.build(config=cfg, records=led.store.records(),
                               action=action, files=_files(ref), ref=ref,
                               admission=admission)
-    inv["policy_sha"] = cfg.policy_sha
+    inv["config_sha"] = cfg.config_sha
     inv["line"] = render_mod.render_inventory(inv)
     return inv
 
@@ -303,7 +303,7 @@ def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dic
                                rev_range=rev_range, action=action,
                                admission=admission,
                                commit_admission=commit_admission, limit=limit)
-    result["policy_sha"] = led._require_config().policy_sha
+    result["config_sha"] = led._require_config().config_sha
     result["line"] = canpush_mod.render(result)
     return result
 

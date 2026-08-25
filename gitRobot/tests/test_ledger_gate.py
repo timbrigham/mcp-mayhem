@@ -143,7 +143,7 @@ def test_the_question_asked_is_the_pushed_range(robot, repo, tmp_path,
         seen.append((rev_range, action))
         return {"ok": True, "allowed": True, "range": rev_range, "commits_in_range": 1,
                 "blocking_count": 0, "tip": robot.git.head(), "admitted": ["build"],
-                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "admission_state": "SET", "not_gating": [], "config_sha": "p",
                 "commits": [], "line": "ALLOWED"}
 
     monkeypatch.setattr(ledger_client, "can_push", spy)
@@ -171,7 +171,7 @@ def test_a_branch_with_no_remote_counterpart_publishes_everything(robot, repo,
         seen.append(rev_range)
         return {"ok": True, "allowed": True, "range": rev_range, "commits_in_range": 1,
                 "blocking_count": 0, "tip": "x", "admitted": ["build"],
-                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "admission_state": "SET", "not_gating": [], "config_sha": "p",
                 "commits": [], "line": "ALLOWED"}
 
     monkeypatch.setattr(ledger_client, "can_push", spy)
@@ -195,7 +195,7 @@ def test_the_hash_specificity_control(robot, repo, tmp_path, fake_gate, monkeypa
         return {"ok": True, "allowed": not short, "range": rev_range,
                 "commits_in_range": len(out), "blocking_count": len(short),
                 "tip": out[0] if out else None, "admitted": ["build"],
-                "admission_state": "SET", "not_gating": [], "policy_sha": "p",
+                "admission_state": "SET", "not_gating": [], "config_sha": "p",
                 "commits": [], "missing": ["build"] if short else [],
                 "line": "ALLOWED" if not short else "REFUSED  push  short"}
 
@@ -299,7 +299,7 @@ def test_an_allowed_push_records_the_inventory_that_authorised_it(robot, repo, t
     record = robot.audit.read()[-1]
     assert record["decision"] == "allowed"
     assert record["args"]["inventory_ref"] == robot.git.head()
-    assert record["args"]["policy_sha"] == "policy-sha"
+    assert record["args"]["config_sha"] == "policy-sha"
 
 
 def test_the_nested_repo_is_not_gated_by_the_ledger(robot, nested_local, tmp_path,

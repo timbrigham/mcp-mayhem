@@ -85,9 +85,24 @@ def _sha(path: Path) -> str:
 class Config:
     """Both config files plus the sha that identifies them together.
 
-    ``policy_sha`` covers BOTH files: a verdict is judged under the thresholds AND
+    ``config_sha`` covers BOTH files: a verdict is judged under the thresholds AND
     the type registry in force, so a change to either moves the bar. Recording one
     and not the other would let half the policy shift invisibly.
+
+    ⚠⚠ IT WAS CALLED ``policy_sha`` UNTIL 2026-08-25, AND THE NAME WAS A LIE THIS
+    VERY PARAGRAPH ALREADY CONTRADICTED. The text said "covers BOTH files"; the name
+    said it digests one. ZeroParadox edited only ``required.v2.json``, watched the
+    value move, and correctly reported that a field named for the policy file cannot
+    answer "which policy file is deployed".
+
+    ⚠ The name had already misled its own author: the registry-move handover told
+    ZeroParadox to expect ``policy_sha`` unchanged across the move, AS a policy-file
+    digest. That was wrong twice — once for line endings, once because it is a
+    composite. A name that misleads the person who wrote it will mislead everyone.
+
+    ⚠ RETIRED, NOT REDEFINED, following ``subjects[].sha256`` -> ``git_blob_id``: the
+    same defect and the same fix. Redefining a name in place leaves every prior reader
+    holding a meaning nobody will ever correct.
     """
 
     def __init__(self, policy_path, required_path):
@@ -96,7 +111,7 @@ class Config:
         self.policy = _read(self.policy_path, "policy")
         self.required = _read(self.required_path, "required")
         self._validate()
-        self.policy_sha = hashlib.sha256(
+        self.config_sha = hashlib.sha256(
             (_sha(self.policy_path) + _sha(self.required_path)).encode()).hexdigest()
 
     # -- schema checks, because a malformed policy must not half-apply ---------
@@ -178,7 +193,7 @@ class Config:
     def paths(self) -> dict:
         """The resolved locations of both config files, and how they were chosen.
 
-        ⚠ `policy_sha` answers "are we reading the same bytes?"; this answers "from
+        ⚠ `config_sha` answers "are we reading the same bytes?"; this answers "from
         where?". They are different questions and only the first one had an answer.
         """
         return {"policy_path": str(self.policy_path),

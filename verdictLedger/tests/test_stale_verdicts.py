@@ -243,3 +243,81 @@ def test_an_unscoped_step_still_owes_the_whole_tree(ledger):
                               files={"anything.md": "new"}, ref="t",
                               admission=["decls"])
     assert next(r for r in inv["rows"] if r["step"] == "decls")["status"] == "STALE"
+
+
+# -- ⭐⭐ THE GLOB SEMANTICS, PINNED — because a registry editor guessed them ----
+#
+# ZeroParadox asked, 2026-08-25: "if your matcher's glob semantics are documented
+# anywhere, I would rather read them than re-derive them." They were documented — in a
+# comment in `inventory.py`, which is not where anyone editing `required.v2.json`
+# stands. Now that the registry lives in ZeroParadox's repo, the semantics are one
+# repo away from the file they govern.
+#
+# The cost was already paid: it "fixed" a scope by ADDING a glob while leaving a
+# blanket exclusion in place, and wrote into the registry that the exclusions were
+# INERT because `*` does not cross `/`. That was inferred from an arithmetic
+# coincidence (two unrelated scopes both totalling 59) and it is FALSE. The fix was a
+# no-op wearing a rationale, and the rationale was about to become a recorded fact.
+#
+# So the answer lives in a control that fails if it ever stops being true.
+
+def test_star_crosses_slash(ledger):
+    """⭐⭐ `*` MATCHES `/`. `["*"]` therefore means EVERY path, not "top-level only".
+    This is `fnmatch`, not shell globbing, and it is the single fact that would have
+    prevented the near-miss above."""
+    files = {"README.md": "a", "docs/deep/x.md": "b", "tools/verify/y.py": "c"}
+    rec = [{"id": "decls@t#0", "step": "decls", "verdict": "PASS", "revision": 0,
+            "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+            "subjects": [{"path": p, "git_blob_id": b} for p, b in files.items()],
+            "basis": {"kind": "tree", "value": "t"}}]
+    inv = inventory_mod.build(config=ledger.config, records=rec, action="push",
+                              files=files, ref="t", admission=["decls"])
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["scope"] == 3, "an undeclared scope owes the whole tree"
+    assert row["status"] == "SATISFIED"
+
+
+def test_a_star_star_slash_prefix_MISSES_every_top_level_file(ledger, config_dir,
+                                                              tmp_path):
+    """⚠⚠ `**/*` IS WRONG RATHER THAN REDUNDANT, and it fails in the dangerous
+    direction: it requires at least one `/`, so every top-level file falls out of
+    scope silently. Anyone importing shell or gitignore intuitions writes this."""
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["decls"] = {"family": "mechanical", "scope": ["**/*"],
+                             "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "g.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+
+    files = {"README.md": "a", "docs/x.md": "b"}
+    inv = inventory_mod.build(config=led.config, records=[], action="push",
+                              files=files, ref="t", admission=["decls"])
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["scope"] == 1, "README.md must have fallen out — that is the defect"
+    assert "docs/x.md" not in (row["subjects_unscoped"] or [])
+
+
+def test_an_exclusion_cancels_an_inclusion_however_specific(ledger, config_dir,
+                                                            tmp_path):
+    """⭐ THE NEAR-MISS ITSELF: adding a precise glob to `scope` while a blanket
+    `scope_exclude` still matches those paths is a NO-OP. Exclusions are applied after
+    inclusions and do not care how specific the inclusion was."""
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["decls"] = {"family": "mechanical",
+                             "scope": ["*.md", ".claude/commands/*.md"],
+                             "scope_exclude": [".claude/*.md"], "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "h.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+
+    files = {"README.md": "a", ".claude/commands/rely.md": "b"}
+    inv = inventory_mod.build(config=led.config, records=[], action="push",
+                              files=files, ref="t", admission=["decls"])
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["scope"] == 1, (
+        "the blanket exclusion cancelled the specific inclusion — which is exactly "
+        "the no-op-wearing-a-rationale that was nearly recorded as a measured fact")

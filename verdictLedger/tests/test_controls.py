@@ -299,10 +299,10 @@ def test_a_different_verdict_over_the_same_content_is_a_second_record(ledger):
 def test_the_key_ignores_timing_and_run(ledger):
     a = ledger.append(good(cost={"seconds": 0.1, "usd": 0.0},
                            run={"id": "run-1", "started": None,
-                                "policy_sha": None, "env": {}}))
+                                "config_sha": None, "env": {}}))
     b = ledger.append(good(cost={"seconds": 99.9, "usd": 12.0},
                            run={"id": "run-2", "started": None,
-                                "policy_sha": None, "env": {}}))
+                                "config_sha": None, "env": {}}))
     assert a["id"] == b["id"], "wall clock or run id leaked into the key"
 
 

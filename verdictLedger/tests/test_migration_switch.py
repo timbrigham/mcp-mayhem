@@ -195,7 +195,7 @@ def test_an_explicit_config_directory_is_named_as_the_source(tmp_path, config_di
 
 # -- ⭐⭐ the bar's identity survives transport ---------------------------------
 
-def test_policy_sha_is_the_same_across_line_endings(tmp_path, config_dir):
+def test_config_sha_is_the_same_across_line_endings(tmp_path, config_dir):
     """⭐⭐ MEASURED 2026-08-25 DURING THE REGISTRY MOVE. `policy.v1.json` went from
     `6c62b62b…` to `380f4a70…` on being copied into ZeroParadox, because that repo's
     `.gitattributes` mandates LF for `*.json` and the file arrived CRLF.
@@ -218,8 +218,8 @@ def test_policy_sha_is_the_same_across_line_endings(tmp_path, config_dir):
     a.write_bytes(lf)
     b.write_bytes(crlf)
     req = config_dir / "required.v2.json"
-    sha_a = Ledger(tmp_path / "1.jsonl", policy_path=a, required_path=req).config.policy_sha
-    sha_b = Ledger(tmp_path / "2.jsonl", policy_path=b, required_path=req).config.policy_sha
+    sha_a = Ledger(tmp_path / "1.jsonl", policy_path=a, required_path=req).config.config_sha
+    sha_b = Ledger(tmp_path / "2.jsonl", policy_path=b, required_path=req).config.config_sha
     assert sha_a == sha_b
 
 
@@ -233,16 +233,16 @@ def test_a_bom_does_not_change_the_bar(tmp_path, config_dir):
     bommed.write_bytes(b"\xef\xbb\xbf" + src.read_bytes())
     req = config_dir / "required.v2.json"
     assert (Ledger(tmp_path / "3.jsonl", policy_path=plain,
-                   required_path=req).config.policy_sha
+                   required_path=req).config.config_sha
             == Ledger(tmp_path / "4.jsonl", policy_path=bommed,
-                      required_path=req).config.policy_sha)
+                      required_path=req).config.config_sha)
 
 
 def test_a_real_policy_change_still_moves_the_sha(tmp_path, config_dir):
     """⚠⚠ THE CONTROL, AND WITHOUT IT THE FIX IS INDISTINGUISHABLE FROM BREAKING V10.
     Normalising encoding must not normalise away CONTENT — a changed threshold is a
     changed bar and the sha must say so."""
-    before = _led(config_dir, tmp_path, True).config.policy_sha
+    before = _led(config_dir, tmp_path, True).config.config_sha
     set_policy(config_dir, **{"agreement.min_passes": 4})
-    after = _led(config_dir, tmp_path, True).config.policy_sha
+    after = _led(config_dir, tmp_path, True).config.config_sha
     assert before != after

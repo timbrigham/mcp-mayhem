@@ -164,7 +164,7 @@ def empty_record(**over: Any) -> dict:
         "inputs": [],
         "revision": 0,
         "cost": {"seconds": None, "usd": 0.0, "lock_wait_seconds": None},
-        "run": {"id": None, "started": None, "policy_sha": None, "env": {}},
+        "run": {"id": None, "started": None, "config_sha": None, "env": {}},
     }
     rec.update(over)
     return rec

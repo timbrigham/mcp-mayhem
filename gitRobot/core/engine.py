@@ -518,7 +518,11 @@ class GitRobot:
             args = {**args, "inventory_ref": inv.get("tip") or inv.get("ref"),
                     "inventory_range": inv.get("range"),
                     "commits_gated": inv.get("commits_in_range"),
-                    "policy_sha": inv.get("policy_sha"),
+                    # ⚠ RENAMED 2026-08-25: the ledger key is config_sha, because it
+                    # covers the policy AND the registry. Reading the old key here
+                    # would have silently written null into every push audit row --
+                    # the audit still LOOKS complete, which is the shape that hides.
+                    "config_sha": inv.get("config_sha"),
                     "admission": inv.get("admitted")}
         return self._receipt(
             "push", args, decision, gates=gates, reason=reason, detail=result.output,

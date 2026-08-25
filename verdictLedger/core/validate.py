@@ -88,7 +88,7 @@ def structural(record: dict) -> list[str]:
 
 
 def rules(record: dict, *, config: Config, existing_ids: set,
-          tips: Optional[dict] = None, known_policy_shas: Optional[set] = None) -> list[str]:
+          tips: Optional[dict] = None, known_config_shas: Optional[set] = None) -> list[str]:
     """V1–V16. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
     out: list[str] = []
     basis = record.get("basis") or {}
@@ -217,12 +217,21 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                    "not the caller's imagination")
 
     # V10 — policy changes silently re-qualifying every past record.
-    ps = run.get("policy_sha")
+    ps = run.get("config_sha")
     if not (ps or "").strip():
-        out.append("V10: run.policy_sha is required — a verdict must be interpretable "
-                   "against the bar that was in force")
-    elif known_policy_shas is not None and ps not in known_policy_shas:
-        out.append(f"V10: run.policy_sha {ps[:12]}… names a policy the ledger has "
+        if (run.get("policy_sha") or "").strip():
+            # ⚠ NAME THE RENAME. A caller still sending the old key is not making a
+            # generic mistake, and "run.config_sha is required" would send them
+            # looking for a field they think they already set.
+            out.append("V10: run.policy_sha was RENAMED to run.config_sha on "
+                       "2026-08-25 — it covers the policy AND the registry, and a name "
+                       "saying otherwise misled its own author. Leave it null and the "
+                       "server stamps it; do not copy the old key forward.")
+        else:
+            out.append("V10: run.config_sha is required — a verdict must be "
+                       "interpretable against the bar that was in force")
+    elif known_config_shas is not None and ps not in known_config_shas:
+        out.append(f"V10: run.config_sha {ps[:12]}… names a config the ledger has "
                    f"never seen; the field would otherwise be decorative")
 
     # V11 / V13 — branching and endless regrading, both scoped to one basis.
@@ -301,7 +310,7 @@ def rules(record: dict, *, config: Config, existing_ids: set,
 
 
 def validate(record: dict, *, config: Config, existing_ids=None, tips=None,
-             known_policy_shas=None) -> list[str]:
+             known_config_shas=None) -> list[str]:
     """Everything, structural first. Returns [] when the record is acceptable."""
     out = structural(record)
     if any(v.startswith(("record must", "schema must", "step must", "verdict must",
@@ -311,7 +320,7 @@ def validate(record: dict, *, config: Config, existing_ids=None, tips=None,
         return out
     return out + rules(record, config=config,
                        existing_ids=existing_ids if existing_ids is not None else set(),
-                       tips=tips, known_policy_shas=known_policy_shas)
+                       tips=tips, known_config_shas=known_config_shas)
 
 
 # -- the subject identity must be one git could have produced -------------------

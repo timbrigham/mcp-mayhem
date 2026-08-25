@@ -128,8 +128,23 @@ class Store:
                 entry["latest"] = r
         return out
 
-    def policy_shas(self) -> set:
-        return {(r.get("run") or {}).get("policy_sha") for r in self}
+    def config_shas(self) -> set:
+        """Every config identity the stream has ever seen, NEW NAME AND OLD.
+
+        ⚠ `run.policy_sha` was renamed to `run.config_sha` on 2026-08-25. Records
+        written before that keep the old key, and they are never rewritten — the
+        stream is append-only, and editing 235 historical records to tidy a field name
+        would be the one operation this whole design exists to make impossible.
+
+        So both are read here, and ONLY here. V10 asks a set-membership question, and
+        for that question the two keys carry the same fact; nothing downstream sees a
+        heterogeneous stream because nothing downstream asks.
+        """
+        out = set()
+        for r in self:
+            run = r.get("run") or {}
+            out.add(run.get("config_sha") or run.get("policy_sha"))
+        return out
 
     def genesis(self) -> Optional[dict]:
         for r in self:

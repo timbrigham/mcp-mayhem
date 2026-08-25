@@ -104,7 +104,7 @@ def _range_answer(rev_range, *, allowed, commits=1, blocking=0, admission_state=
             "commits_in_range": commits, "blocking_count": blocking,
             "tip": extra.pop("tip", "deadbeef"), "admitted": list(admitted),
             "admission_state": admission_state, "not_gating": [],
-            "policy_sha": "policy-sha", "commits": [], "missing": [], "stale": [],
+            "config_sha": "policy-sha", "commits": [], "missing": [], "stale": [],
             "failed": [], "legacy": [], "line": line, **extra}
 
 
@@ -125,7 +125,7 @@ def ledger_ok(monkeypatch, repo):
     def fake_inventory(ref, action, admission=None):
         return {"ok": True, "complete": True, "ref": ref, "action": action,
                 "admitted": ["build"], "admission_state": "SET",
-                "policy_sha": "policy-sha", "required": 1, "satisfied": 1,
+                "config_sha": "policy-sha", "required": 1, "satisfied": 1,
                 "registered_not_admitting": [], "line": "ALLOWED"}
 
     monkeypatch.setattr(ledger_client, "can_push", fake_can_push)
@@ -148,7 +148,7 @@ def ledger_refuses(monkeypatch):
     def fake_inventory(ref, action, admission=None):
         return {"ok": True, "complete": False, "ref": ref, "action": action,
                 "admitted": ["build", "check_prose"], "admission_state": "SET",
-                "policy_sha": "policy-sha", "required": 2, "satisfied": 0,
+                "config_sha": "policy-sha", "required": 2, "satisfied": 0,
                 "registered_not_admitting": ["check_pov"],
                 "line": "REFUSED  push  0/2 admission keys"}
 
@@ -173,7 +173,7 @@ def ledger_empty(monkeypatch):
 
     def fake_inventory(ref, action, admission=None):
         return {"ok": True, "complete": True, "ref": ref, "action": action,
-                "admitted": [], "admission_state": "EMPTY", "policy_sha": "policy-sha",
+                "admitted": [], "admission_state": "EMPTY", "config_sha": "policy-sha",
                 "required": 0, "satisfied": 0,
                 "registered_not_admitting": ["build", "check_prose", "check_pov"],
                 "line": f"{action}  0/0 admission keys"}
