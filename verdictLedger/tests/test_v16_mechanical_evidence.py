@@ -231,3 +231,39 @@ def test_a_different_checker_is_a_different_fact_not_a_duplicate(ledger):
     with pytest.raises(ValidationFailure, match="V11"):
         ledger.append(good(evidence=[{"path": "tools/verify/other.py",
                                       "git_blob_id": "c" * 40}]))
+
+
+# -- ⚠ the cutover artefact V11 refused, and the message that misled -----------
+
+def test_v11_names_the_field_that_differs(ledger):
+    """⚠ MEASURED BY ZEROPARADOX 2026-08-25 DURING THIS CUTOVER. It re-ran a checker
+    at an unchanged index; the new record carried `evidence` where the stored one did
+    not. V11 was RIGHT to refuse — evidence is in `payload()`, so a record naming
+    different code is a different fact, not a duplicate — but it said only
+    "branching", and a one-field delta read as a conflict. The reader went looking for
+    a second record that did not exist.
+
+    A record differing in nothing never reaches V11 at all: `append` dedupes identical
+    payloads. So there is always a field to name.
+    """
+    # ⚠ The cutover's own delta was evidence-absent -> evidence-present, which V16
+    # now makes unappendable, so the probe uses the same field with a MOVED value.
+    # Identical shape of conflict, expressible after the flip.
+    ledger.append(good())
+    with pytest.raises(ValidationFailure) as exc:
+        ledger.append(good(evidence=[{"path": MODULE, "git_blob_id": "d" * 40}]))
+    msg = str(exc.value)
+    assert "V11" in msg
+    assert "DIFFERENT evidence" in msg
+    assert "would have deduped silently" in msg
+
+
+def test_an_unchanged_re_run_still_dedupes_rather_than_conflicting(ledger):
+    """⚠⚠ THE CONTROL, and the half that keeps the above from reading as "re-running a
+    checker is now an error". Re-running with nothing changed is the ORDINARY case and
+    must stay free: same key, same payload, `appended: false`."""
+    first = ledger.append(good())
+    again = ledger.append(good())
+    assert first["appended"] is True
+    assert again["appended"] is False
+    assert "identical record already present" in again["reason"]

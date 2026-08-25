@@ -241,9 +241,26 @@ def rules(record: dict, *, config: Config, existing_ids: set,
             # compare PAYLOADS — the key alone cannot tell a duplicate from a
             # conflict, because both share it by definition.
             if occupant is not None and schema.payload(occupant) != schema.payload(record):
+                # ⚠ NAME WHAT DIFFERS. Measured by ZeroParadox 2026-08-25 during the
+                # V16 cutover: it re-ran a checker at an unchanged index, the record
+                # now carried `evidence` where the stored one did not, and V11
+                # correctly refused it — but said only "branching", so a one-field
+                # delta read as a conflict. The rule was right; the message sent
+                # someone hunting for a second record that did not exist.
+                #
+                # ⚠ A record differing in NOTHING never reaches here — `append`
+                # dedupes identical payloads. So there is always a field to name, and
+                # refusing to name it is withholding the only thing the caller needs.
+                was, now = schema.payload(occupant), schema.payload(record)
+                differs = sorted(k for k in set(was) | set(now)
+                                 if was.get(k) != now.get(k))
                 out.append(f"V11: revision {rev} already exists for step {step!r} at this "
-                           f"basis — (step, basis, revision) is unique, so branching is "
-                           f"unrepresentable rather than merely detected")
+                           f"basis, with a DIFFERENT {', '.join(differs)} — "
+                           f"(step, basis, revision) is unique, so branching is "
+                           f"unrepresentable rather than merely detected. An identical "
+                           f"record would have deduped silently; this one is a second, "
+                           f"conflicting claim about the same content. Supersede it with "
+                           f"revision {rev + 1}, or fix the field that moved.")
             if rev > 0 and seen is not None and (rev - 1) not in seen.get("revisions", {}):
                 out.append(f"V11: revision {rev} has no revision {rev - 1} to supersede "
                            f"at this basis — a chain never crosses bases")
