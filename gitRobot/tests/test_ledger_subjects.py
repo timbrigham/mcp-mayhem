@@ -174,3 +174,38 @@ def test_it_writes_no_ledger_row_and_is_audited_as_a_mutation(robot, repo):
     last = robot.audit.read()[-1]
     assert last["op"] == "ledger_subjects"
     assert last["decision"] == "allowed"
+
+
+# -- ⚠⚠ the bug the unit fixtures could not see -------------------------------
+
+def test_a_dotfile_path_is_a_normal_subject(robot, repo):
+    """⚠⚠ FOUND ON THE FIRST LIVE CALL, NOT BY THIS SUITE. The normaliser used
+    `lstrip("./")`, which strips CHARACTERS rather than a prefix — so
+    `.claude/commands/x.md` became `claude/commands/x.md` and every dotfile path was
+    fenced as "not a repo-relative path". The fixtures all used plain names, so the
+    suite was green while the tool rejected an entire class of real input.
+
+    ⚠ It matters here specifically: the twelve gate BRIEFS live under `.claude/`, and
+    they are both review subjects and V17 evidence. The tool would have refused to
+    name any of them."""
+    _write(repo, ".hidden.txt", "dotfile\n")
+    (repo / ".claude").mkdir()
+    _write(repo, ".claude/brief.md", "a gate brief\n")
+    _git(repo, "add", ".hidden.txt", ".claude/brief.md")
+
+    out = robot.ledger_subjects({".hidden.txt": _blob(repo, ".hidden.txt"),
+                                 ".claude/brief.md": _blob(repo, ".claude/brief.md")})
+    assert out["skipped"] == [], out["skipped"]
+    assert sorted(s["path"] for s in out["subjects"]) == [
+        ".claude/brief.md", ".hidden.txt"]
+
+
+def test_traversal_and_absolute_paths_are_still_refused(robot, repo):
+    """⚠ THE CONTROL ON THE FIX. Loosening the normaliser must not let a path out of
+    the repository become a subject."""
+    b = _blob(repo, "tracked.txt")
+    out = robot.ledger_subjects({"../escape.txt": b, "/etc/passwd": b,
+                                 "C:/Windows/x.txt": b})
+    assert out["subjects"] == []
+    assert len(out["skipped"]) == 3
+    assert all("not a repo-relative path" in s["why"] for s in out["skipped"])

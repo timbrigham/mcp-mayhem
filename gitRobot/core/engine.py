@@ -955,11 +955,21 @@ class GitRobot:
         subjects, skipped = [], []
         for path in sorted(observed):
             seen = observed[path].strip()
-            rel = path.replace("\\", "/").lstrip("./")
-            if rel != path.replace("\\", "/") or path.startswith("/") or ":" in path:
+            # ⚠⚠ `lstrip("./")` STRIPS CHARACTERS, NOT A PREFIX, AND THAT WAS A LIVE
+            # BUG. It turned `.claude/commands/x.md` into `claude/commands/x.md`, so
+            # EVERY DOTFILE PATH was reported as "not a repo-relative path" — and the
+            # unit fixtures never caught it because none of their paths began with a
+            # dot. Found on the first call against the real repository, which is the
+            # argument for making that call rather than trusting a green suite.
+            rel = path.replace("\\", "/")
+            if rel.startswith("./"):
+                rel = rel[2:]
+            if (rel.startswith("/") or ":" in rel or rel.startswith("../")
+                    or "/../" in rel or rel in ("", "..", ".")):
                 skipped.append({"path": path, "why": "not a repo-relative path; "
-                                "`git ls-files` prints forward-slashed relative paths "
-                                "and that is what a subject must carry"})
+                                "`git ls-files` prints forward-slashed paths relative "
+                                "to the repo root, and that is what a subject must "
+                                "carry. Absolute paths and `..` traversal are refused"})
                 continue
             actual = at_ref.get(rel)
             if actual is None:
