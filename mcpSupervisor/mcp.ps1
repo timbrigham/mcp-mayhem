@@ -67,6 +67,29 @@ switch ($Command) {
       }
     }
     $rows | Format-Table -AutoSize
+
+    # ⚠⚠ REPORT THE AGE OF THE LAST BACKUP THAT ACTUALLY REACHED THE REMOTE, on every
+    # status call, loudly when it is stale or has never worked.
+    #
+    # A backup that has been quietly failing for a week is indistinguishable from one
+    # that is working, right up until the moment you need it -- which is the exact
+    # defect class the servers this supervisor watches exist to eliminate. Silence is
+    # never success. `Get-McpBackupAge` keys on the last PUSH, not the last attempt and
+    # not the last commit: "it ran" and "it worked" are different facts, and only the
+    # second one is a backup.
+    if (-not $Name) {
+      $m = Get-McpManifest
+      $repo = if ($m.PSObject.Properties.Name -contains 'backupRepo') { Resolve-McpToken $m.backupRepo } else { Join-Path $PSScriptRoot '..\.mcp-local' }
+      $every = if ($m.PSObject.Properties.Name -contains 'backupMinutes') { [int]$m.backupMinutes } else { 30 }
+      $age = Get-McpBackupAge -RepoPath $repo
+      if (-not $age.Ever) {
+        Write-Host ("BACKUP: NEVER REACHED THE REMOTE - {0}" -f $age.Note) -ForegroundColor Red
+      } elseif ($age.Minutes -gt (3 * $every)) {
+        Write-Host ("BACKUP: STALE - last offsite {0} min ago, expected every {1} min" -f $age.Minutes, $every) -ForegroundColor Red
+      } else {
+        Write-Host ("backup: offsite {0} min ago (every {1} min)" -f $age.Minutes, $every)
+      }
+    }
     break
   }
 

@@ -63,7 +63,17 @@ $lastState = @{}      # server name -> last Health, for change-only logging
 $heartbeatEvery = 20  # ticks between "all healthy" heartbeat lines
 $tick = 0
 
-Write-McpLog "supervisor starting (pid $PID, poll ${poll}s, $($manifest.servers.Count) servers)"
+# ⚠ THE RUN-DATA BACKUP. 30 minutes rather than the poll interval, on purpose: the
+# poll exists to catch a dead server within seconds, while committing an append-only
+# stream every 30s would produce ~2900 commits a day and make `git log` useless --
+# which is precisely what verdictLedger.md §7 warned about when it argued the stream
+# should live in no repo at all. Config, not a constant, like every other threshold.
+$backupMins = if ($manifest.PSObject.Properties.Name -contains 'backupMinutes') { [int]$manifest.backupMinutes } else { 30 }
+$backupRepo = if ($manifest.PSObject.Properties.Name -contains 'backupRepo') { Resolve-McpToken $manifest.backupRepo } else { Join-Path $PSScriptRoot '..\.mcp-local' }
+$backupEvery = [Math]::Max(1, [int][Math]::Round(($backupMins * 60) / $poll))
+$lastBackupTick = 0
+
+Write-McpLog "supervisor starting (pid $PID, poll ${poll}s, $($manifest.servers.Count) servers, backup every ${backupMins}m -> $backupRepo)"
 
 try {
   while ($true) {
@@ -97,6 +107,14 @@ try {
     }
     if ($allHealthy -and ($tick % $heartbeatEvery -eq 0)) {
       Write-McpLog "heartbeat: all $($manifest.servers.Count) servers healthy"
+    }
+
+    # ⚠ Backup LAST, and never inside the per-server try: a git failure must not be
+    # mistaken for a server fault. Invoke-McpBackup is written never to throw, so the
+    # poll loop -- the reason this process exists -- cannot be killed by a backup.
+    if (($tick - $lastBackupTick) -ge $backupEvery) {
+      $lastBackupTick = $tick
+      $null = Invoke-McpBackup -RepoPath $backupRepo -Reason "supervisor tick $tick"
     }
     Start-Sleep -Seconds $poll
   }

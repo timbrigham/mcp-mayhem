@@ -292,7 +292,142 @@ function Repair-McpServer {
   return $h2
 }
 
+function Test-McpStreamIntact {
+  <#
+    .SYNOPSIS
+      Does every .jsonl in the backup repo end in a COMPLETE record?
+
+    ⚠⚠ THE SUPERVISOR CANNOT TAKE THE LEDGER'S WRITE LOCK, so it may look at
+    records.jsonl in the middle of an append. A record can exceed 46 KB (452 subjects)
+    and a write that large is not atomic on Windows, so a commit taken at the wrong
+    instant would capture a TORN LINE.
+
+    That is worse than skipping a round: the backup would look successful, and the
+    corruption would only surface on the restore, which is the one moment nobody can
+    afford a surprise. Appends only ever land at the end, so the last line is the only
+    place a tear can be — check it, and if it does not parse, do nothing and try again
+    in 30 minutes. The stream is append-only, so a skipped round loses nothing.
+  #>
+  param([Parameter(Mandatory)][string]$RepoPath)
+  foreach ($f in Get-ChildItem -Path $RepoPath -Filter '*.jsonl' -Recurse -File) {
+    $last = Get-Content -Path $f.FullName -Tail 1 -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($last)) { continue }
+    try { $null = $last | ConvertFrom-Json -ErrorAction Stop }
+    catch { return [pscustomobject]@{ Ok = $false; File = $f.Name } }
+  }
+  return [pscustomobject]@{ Ok = $true; File = $null }
+}
+
+function Invoke-McpBackup {
+  <#
+    .SYNOPSIS
+      Commit and push the run-data repo. NEVER throws.
+
+    ⚠⚠ IT MUST NOT BE ABLE TO KILL THE SUPERVISOR. The supervisor's job is keeping
+    servers up; a backup is strictly secondary. A network blip, an expired credential
+    or a locked file must log and move on, never break the poll loop that is the
+    reason this process exists.
+
+    ⚠⚠ AND A FAILING BACKUP MUST BE LOUD. Every outcome is written to
+    `last-backup.json`, including failures, so `mcp.ps1 status` can report the AGE of
+    the last SUCCESS rather than the age of the last attempt. A backup that has been
+    quietly failing for a week is indistinguishable from one that is working right up
+    until you need it — which is the exact defect class the servers this supervisor
+    watches exist to eliminate. Silence is never success.
+
+    ⚠ A local commit still counts as progress even when the push fails: history is
+    kept, it is simply not offsite yet. The two are reported separately for that
+    reason -- conflating them would hide an auth failure behind a green commit.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$RepoPath,
+    [string]$Reason = 'scheduled'
+  )
+  $marker = Join-Path $RepoPath 'last-backup.json'
+  $result = [ordered]@{
+    at = (Get-Date).ToString('o'); reason = $Reason
+    committed = $false; pushed = $false; skipped = $null; error = $null
+  }
+  try {
+    if (-not (Test-Path (Join-Path $RepoPath '.git'))) {
+      $result.skipped = "no git repository at $RepoPath"
+      Write-McpLog -Level 'WARN' -Message "backup: $($result.skipped)"
+      return $result
+    }
+
+    $intact = Test-McpStreamIntact -RepoPath $RepoPath
+    if (-not $intact.Ok) {
+      # Not an error. A torn tail means a write was in flight; the next round gets it.
+      $result.skipped = "$($intact.File) ends mid-record (a write was in flight) - skipping, the stream is append-only so nothing is lost"
+      Write-McpLog -Message "backup: $($result.skipped)"
+      return $result
+    }
+
+    $null = git -C $RepoPath add -A
+    $null = git -C $RepoPath diff --cached --quiet
+    if ($LASTEXITCODE -eq 0) {
+      $result.skipped = 'nothing changed'
+      return $result          # ⚠ no empty commits; they make `git log` unreadable
+    }
+
+    $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    $msg = "run data $stamp ($Reason)"
+    $null = git -C $RepoPath -c user.name='mcpSupervisor' -c user.email='mcp@localhost' commit -q -m $msg
+    if ($LASTEXITCODE -ne 0) {
+      $result.error = 'commit failed'
+      Write-McpLog -Level 'ERROR' -Message 'backup: commit failed'
+      return $result
+    }
+    $result.committed = $true
+
+    $null = git -C $RepoPath push -q origin HEAD
+    if ($LASTEXITCODE -eq 0) {
+      $result.pushed = $true
+      Write-McpLog -Message "backup: committed and pushed ($Reason)"
+    } else {
+      # ⚠ Committed but NOT offsite. Reported distinctly, and WARN so it surfaces.
+      $result.error = 'push failed - committed locally, NOT offsite'
+      Write-McpLog -Level 'WARN' -Message "backup: $($result.error)"
+    }
+  } catch {
+    $result.error = $_.Exception.Message
+    Write-McpLog -Level 'ERROR' -Message "backup: $($result.error)"
+  } finally {
+    try { ($result | ConvertTo-Json -Compress) | Set-Content -Path $marker -Encoding utf8 } catch { }
+  }
+  return $result
+}
+
+function Get-McpBackupAge {
+  <#
+    .SYNOPSIS
+      How long since the last backup that actually reached the remote.
+
+    ⚠ Deliberately keyed on the last PUSH, not the last attempt and not the last
+    commit. "It ran" and "it worked" are different facts, and only the second one is
+    a backup.
+  #>
+  param([Parameter(Mandatory)][string]$RepoPath)
+  $marker = Join-Path $RepoPath 'last-backup.json'
+  if (-not (Test-Path $marker)) {
+    return [pscustomobject]@{ Ever = $false; Minutes = $null; Note = 'no backup has ever run' }
+  }
+  try {
+    $m = Get-Content -Raw -Path $marker | ConvertFrom-Json
+    if (-not $m.pushed) {
+      return [pscustomobject]@{ Ever = $false; Minutes = $null
+                                Note = "last attempt $($m.at) did not reach the remote: $($m.error)" }
+    }
+    $mins = [int]((Get-Date) - [datetime]$m.at).TotalMinutes
+    return [pscustomobject]@{ Ever = $true; Minutes = $mins; Note = $null }
+  } catch {
+    return [pscustomobject]@{ Ever = $false; Minutes = $null; Note = 'last-backup.json unreadable' }
+  }
+}
+
+
 Export-ModuleMember -Function `
   Write-McpLog, Get-McpManifest, Resolve-McpToken, Get-McpServer, Get-McpListenerPid, Get-McpChildProcess, `
   Get-McpServerProcess, Test-McpHttp, Get-McpHealth, Stop-McpServer, Test-McpRequiredEnv, `
-  Resolve-McpExe, Start-McpServer, Repair-McpServer
+  Resolve-McpExe, Start-McpServer, Repair-McpServer, `
+  Test-McpStreamIntact, Invoke-McpBackup, Get-McpBackupAge
