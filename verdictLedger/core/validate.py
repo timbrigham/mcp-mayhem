@@ -306,10 +306,34 @@ def rules(record: dict, *, config: Config, existing_ids: set,
         out.append(f"V8: step {step!r} is not registered in required.v2.json — "
                    f"an unregistered check cannot record, so it cannot silently not count")
 
-    # V9 — a hand-written record indistinguishable from a pipeline one.
+    # V9 — a record that cannot be tied to the run that produced it. Without it,
+    # cost-per-run and first-failure-latency are uncomputable and two verdicts from
+    # one sweep cannot be told from two sweeps.
+    #
+    # ⚠⚠ THE MESSAGE USED TO SAY run.id "comes from the pipeline, NOT THE CALLER'S
+    # IMAGINATION", AND THAT SENT A READER THE WRONG WAY. Measured 2026-08-26:
+    # ZeroParadox ran seven stale checkers by hand, was refused by V9 on every one, and
+    # concluded "the only way to refresh those keys is to let hooks.py run them" —
+    # a whole preflight cycle to do what one exported variable does.
+    #
+    # It is FALSE that a caller cannot supply it. `record.emit` reads
+    # `os.environ["ZPLEDGER_RUN"]`, so ANY caller sets it the same way the pipeline
+    # does. Nothing here distinguishes a pipeline run from an exported string, and the
+    # old wording claimed it did — the same overclaim V16 is careful not to make. This
+    # is ATTRIBUTION, not authentication: it ties a verdict to a named run so a reader
+    # can find the others from that run, and that is the whole claim.
+    #
+    # ⚠ §3's rule applies to a validation refusal as much as to a git one: a refusal
+    # that does not name the alternative is how a workaround gets invented. Name it.
     if not (run.get("id") or "").strip():
-        out.append("V9: run.id is required and comes from the pipeline (ZPLEDGER_RUN), "
-                   "not the caller's imagination")
+        out.append("V9: run.id is required — a verdict that cannot be tied to the run "
+                   "that produced it makes cost-per-run and first-failure-latency "
+                   "uncomputable, and two verdicts from one sweep indistinguishable "
+                   "from two sweeps. SUPPLY IT: export ZPLEDGER_RUN=<name> before the "
+                   "checker (record.emit reads it from the environment, so a hand-run "
+                   "sets it exactly the way the pipeline does), or pass --run on the "
+                   "CLI. It is ATTRIBUTION, not authentication — nothing here can tell "
+                   "a pipeline run from an exported string, and it does not try to.")
 
     # V10 — policy changes silently re-qualifying every past record.
     ps = run.get("config_sha")

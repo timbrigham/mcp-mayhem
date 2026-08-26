@@ -519,3 +519,36 @@ def test_history_written_under_the_old_key_stays_known(ledger):
                              run={"id": "r", "started": None,
                                   "policy_sha": "1" * 64, "env": {}}))
     assert "1" * 64 in ledger.store.config_shas()
+
+
+# -- ⚠ V9's refusal must name how to satisfy it -------------------------------
+
+def test_v9_names_how_to_supply_the_run_id(ledger):
+    """⚠⚠ MEASURED COST OF A REFUSAL THAT NAMED NO ALTERNATIVE, 2026-08-26. The old
+    message said run.id "comes from the pipeline (ZPLEDGER_RUN), not the caller's
+    imagination". ZeroParadox ran seven stale checkers by hand, was refused on every
+    one, and concluded the only way to refresh those keys was to let `hooks.py` run
+    them — a whole preflight cycle to do what one exported variable does.
+
+    It is FALSE that a caller cannot supply it: `record.emit` reads
+    `os.environ["ZPLEDGER_RUN"]`, so a hand-run sets it exactly the way the pipeline
+    does. §3's rule holds for a validation refusal as much as a git one — a refusal
+    that does not name the alternative is how a workaround gets invented, and here it
+    invented a costly one."""
+    found = [e for e in errs(ledger, good(
+        run={"id": "", "started": None, "config_sha": None, "env": {}}))
+        if e.startswith("V9")]
+    assert found
+    assert "ZPLEDGER_RUN=" in found[0], "the refusal must name the alternative"
+    assert "--run" in found[0]
+
+
+def test_v9_does_not_claim_to_authenticate_the_run(ledger):
+    """⚠ The old wording claimed the value came FROM the pipeline, which nothing
+    verifies — the same overclaim V16 is careful not to make. Attribution, not
+    authentication, and the message says so rather than implying otherwise."""
+    found = [e for e in errs(ledger, good(
+        run={"id": "", "started": None, "config_sha": None, "env": {}}))
+        if e.startswith("V9")][0]
+    assert "ATTRIBUTION, not authentication" in found
+    assert "caller's imagination" not in found
