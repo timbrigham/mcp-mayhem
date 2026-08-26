@@ -1,4 +1,4 @@
-"""V1–V16. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
+"""V1–V18. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
 
 ⚠ Every violation is returned, never just the first. A caller fixing one rule per
 round trip is a caller who stops using the thing.
@@ -71,6 +71,20 @@ def structural(record: dict) -> list[str]:
             if bad:
                 out.append(f"evidence[{i}] {bad}")
 
+    out_list = record.get("outstanding")
+    if not isinstance(out_list, list):
+        out.append("outstanding must be an array")
+    else:
+        for i, o in enumerate(out_list):
+            if not isinstance(o, dict):
+                out.append(f"outstanding[{i}] must be an object")
+                continue
+            if not (o.get("severity") or "").strip():
+                out.append(f"outstanding[{i}] needs a severity")
+            if not (o.get("note") or "").strip():
+                out.append(f"outstanding[{i}] needs a note — a finding nobody can "
+                           f"read is not carried, it is lost")
+
     decided = record.get("decided")
     if not isinstance(decided, dict):
         out.append("decided must be an object")
@@ -89,7 +103,7 @@ def structural(record: dict) -> list[str]:
 
 def rules(record: dict, *, config: Config, existing_ids: set,
           tips: Optional[dict] = None, known_config_shas: Optional[set] = None) -> list[str]:
-    """V1–V16. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
+    """V1–V18. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
     out: list[str] = []
     basis = record.get("basis") or {}
     decided = record.get("decided") or {}
@@ -207,6 +221,44 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                 "That is what makes the verdict expire when the brief changes, and it "
                 "is the whole of the accountability: not who ran it, but under which "
                 "instructions, over which bytes.")
+
+    # V18 — ⭐⭐ A PASS MAY CARRY FINDINGS, AND ONLY ORDINARY ONES.
+    # Tim ruled 2026-08-26 that STOP-ORDINARY is a PASS condition: reviewed, ordinary
+    # findings outstanding, loop cap reached, PROCEED. Before this the record had only
+    # pass and fail, so editorial round 6 recorded FAIL with the reason line explaining
+    # itself — the agent refusing to paper over a vocabulary gap, which was right.
+    #
+    # ⚠⚠ THE SEVERITY SPLIT IS THE ENTIRE SAFETY OF THIS, so `ordinary` is the ONLY
+    # value that may appear on a PASS. Anything else — bedrock, blocking, or a word
+    # this rule has never heard of — REFUSES. That direction matters: an unrecognised
+    # severity must not sail through on the assumption it is minor, and enumerating
+    # every gate's vocabulary here would mean a gate inventing a new word gets a free
+    # pass until someone updates a list. `rely` grades BLOCKING/ORDINARY and editorial
+    # grades BEDROCK/ORDINARY; only the shared word admits.
+    #
+    # ⚠ IT IS AN ATTRIBUTED JUDGEMENT, NOT A MEASUREMENT, and the record says by whom.
+    # Severity is the reviewing agent's own claim — `rely.md` names the temptation
+    # exactly: "do not inflate a finding to BLOCKING to keep the loop alive, and do
+    # not deflate one to end it." Nothing here can detect a deflated finding. What it
+    # can do is make the claim attributable, and V17 already does: `who` on every
+    # delegated record, `evidence` naming the brief on a delegated PASS. So a later
+    # reader sees who called it ordinary and under which instructions.
+    #
+    # ⚠ FAIL and UNDECIDED may carry anything. They already block; constraining the
+    # severity there would only stop a gate reporting what it found.
+    if verdict == "PASS":
+        for i, o in enumerate(record.get("outstanding") or []):
+            if not isinstance(o, dict):
+                continue
+            sev = (o.get("severity") or "").strip().lower()
+            if sev not in schema.SEVERITY_ON_A_PASS:
+                out.append(
+                    f"V18: outstanding[{i}] has severity {o.get('severity')!r}; a PASS "
+                    f"may only carry {schema.SEVERITY_ON_A_PASS}. STOP-ORDINARY is a "
+                    f"pass condition BECAUSE the findings were judged ordinary — that "
+                    f"split is the whole safety of it, and this must never become a "
+                    f"route to ship a bedrock or blocking finding. Record FAIL, or "
+                    f"re-grade the finding honestly and say who did.")
 
     # V1 — a silent fallback to a permissive basis is FRZ-4. Recording it as
     # FALLBACK is what makes basis drift visible without probing for it.

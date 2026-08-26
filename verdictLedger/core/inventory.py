@@ -430,6 +430,16 @@ def build(*, config, records, action: str, files: dict,
         else:
             status = "SATISFIED"
 
+        # ⭐⭐ A SATISFIED ROW MAY BE CARRYING FINDINGS. V18 lets a PASS hold
+        # `outstanding` entries — STOP-ORDINARY: reviewed, ordinary findings left, loop
+        # cap reached, proceed. The verdict admits, so `complete` is unaffected BY
+        # DESIGN (Tim, 2026-08-26). But "nothing was found" and "things were found and
+        # judged ordinary" are different facts, and a bare SATISFIED renders them
+        # identically — the ambiguity this module exists to remove. The number rides on
+        # the row and in the inventory, the way `subjects_unexamined` and
+        # `evidence_stale` do.
+        outstanding = list((covered_rec or {}).get("outstanding") or [])             if status == "SATISFIED" else []
+
         if status == "SATISFIED" and record is not None:
             how = (record.get("decided") or {}).get("how", "?")
             how_counts[how] = how_counts.get(how, 0) + 1
@@ -444,6 +454,9 @@ def build(*, config, records, action: str, files: dict,
                      # through the other member of the denominator. `judged` is the
                      # number `covered` is actually out of.
                      "judged": len(judged),
+                     "outstanding": len(outstanding),
+                     "outstanding_notes": [o.get("note") for o in outstanding
+                                           if isinstance(o, dict)][:5],
                      "subjects_covered": covered, "subjects_stale": stale,
                      "evidence_stale": ev_stale, "evidence_moved": ev_moved,
                      "subjects_unexamined": unexamined, "scope": len(scope),
@@ -536,6 +549,9 @@ def build(*, config, records, action: str, files: dict,
         "missing": n("MISSING"), "stale": n("STALE"),
         "evidence_moved": sorted({p for r in rows
                                   for p in (r.get("evidence_moved") or [])}),
+        # ⚠ Across ALL rows: a step admitted while carrying findings is a fact about
+        # the action as a whole, not a detail of one row.
+        "outstanding": sum(r.get("outstanding") or 0 for r in rows),
         "legacy_identity": n("LEGACY_IDENTITY"),
         "undecided": n("UNDECIDED"), "failed": n("FAIL"),
         "not_applicable": sum(1 for r in rows if r["status"] == "NOT_APPLICABLE"),

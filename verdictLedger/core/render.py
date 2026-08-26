@@ -35,8 +35,15 @@ def render(record: dict) -> str:
     waited = (record.get("cost") or {}).get("lock_wait_seconds")
     edge = f"  ⚠edge-condition lock_wait={waited}s" if waited else ""
 
+    # ⚠⚠ A CAPPED PASS MUST NOT LOOK LIKE A CLEAN ONE. This is the render half of
+    # V18: the verdict admits, so everything downstream treats it as SATISFIED, and
+    # the ONE place a human reads the row is here. Without this the two states are
+    # indistinguishable at exactly the moment someone is deciding whether to trust it.
+    n = len(record.get("outstanding") or [])
+    carried = f"  ⚠{n} outstanding" if n else ""
+
     reason = record.get("reason") or ""
-    return (f"{record.get('verdict', '?'):9} {record.get('step', '?')}  "
+    return (f"{record.get('verdict', '?'):9}{carried} {record.get('step', '?')}  "
             f"tier={record.get('tier', '?')}  "
             f"basis={basis.get('kind')}:{value}{fallback}  "
             f"subjects={len(record.get('subjects') or [])}  "

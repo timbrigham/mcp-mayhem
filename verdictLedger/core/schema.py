@@ -122,7 +122,30 @@ DECIDED_HOW = ("mechanical", "agreement", "signature", "override", "delegated")
 KEY_FIELDS = ("step", "basis.value", "revision")
 
 TOP_LEVEL = ("schema", "id", "step", "tier", "verdict", "reason", "basis",
-             "subjects", "evidence", "decided", "inputs", "revision", "cost", "run")
+             "subjects", "evidence", "outstanding", "decided", "inputs", "revision",
+             "cost", "run")
+
+# ⚠⚠ `outstanding` — FINDINGS THAT SURVIVE A PASS, AND THE ONLY SEVERITY ALLOWED ON
+# ONE IS "ordinary". Added 2026-08-26 for STOP-ORDINARY.
+#
+# ZeroParadox's `R-LOOPCAP` gives a review round three outcomes, not two: BEDROCK runs
+# up to 5 rounds and MUST NOT SHIP; ORDINARY runs 2 and then STOPS AND PROCEEDS.
+# Editorial round 6 returned STOP-ORDINARY — all bedrock items verified fixed on the
+# rendered PDF bytes, four ordinary findings left, cap reached. The process has a word
+# for that state and means "proceed"; the ledger had only pass and fail, so the agent
+# recorded FAIL and said so plainly rather than papering over it.
+#
+# ⚠⚠ A CLEAN PASS AND A CAPPED PASS ARE DIFFERENT FACTS AND MUST NOT RENDER ALIKE. One
+# says nothing was found. The other says things WERE found, were judged ordinary, and
+# the loop was capped. Collapsing them rebuilds the exact ambiguity this ledger exists
+# to remove — the same argument that made `BACKFILLED` a finding rather than a
+# footnote. So the verdict is PASS and it admits, but the findings stay ATTACHED to
+# the record instead of evaporating into prose.
+#
+# ⚠ THE ACCOUNTABILITY THIS NEEDS ALREADY EXISTS. V17 requires `who` on every
+# delegated record and `evidence` naming the brief on a delegated PASS, so "who
+# claimed ordinary" and "under which instructions" are answered without a new field.
+SEVERITY_ON_A_PASS = ("ordinary",)
 
 # ⚠⚠ `evidence` IS NOT `inputs`, AND THE DISTINCTION IS WHY THIS FIELD EXISTS.
 # V16 was specified as "the checker module's blob ID in `inputs`". It cannot go
@@ -193,6 +216,7 @@ def empty_record(**over: Any) -> dict:
         "basis": {"kind": None, "value": None, "resolved_from": None},
         "subjects": [],
         "evidence": [],
+        "outstanding": [],
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,
@@ -219,6 +243,10 @@ def payload(record: dict) -> dict:
         "evidence": sorted(
             ((e.get("path"), e.get("git_blob_id")) for e in record.get("evidence") or []),
             key=lambda t: (t[0] or "", t[1] or "")),
+        "outstanding": sorted(
+            ((o.get("severity"), o.get("note"), o.get("path"))
+             for o in record.get("outstanding") or []),
+            key=lambda t: tuple(x or "" for x in t)),
         "decided": record.get("decided"),
         "inputs": sorted(record.get("inputs") or []),
         "basis_kind": (record.get("basis") or {}).get("kind"),
