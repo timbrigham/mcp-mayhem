@@ -284,3 +284,78 @@ def test_switches_no_longer_inflate_covered_past_scope(ledger):
     assert row["subjects_covered"] == 2
     assert row["judged"] == 2, "the number `covered` is actually out of"
     assert row["subjects_covered"] <= row["judged"]
+
+
+# -- ⭐⭐ coverage_gap: the work order, asked again rather than cached ------------
+
+def _gap(ledger, files, records, admission, **kw):
+    return inventory_mod.coverage_gap(config=ledger.config, records=records,
+                                      action="push", files=files,
+                                      admission=list(admission), **kw)
+
+
+def test_a_passing_record_at_current_content_discharges_a_path(ledger):
+    """The baseline: covered at THESE bytes and PASSING means nothing is owed."""
+    files = {"a.md": "b1", "b.md": "b2"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": p, "git_blob_id": b} for p, b in files.items()])
+    rec["id"] = "decls@t#0"
+    out = _gap(ledger, files, [rec], ["decls"])
+    assert out["total_missing"] == 0
+    assert out["complete_steps"] == ["decls"]
+
+
+def test_a_record_against_moved_bytes_does_not_discharge_it(ledger):
+    """⭐⭐ THE DIFFERENCE FROM `coverage()`, and the reason this tool exists. That one
+    asks "has ANY step ever named this path?" — which a stale record satisfies. Tim
+    asked for everything at HEAD REANALYSED, so the question has to be about the bytes
+    that are here now."""
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "OLD"}])
+    rec["id"] = "decls@t#0"
+    out = _gap(ledger, {"a.md": "NEW"}, [rec], ["decls"])
+    assert out["steps"][0]["missing"] == 1
+    assert out["steps"][0]["paths"] == ["a.md"]
+    # and the cruder question still says it is covered — which is why it is not this one
+    assert inventory_mod.coverage(records=[rec], paths=["a.md"])["uncovered"] == 0
+
+
+def test_a_failing_record_discharges_nothing_and_says_so(ledger):
+    """⭐⭐ MEASURED 2026-08-25: editorial, adversary and rely each covered their whole
+    scope and passed NONE of it. Counting a FAILED record as coverage would report
+    work as done that must still be fixed — and the remedy is the opposite of the one
+    for a stale step."""
+    files = {"a.md": "b1"}
+    rec = good(step="decls", verdict="FAIL", reason="three findings",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "b1"}])
+    rec["id"] = "decls@t#0"
+    out = _gap(ledger, files, [rec], ["decls"])
+    step = out["steps"][0]
+    assert step["missing"] == 1 and step["have"] == 0
+    assert "fix the findings" in step["remedy"]
+    assert "re-running changes nothing" in step["remedy"]
+
+
+def test_a_stale_step_is_told_to_run_not_to_fix(ledger):
+    """⚠ THE CONTROL ON THE REMEDY. The two states need opposite work, and a remedy
+    that names the wrong one costs rounds — LED-2's lesson, in the work order."""
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "OLD"}])
+    rec["id"] = "decls@t#0"
+    out = _gap(ledger, {"a.md": "NEW"}, [rec], ["decls"])
+    assert "run the step" in out["steps"][0]["remedy"]
+
+
+def test_truncation_is_reported_never_silent(ledger):
+    """⚠ A capped list that renders like a complete one is the failure this whole
+    server exists to end."""
+    files = {f"f{i}.md": "x" for i in range(30)}
+    out = _gap(ledger, files, [], ["decls"], limit=10)
+    step = out["steps"][0]
+    assert len(step["paths"]) == 10
+    assert step["truncated"] == 20
+    assert step["missing"] == 30

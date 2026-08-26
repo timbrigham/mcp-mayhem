@@ -315,6 +315,47 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
 
 
 @mcp.tool()
+async def coverage_gap(action: str = "push", ref: str = "staged",
+                       admission: Optional[list[str]] = None,
+                       step: Optional[str] = None, limit: int = 200) -> dict:
+    """THE WORK ORDER: which paths does each admitted step still owe a PASS at THIS
+    content? Ask it again rather than caching the answer — it changes as work lands.
+
+    Returns per step: `applies_to`, `have`, `missing`, the missing `paths` (capped by
+    `limit`, with `truncated` counting the rest), and a `remedy`.
+
+    ⚠ DIFFERENT QUESTION FROM `coverage`. That asks "has ANY step ever named this
+    path?" — a floor. This asks, per step, "is there a PASSING verdict over the bytes
+    that are here NOW?" A path examined last week by a step that has since gone stale
+    counts for `coverage` and is missing here.
+
+    ⚠ PASSING ONLY, and the `remedy` says which kind of work each step needs. A step
+    that covers its whole scope and passes none of it does not need re-running — it
+    needs its findings fixed. Measured 2026-08-25: editorial, adversary and rely were
+    each 0 have / all missing, for exactly that reason.
+
+    ⚠ `admission` is required: nobody said what gates this action is not the same as
+    nothing gating it."""
+    return await _guard(_sync_coverage_gap, action, ref, admission, step, limit)
+
+
+def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
+    led = _ledger()
+    cfg = led._require_config()
+    if admission is None:
+        from core.errors import UsageError
+        raise UsageError(
+            "coverage_gap requires an admission set — which steps gate this action. "
+            "Omitting it is not an empty set; it means nobody said, and answering "
+            "anyway would report a work order that gates nothing.")
+    out = inventory_mod.coverage_gap(config=cfg, records=led.store.records(),
+                                     action=action, files=_files(ref),
+                                     admission=admission, step=step, limit=limit)
+    out["ref"] = ref
+    return out
+
+
+@mcp.tool()
 async def coverage(ref: str = "HEAD") -> dict:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 

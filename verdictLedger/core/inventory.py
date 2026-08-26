@@ -532,6 +532,79 @@ def build(*, config, records, action: str, files: dict,
     }
 
 
+def coverage_gap(*, config, records, action: str, files: dict,
+                 admission: list, step: Optional[str] = None,
+                 limit: int = 200) -> dict:
+    """THE WORK ORDER: which paths does each step still owe a PASS at THIS content?
+
+    ⭐⭐ A TOOL RATHER THAN A GENERATED LIST, and that is the whole point. Tim asked
+    2026-08-25 for every file at HEAD to be reanalysed, excluding only those with a
+    complete passing set. The obvious answer was to compute the 503 paths once and
+    hand them over as a file — which would be WRONG within minutes of the sweep
+    starting, and would be a second copy of a fact the ledger already holds. This
+    session has spent a day on what second copies do. Ask the question again instead.
+
+    ⚠ DIFFERENT QUESTION FROM `coverage()`. That one asks "has ANY step ever named
+    this path?" — a floor, useful on day one. This asks, per step, "is there a PASSING
+    verdict over the bytes that are here NOW?" A path examined last week by a step
+    that has since gone stale counts for `coverage()` and is missing here.
+
+    ⚠ PASSING ONLY. A step whose record covers a path but FAILED has not discharged
+    it, and listing it as covered would report work as done that must still be fixed.
+    Measured 2026-08-25: `editorial`, `adversary` and `rely` cover their whole scope
+    and pass NONE of it — 0 have, and the remedy is to fix findings, not to re-run.
+    """
+    reqs = config.requirements(action)
+    passing = {}
+    for r in records:
+        if r.get("verdict") != "PASS":
+            continue
+        for sub in r.get("subjects") or []:
+            if sub.get("git_blob_id"):
+                passing[(r.get("step"), sub.get("path"), sub["git_blob_id"])] = r
+
+    out = []
+    for name in sorted(admission):
+        if step and name != step:
+            continue
+        spec = reqs.get(name)
+        if not spec or not spec["required"]:
+            continue
+        when = spec.get("when")
+        globs = spec.get("scope") or ([when] if when else [])
+        drop = spec.get("scope_exclude") or []
+        applies, missing = 0, []
+        for path, blob in sorted(files.items()):
+            if when and not fnmatch.fnmatch(path, when):
+                continue
+            if globs and not any(fnmatch.fnmatch(path, g) for g in globs):
+                continue
+            if any(fnmatch.fnmatch(path, g) for g in drop):
+                continue
+            applies += 1
+            if (name, path, blob) not in passing:
+                missing.append(path)
+        out.append({
+            "step": name, "applies_to": applies, "missing": len(missing),
+            "have": applies - len(missing),
+            # ⚠ TRUNCATION IS REPORTED. A capped list that renders like a complete one
+            # is the failure this whole server exists to end.
+            "paths": missing[:limit],
+            "truncated": max(0, len(missing) - limit),
+            "remedy": ("nothing owed" if not missing else
+                       "fix the findings — this step covers its scope and passes none "
+                       "of it, so re-running changes nothing"
+                       if applies and len(missing) == applies
+                       and any(r.get("step") == name and r.get("verdict") == "FAIL"
+                               for r in records)
+                       else "run the step over the listed paths and record"),
+        })
+    return {"action": action, "steps": out,
+            "total_missing": sum(s["missing"] for s in out),
+            "complete_steps": sorted(s["step"] for s in out if not s["missing"]),
+            "tracked": len(files)}
+
+
 def coverage(*, records, paths: list) -> dict:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 
