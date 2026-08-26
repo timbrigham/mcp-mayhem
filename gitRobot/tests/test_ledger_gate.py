@@ -313,3 +313,47 @@ def test_the_nested_repo_is_not_gated_by_the_ledger(robot, nested_local, tmp_pat
     robot.commit(str(msg), repo_mode=".claude-local")
     out = robot.push("master", reason="back up notes", repo_mode=".claude-local")
     assert out["decision"] == "allowed"
+
+
+# -- ⚠ `rely` records but no longer admits commit or push ----------------------
+
+def test_rely_is_not_admitted_at_commit_or_push_but_still_gates_a_tag():
+    """⚠⚠ MEASURED CIRCULARITY, 2026-08-26. `rely`'s scope is `tools/verify/*` — it
+    reviews the verification tooling — and it gated COMMIT. So every fix to that
+    tooling staled it while it blocked the commit carrying the fix. The whole
+    remediation plan (guards.py, required.v2.json, the checker sweep) edits
+    `tools/verify/`, so the loop deadlocked.
+
+    ⚠ AND IT WAS UNSATISFIABLE BY CONSTRUCTION besides: the registry declares scope
+    `tools/verify/*` (60 files) while `rely.md`'s own pre-flight says "SCOPE IT … Do
+    not run it at `full`." A gate required to cover a scope its own brief forbids
+    covering can never be SATISFIED — a contradiction between registry and brief, not
+    a missing declaration.
+
+    ⚠⚠ IT IS NOT DELETED, AND THIS TEST EXISTS SO IT IS NOT DELETED LATER EITHER.
+    `rely` is the only agent that EXECUTES rather than reads, and its measured law is
+    that every BEDROCK finding came from executing. Briefed to attack the controls it
+    found 6 BLOCKING, all six inside the control written to fix the previous pass —
+    including getting `guards.py` to print `13/13 ok` over a completely neutered push
+    gate. Removing the only thing that executes because it is inconvenient during a
+    sweep is the "treat a block as an obstacle" failure this server exists to resist.
+
+    Tim, 2026-08-26: "I didn't ever want this gone. I just wanted it to be able to
+    work… allow them to be committed but not required to push."
+    """
+    from core import ledger as ledger_client
+    assert "rely" not in ledger_client.admission_for("commit")
+    assert "rely" not in ledger_client.admission_for("push")
+    assert "rely" in ledger_client.admission_for("tag"), (
+        "a release mints a permanent DOI — 'can the tooling be relied on' is exactly "
+        "the question that matters there, and it is the one gate that answers it")
+
+
+def test_the_other_review_gates_still_admit_a_push():
+    """⚠ THE CONTROL. Narrowing one type must not quietly thin the push bar — the
+    admission set is a COMPLETE list, and dropping `rely` from it is a decision about
+    `rely` alone."""
+    from core import ledger as ledger_client
+    push = ledger_client.admission_for("push")
+    for step in ("editorial", "adversary", "claim_review", "pdf_coupling"):
+        assert step in push, f"{step} fell out of the push bar"

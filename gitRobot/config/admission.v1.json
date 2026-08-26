@@ -3,6 +3,7 @@
   "_what": "THE ADMISSION SET: which registered verdict types must be green for gitRobot to let an action through. This is NOT the registry. The registry (verdictLedger's required.v2.json) says what may be RECORDED; this says what must PASS.",
   "_why_here": "Separation of duty. The ledger records verdicts; if it also decided what was SUFFICIENT, anyone able to edit ledger config could lower the bar that admits a push in one place. Split them and two systems must agree before the bar moves. This is a deliberate, NARROW reversal of 'no policy values in gitRobot' -- the type registry, min_passes, max_depth, lock waits, the genesis floor and HOW `complete` is computed all stay in the ledger, and gitRobot never re-derives completeness. It names this set and requires the ledger's answer.",
   "_complete_not_partial": "Tim, 2026-08-23: 'I want the complete set, not a partial lets do this later.' A PARTIAL ADMISSION SET IS A HALF-WORKING GATE. Admit 3 of 19 and the other 16 do not gate -- which is indistinguishable, from the outside, from the state that passed the push it should not have. That is the same reasoning that got the branch reset.",
+  "_rely_not_admitted_at_commit_or_push": "Tim, 2026-08-26: 'I didn't ever want this gone. I just wanted it to be able to work.' `rely` stays REGISTERED and RECORDABLE and keeps gating a TAG. It no longer admits commit or push, for two measured reasons. (1) CIRCULARITY: its scope is tools/verify/*, so it reviews the verification tooling -- and every fix to that tooling stales it while it gates the commit that would carry the fix. The whole R-1/R-2/R-4 remediation edits tools/verify/, so the loop deadlocks. (2) UNSATISFIABLE BY CONSTRUCTION: the registry declares scope tools/verify/* (60 files) while rely.md's own pre-flight says 'SCOPE IT -- a directory, a file list, or a named interface. Do not run it at full.' A gate required to cover a scope its own brief forbids covering can never be SATISFIED. That is not a missing declaration, it is a contradiction between the registry and the brief. WHY IT IS NOT DELETED: rely is the only agent that EXECUTES rather than reads, and its own measured law is that every BEDROCK finding came from executing while every ORDINARY one came from reading. Briefed to attack the controls it found 6 BLOCKING, all six in the control written to fix the previous pass -- including getting guards.py to print 13/13 ok over a completely neutered push gate. Removing the only thing that executes, because it is inconvenient during a sweep, is the 'treat a block as an obstacle' failure this server exists to resist. It keeps running and recording; it stops blocking. TAG is where 'can the tooling be relied on' is the question that matters, because a release mints a permanent DOI. It remains visible: the ledger reports it under `registered_not_admitting`, so a type that records without gating is stated, never silent.",
   "_every_push_blocks_and_that_is_the_gate_working": "With the complete set admitted and no emitters wired, EVERY PUSH BLOCKS. That is deliberate. DO NOT THIN THIS SET TO UNBLOCK A PUSH -- satisfy the keys instead. Until checkers emit, the sanctioned way to satisfy one is the SIGNATURE ROUTE (decided.how = 'signature', who = '<name>'), which needs no agreement threshold and no paid agent round. A human accepting a key is attributable; a key that never had to exist is not.",
   "_empty_REFUSES": "An EMPTY list for an action REFUSES that action on the main repo; it does not allow-with-a-warning. That was the second half of the 2026-08-23 failure: EMPTY rendered as ALLOWED plus a capitalised warning, which is fail-OPEN in the costume of fail-closed. An empty set means the action would be certified against zero requirements.",
   "_mirrors_the_registry_and_the_registry_wins": "These lists mirror the registry's own `actions` narrowings. If admission and the registry ever disagree on an action, THE REGISTRY IS THE BUG -- it is the list that carries stated reasons. Admission is a list of names, and a list of names cannot explain itself, which is why a policy exception must never be expressed by thinning it.",
@@ -27,7 +28,6 @@
       "decls",
       "guards",
       "pdf_coupling",
-      "rely",
       "claim_review"
     ],
     "push": [
@@ -49,7 +49,6 @@
       "pdf_coupling",
       "editorial",
       "adversary",
-      "rely",
       "claim_review"
     ],
     "tag": [
