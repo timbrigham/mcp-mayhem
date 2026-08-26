@@ -418,3 +418,111 @@ def test_the_detector_reports_and_does_not_block(ledger, config_dir, tmp_path):
                      {"fmc.pdf": "a", "README.md": "c"})
     assert inv["dead_patterns"], "the detector must have fired for this to mean anything"
     assert inv["complete"] is True
+
+
+# -- ⭐⭐ BACKFILLED: certified afterwards is not the same as gated ---------------
+
+def _crossref_over(ledger, repo, records, admission):
+    from core import crossref as cx
+    return cx.check(records=records, config=ledger.config, repo=str(repo),
+                    action="commit", admission=admission, limit=50)
+
+
+def test_a_retroactively_certified_commit_is_named_as_such(ledger, tmp_path):
+    """⭐⭐ THE OTHER DIVERGENCE IN THE SAME OPERATION. Tim's constraint on the
+    retroactive fill was that records must say WHATEVER THE CHECKER SAYS — requiring a
+    PASS would force history to be made to look clean. Right. And the mirror of it:
+    once the fill lands, a commit certified AFTER the fact looks exactly like one that
+    went through the gate. Two different facts rendering identically is the defect
+    class this audit exists to end, and it would arrive through the door of a fix.
+
+    A retroactive record is honest — a mechanical verdict over tree T is a fact about
+    T whenever computed — but it makes a WEAKER claim: the content was fine, not that
+    anyone looked before publishing.
+    """
+    import subprocess
+
+    def g(*a):
+        return subprocess.run(["git", *a], cwd=str(tmp_path), capture_output=True,
+                              text=True, encoding="utf-8").stdout
+    tmp_path.joinpath("x").mkdir()
+    repo = tmp_path / "x"
+
+    def gr(*a):
+        return subprocess.run(["git", *a], cwd=str(repo), capture_output=True,
+                              text=True, encoding="utf-8").stdout
+    gr("init", "-q", "-b", "main")
+    gr("config", "user.email", "t@e.invalid")
+    gr("config", "user.name", "t")
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    gr("add", "README.md")
+    gr("commit", "-q", "-m", "genesis")
+    base = gr("rev-parse", "HEAD").strip()
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    gr("add", "README.md")
+    gr("commit", "-q", "-m", "the ungated one")
+    head = gr("rev-parse", "HEAD").strip()
+    blob = gr("hash-object", "--", "README.md").strip()
+
+    def rec(started):
+        return {"id": f"decls@{head}#0", "step": "decls", "verdict": "PASS",
+                "revision": 0, "run": {"id": "r", "started": started},
+                "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+                "subjects": [{"path": "README.md", "git_blob_id": blob}],
+                "basis": {"kind": "tree", "value": head}}
+
+    genesis = {"id": "genesis@g#0", "step": "genesis", "verdict": "PASS",
+               "revision": 0, "run": {"id": "g", "started": "2000-01-01T00:00:00+00:00"},
+               "decided": {"how": "signature", "passes": 1, "agreed": 1, "who": "t"},
+               "subjects": [{"path": "<genesis>", "git_blob_id": base}],
+               "basis": {"kind": "ref", "value": base}}
+
+    late = _crossref_over(ledger, repo, [genesis, rec("2099-01-01T00:00:00+00:00")],
+                          ["decls"])
+    f = [x for x in late["findings"] if x["commit"] == head]
+    assert f and f[0]["finding"] == "BACKFILLED", late["findings"]
+    assert f[0]["gated"] == "after it landed"
+    assert "certified" in f[0]["detail"] and "not gated" in f[0]["detail"]
+    assert late["ok"] is False, (
+        "a backfilled range must never report the audit as clean — that is the "
+        "false-clean this whole module exists to prevent")
+
+
+def test_a_contemporaneously_gated_commit_is_not_flagged(ledger, tmp_path):
+    """⚠⚠ THE CONTROL, and without it BACKFILLED fires on everything and gets
+    scrolled past. A record written at or before the commit landed is ordinary
+    coverage and must stay silent."""
+    import subprocess
+    repo = tmp_path / "y"
+    repo.mkdir()
+
+    def gr(*a):
+        return subprocess.run(["git", *a], cwd=str(repo), capture_output=True,
+                              text=True, encoding="utf-8").stdout
+    gr("init", "-q", "-b", "main")
+    gr("config", "user.email", "t@e.invalid")
+    gr("config", "user.name", "t")
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    gr("add", "README.md")
+    gr("commit", "-q", "-m", "genesis")
+    base = gr("rev-parse", "HEAD").strip()
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    gr("add", "README.md")
+    gr("commit", "-q", "-m", "gated at the time")
+    head = gr("rev-parse", "HEAD").strip()
+    blob = gr("hash-object", "--", "README.md").strip()
+
+    genesis = {"id": "genesis@g#0", "step": "genesis", "verdict": "PASS",
+               "revision": 0, "run": {"id": "g", "started": "2000-01-01T00:00:00+00:00"},
+               "decided": {"how": "signature", "passes": 1, "agreed": 1, "who": "t"},
+               "subjects": [{"path": "<genesis>", "git_blob_id": base}],
+               "basis": {"kind": "ref", "value": base}}
+    early = {"id": f"decls@{head}#0", "step": "decls", "verdict": "PASS",
+             "revision": 0, "run": {"id": "r", "started": "2000-01-01T00:00:00+00:00"},
+             "decided": {"how": "mechanical", "passes": 1, "agreed": 1},
+             "subjects": [{"path": "README.md", "git_blob_id": blob}],
+             "basis": {"kind": "tree", "value": head}}
+
+    out = _crossref_over(ledger, repo, [genesis, early], ["decls"])
+    assert [x for x in out["findings"] if x["commit"] == head] == []
+    assert out["ok"] is True

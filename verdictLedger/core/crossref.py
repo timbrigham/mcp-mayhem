@@ -21,11 +21,15 @@ walks `git rev-list`, resolves each commit's tree, and asks the ledger whether t
 content was approved. No second stream, no join key, and nothing gitRobot has to
 capture for it to work — `commit^{tree}` resolves from the head git already knows.
 
-Three findings, in the shape of the question being asked:
+Four findings, in the shape of the question being asked:
 
   NOT_RUN      a commit whose content no step examined  — it bypassed the gate
   INCOMPLETE   examined, but the required set was short — it landed under-gated
   NOT_APPROVED examined, and the operative verdict was FAIL or UNDECIDED
+  BACKFILLED   fully satisfied, but EVERY verdict was recorded after it landed —
+               the content is certified, the commit was not gated, and those are
+               different claims. Added 2026-08-25 with the retroactive fill, so
+               the fix could not manufacture a clean audit as a side effect.
 
 ⚠ Commits made from a human terminal are UNAFFECTED by gitRobot's deny rule by
 design, so they will surface as NOT_RUN. That is the audit working, not noise —
@@ -63,15 +67,16 @@ def _git(repo: str, *args: str) -> str:
 
 
 def _files_at(repo: str, ref: str) -> dict:
-    """path -> blob sha for a commit."""
+    """path -> blob sha for a commit. The fifth copy of this parse, and the last —
+    all of them now ask git for the field BY NAME rather than counting columns, after
+    the ledger's `_files` turned out to be reading the STAGE for staged entries."""
     out = {}
-    for line in _git(repo, "ls-tree", "-r", ref).splitlines():
+    for line in _git(repo, "ls-tree", "-r", ref,
+                     "--format=%(objectname)%x09%(path)").splitlines():
         if "\t" not in line:
             continue
-        meta, path = line.split("\t", 1)
-        parts = meta.split()
-        if len(parts) >= 3:
-            out[path.strip()] = parts[2]
+        blob, path = line.split("\t", 1)
+        out[path.strip()] = blob.strip()
     return out
 
 
@@ -137,6 +142,10 @@ def check(*, records: list, config, repo: Optional[str] = None,
     if truncated:
         commits = commits[-limit:]
 
+    # ⚠⚠ WHO SATISFIED WHAT, AND *WHEN THEY WROTE IT DOWN*. Needed for BACKFILLED
+    # below; built once rather than per commit.
+    by_id = {r.get("id"): r for r in records if r.get("id")}
+
     findings = []
     for commit in commits:
         tree = _git(repo, "rev-parse", f"{commit}^{{tree}}")
@@ -159,9 +168,34 @@ def check(*, records: list, config, repo: Optional[str] = None,
         # coverage it did not have.
         examined = [r for r in inv["rows"]
                     if r["status"] in ("SATISFIED", "FAIL", "UNDECIDED")]
+        # ⭐⭐ WAS THIS COMMIT GATED BEFORE IT LANDED, OR CERTIFIED AFTERWARDS?
+        # Tim, 2026-08-25, on backfilling the 38 post-genesis commits: retroactive
+        # records must record WHATEVER THE CHECKER SAYS, pass or fail — "if [passing]
+        # was actually required, we'd have another problem to deal with, it'd end up
+        # diverging". Right, and there is a second divergence on the other side of the
+        # same operation: once the backfill lands, a commit certified after the fact
+        # looks EXACTLY like one that went through the gate. Two different facts
+        # rendering identically is the defect class this whole audit exists to end.
+        #
+        # A retroactive record is honest — a mechanical verdict over tree T is a fact
+        # about T whenever it is computed — but it makes a WEAKER claim: the content
+        # was fine, NOT that anyone looked before publishing. That distinction has to
+        # survive, and the ledger cannot infer it from a record alone. Here it can: the
+        # commit has a date and every satisfying record has `run.started`.
+        commit_date = _git(repo, "log", "-1", "--pretty=%cI", commit).strip()
+        written = [((by_id.get(r.get("record_id")) or {}).get("run") or {}).get("started")
+                   for r in inv["rows"] if r["status"] == "SATISFIED"]
+        written = [w for w in written if w]
+        # ⚠ ALL of them, not any: one contemporaneous record makes the commit gated in
+        # part, and claiming "backfilled" would then overstate the defect in the other
+        # direction.
+        backfilled = bool(written) and all(w > commit_date for w in written)
+
         subject = {"commit": commit, "tree": tree,
                    "subject": _git(repo, "log", "-1", "--pretty=%s", commit)[:80],
-                   "examined_by": len(examined),
+                   "examined_by": len(examined), "committed": commit_date,
+                   "gated": ("after it landed" if backfilled else
+                             "before or during" if written else None),
                    "required": inv["required"], "satisfied": inv["satisfied"]}
         if not examined:
             findings.append({**subject, "finding": "NOT_RUN",
@@ -177,6 +211,19 @@ def check(*, records: list, config, repo: Optional[str] = None,
                      if r["status"] in ("MISSING", "STALE")]
             findings.append({**subject, "finding": "INCOMPLETE",
                              "detail": f"required but not satisfied: {', '.join(names)}"})
+        elif backfilled:
+            # ⚠⚠ A FINDING, NOT A FOOTNOTE, AND IT NEVER CLEARS. This audit's question
+            # is "did anything land without the gate?" — and this commit did. It was
+            # certified afterwards, which is worth having and is not the same thing.
+            # Leaving it silent would let a backfilled range report `ok: true`, i.e.
+            # the audit calling itself clean about commits nobody gated before they
+            # were published. That is the exact false-clean it exists to prevent, and
+            # it would arrive through the door of a fix.
+            findings.append({**subject, "finding": "BACKFILLED",
+                             "detail": ("every required verdict for this commit was "
+                                        "recorded AFTER it landed. The content is "
+                                        "certified; the commit was not gated. Both are "
+                                        "true and they are different claims.")})
 
     return {
         "ok": not findings,
