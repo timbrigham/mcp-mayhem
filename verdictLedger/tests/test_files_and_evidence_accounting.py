@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from conftest import good
+from conftest import good, set_policy
 from core import inventory as inventory_mod
 
 
@@ -205,3 +205,82 @@ def test_both_commands_are_parsed_by_the_same_two_columns(tiny_repo, monkeypatch
     src = inspect.getsource(server._files)
     assert "%(objectname)%x09%(path)" in src
     assert "parts[2]" not in src and "col=" not in src
+
+
+# -- ⭐⭐ coverage: a green row over a fraction of its own scope -----------------
+
+def _guardsish(ledger, files, examined, admission=("guards",)):
+    rec = good(step="guards", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": p, "git_blob_id": files[p]} for p in examined],
+               evidence=[{"path": "tools/verify/guards.py", "git_blob_id": "g" * 40}])
+    rec["id"] = "guards@t#0"
+    return inventory_mod.build(config=ledger.config, records=[rec], action="push",
+                               files=files, ref="t", admission=list(admission))
+
+
+def test_a_step_can_report_satisfied_over_almost_nothing(ledger):
+    """⭐⭐ THE MEASURED STATE, 2026-08-25: `guards` recorded a PASS over FOUR subjects
+    while declaring no scope — which under the strict default means it owes every
+    tracked path — and the row read SATISFIED over 4 of 504.
+
+    ⚠ This test asserts the DEFAULT behaviour, which is that it does NOT block. That
+    was deliberate from the start (`subjects_unexamined` is "reported, not blocking")
+    and it is why the state survived: the number was right there and nothing acted on
+    it. Left as a test rather than a comment so the default is a decision on the
+    record, not an omission."""
+    files = {f"f{i}.md": f"b{i}" for i in range(50)}
+    inv = _guardsish(ledger, files, examined=["f0.md", "f1.md"])
+    row = next(r for r in inv["rows"] if r["step"] == "guards")
+    assert row["status"] == "SATISFIED"
+    assert row["subjects_unexamined"] == 48
+    assert inv["complete"] is True, "the default does not block — that is the finding"
+
+
+def test_enforcing_coverage_refuses_the_same_inventory(ledger, config_dir, tmp_path):
+    """⭐⭐ TIM, 2026-08-25: "every file needs a complete set of actual successful gate
+    analysis.. not just this historical checkoff." Same records, same tree, one policy
+    value, opposite answer — and no restart."""
+    from core.ledger import Ledger
+    set_policy(config_dir, **{"coverage.require_complete": True})
+    led = Ledger(tmp_path / "c.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    files = {f"f{i}.md": f"b{i}" for i in range(50)}
+    inv = _guardsish(led, files, examined=["f0.md", "f1.md"])
+    assert inv["complete"] is False
+    assert next(r for r in inv["rows"]
+                if r["step"] == "guards")["subjects_unexamined"] == 48
+
+
+def test_full_coverage_passes_under_enforcement(ledger, config_dir, tmp_path):
+    """⚠ THE CONTROL. Enforcement must be SATISFIABLE — a step that genuinely covers
+    its scope still passes, or this is an outage with a policy flag."""
+    from core.ledger import Ledger
+    set_policy(config_dir, **{"coverage.require_complete": True})
+    led = Ledger(tmp_path / "d.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    files = {f"f{i}.md": f"b{i}" for i in range(5)}
+    inv = _guardsish(led, files, examined=list(files))
+    assert inv["complete"] is True
+
+
+def test_switches_no_longer_inflate_covered_past_scope(ledger):
+    """⚠ `covered` is measured over scope ∪ switches, so reporting it against `scope`
+    alone produced `covered > scope` — 22/21 for check_checkers, 43/42 for
+    check_hashes, each inflated by its single switch file. The same shape ZeroParadox
+    caught on evidence, arriving through the other member of the denominator."""
+    files = {"register.md": "a", "tools/verify/shared_build_baseline.txt": "s"}
+    rec = good(step="check_hashes", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "register.md", "git_blob_id": "a"},
+                         {"path": "tools/verify/shared_build_baseline.txt",
+                          "git_blob_id": "s"}],
+               evidence=[{"path": "tools/verify/check_hashes.py",
+                          "git_blob_id": "h" * 40}])
+    rec["id"] = "check_hashes@t#0"
+    inv = inventory_mod.build(config=ledger.config, records=[rec], action="push",
+                              files=files, ref="t", admission=["check_hashes"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_hashes")
+    assert row["subjects_covered"] == 2
+    assert row["judged"] == 2, "the number `covered` is actually out of"
+    assert row["subjects_covered"] <= row["judged"]

@@ -420,6 +420,13 @@ def build(*, config, records, action: str, files: dict,
         rows.append({"step": step, "family": family, "status": status,
                      "record_id": (record or {}).get("id"),
                      "dead_patterns": dead,
+                     # ⚠ `covered` is measured over scope ∪ switches, so reporting
+                     # it against `scope` alone made `covered > scope` — 22/21 for
+                     # check_checkers, 43/42 for check_hashes, each inflated by its one
+                     # switch file. Same shape ZeroParadox caught on evidence, arriving
+                     # through the other member of the denominator. `judged` is the
+                     # number `covered` is actually out of.
+                     "judged": len(judged),
                      "subjects_covered": covered, "subjects_stale": stale,
                      "evidence_stale": ev_stale, "evidence_moved": ev_moved,
                      "subjects_unexamined": unexamined, "scope": len(scope),
@@ -475,6 +482,13 @@ def build(*, config, records, action: str, files: dict,
         complete = (n("MISSING") == 0 and n("STALE") == 0
                     and n("UNDECIDED") == 0 and n("FAIL") == 0
                     and n("LEGACY_IDENTITY") == 0)
+        # ⭐⭐ COVERAGE BINDS ONLY WHEN POLICY SAYS SO. Until 2026-08-25 an in-scope
+        # path a step had never examined was counted and not enforced, so a row could
+        # read SATISFIED over a fraction of its own scope. `guards`: 4 of 504, green.
+        if config.coverage_complete_required:
+            short = [r["step"] for r in gating if r["subjects_unexamined"]]
+            if short:
+                complete = False
 
     return {
         "ref": ref, "action": action,

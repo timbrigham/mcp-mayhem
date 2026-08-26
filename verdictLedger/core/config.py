@@ -208,6 +208,33 @@ class Config:
                     "where §7 says the bar belongs")}
 
     @property
+    def coverage_complete_required(self) -> bool:
+        """Whether an in-scope path a step has NEVER examined blocks the action.
+
+        ⚠⚠ THE POLICY CHANGE `subjects_unexamined` WAS ALWAYS WAITING FOR. `inventory`
+        has counted it since 2026-08-23 and deliberately did not block, because
+        refusing every action until every step covers every in-scope path is a
+        decision about what a green row MEANS, not a bug fix.
+
+        Tim made it 2026-08-25: *"every file needs a complete set of actual successful
+        gate analysis.. not just this historical checkoff."*
+
+        And the measurement that forced it: `guards` recorded a PASS over FOUR
+        subjects — one .lean file and three baseline files — while declaring no scope,
+        which under the strict default means it owes all 504 tracked paths. The row
+        read SATISFIED. `check_prose` and `check_classes` read SATISFIED on records
+        from 2026-08-23 covering ~216 of 504, still matching only because those files
+        had not moved. A green row over 0.8% of a tree is the warrant-satisfied-
+        while-empty defect with a rounding error instead of a zero.
+
+        ⚠ DEFAULT FALSE, because turning it on refuses everything until the corpus is
+        genuinely covered — which is the intended forcing function, but it must be a
+        deliberate act with the sweep already planned, not a side effect of this
+        landing. Read live like every other policy value: no restart.
+        """
+        return bool((self.policy.get("coverage") or {}).get("require_complete", False))
+
+    @property
     def v16_required(self) -> bool:
         """Whether V16 REFUSES a mechanical PASS with no evidence.
 

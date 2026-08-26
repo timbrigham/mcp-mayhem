@@ -214,6 +214,22 @@ class Ledger:
             "config_sha": self.config.config_sha if self.config else None,
             # ⚠ WHERE, not just WHAT. See `Config.paths`.
             **(self.config.paths() if self.config else {}),
+            # ⚠⚠ COVERAGE ENFORCEMENT IS NOT A "RELAXATION" AND MUST NOT SHARE THAT
+            # FIELD. `relaxations` exists for MIGRATION DEBT — a temporary state with a
+            # deletion condition. Not-enforcing coverage is the standing default and
+            # always has been, so listing it there would mean the list is never empty,
+            # and a field that always says something says nothing. That is the control
+            # `test_status_is_silent_when_nothing_is_relaxed` exists to hold.
+            "coverage_enforced": (self.config.coverage_complete_required
+                                  if self.config else None),
+            "coverage_note": (None if not self.config
+                              or self.config.coverage_complete_required else
+                              "a step may report SATISFIED while never having examined "
+                              "most of its in-scope paths — measured 2026-08-25, "
+                              "`guards` read SATISFIED over 4 of 504 tracked paths. The "
+                              "number is on every row as `subjects_unexamined`. Set "
+                              "policy.coverage.require_complete = true (read live) once "
+                              "a full sweep has genuinely run."),
             # ⚠ ON EVERY CALL, empty list included. A relaxation that only reports
             # itself when someone asks the right question is a relaxation nobody will
             # remember to remove.
