@@ -133,16 +133,33 @@ def _dead_pattern(glob: str, files, field: str):
     then being minted into a permanent DOI — four releases already carry latent flaws
     that cannot be withdrawn.
     """
-    if any(fnmatch.fnmatch(p, glob) for p in files):
-        return None
     loosened = _loosen(glob)
     if loosened == glob:
         return None
-    hits = sorted(p for p in files if fnmatch.fnmatch(p, loosened))
-    if not hits:
+    now = {p for p in files if fnmatch.fnmatch(p, glob)}
+    hits = {p for p in files if fnmatch.fnmatch(p, loosened)}
+    # ⚠⚠ STRICTLY MORE, NOT "MATCHES NOTHING" — AND THAT WIDENING CAME FROM A NEAR
+    # MISS. The first version only fired when the pattern matched ZERO paths, which
+    # caught `pdf_coupling`'s `**/*.pdf` against 40 root PDFs. On 2026-08-25
+    # ZeroParadox proposed `ZeroParadox/**/*.lean` as a scope for four gating steps.
+    # It matches 213 of the 218 tracked .lean files: `**/` requires at least one `/`,
+    # so it silently drops the five sitting directly under `ZeroParadox/` —
+    # AxiomProfile, BottomCannotBe, ClaimsMirror, DiagonalFixedPoint, Miniature.
+    #
+    # Those four rows would then have read 213/213 COMPLETE while five corpus files
+    # went unexamined for ever — a green row over a scope that quietly dropped
+    # content, which is worse than the dead pattern it was modelled on, because it
+    # LOOKS like coverage. The zero-match rule could never see it.
+    #
+    # `**/` can only ever narrow (`*` already crosses `/`), so if loosening finds
+    # more, the `**/` is dropping something. Flag it whether it drops all or five.
+    if len(hits) <= len(now):
         return None
+    dropped = sorted(hits - now)
     return {"field": field, "pattern": glob, "suggestion": loosened,
-            "matches_now": 0, "would_match": len(hits), "example": hits[0]}
+            "matches_now": len(now), "would_match": len(hits),
+            "drops": len(dropped), "example": dropped[0],
+            "kind": "dead" if not now else "narrowing"}
 
 
 def build(*, config, records, action: str, files: dict,

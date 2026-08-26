@@ -526,3 +526,66 @@ def test_a_contemporaneously_gated_commit_is_not_flagged(ledger, tmp_path):
     out = _crossref_over(ledger, repo, [genesis, early], ["decls"])
     assert [x for x in out["findings"] if x["commit"] == head] == []
     assert out["ok"] is True
+
+
+# -- ⭐⭐ a `**/` that drops SOME paths, not all — the near miss -----------------
+
+def _scoped(ledger, config_dir, tmp_path, scope, files, step="decls"):
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"][step] = {"family": "mechanical", "scope": [scope],
+                          "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "n.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    return inventory_mod.build(config=led.config, records=[], action="push",
+                               files=files, ref="t", admission=[step])
+
+
+def test_a_glob_that_drops_only_some_paths_is_still_flagged(ledger, config_dir,
+                                                            tmp_path):
+    """⭐⭐ THE NEAR MISS, 2026-08-25. ZeroParadox proposed `ZeroParadox/**/*.lean` as
+    the scope for FOUR gating steps. It matches 213 of the 218 tracked .lean files:
+    `**/` requires at least one `/`, so it silently drops the five sitting directly
+    under `ZeroParadox/`.
+
+    Those rows would then have read 213/213 COMPLETE while five corpus files went
+    unexamined for ever — a green row over a scope that quietly dropped content, which
+    is WORSE than the dead pattern this detector was built for, because it looks like
+    coverage.
+
+    ⚠ The original rule — "matches zero, loosened matches some" — could never see it.
+    `**/` can only ever narrow, since `*` already crosses `/`, so the test is whether
+    loosening finds MORE.
+    """
+    files = {"ZeroParadox/Order/Snap.lean": "a",
+             "ZeroParadox/Algebra/Wheel.lean": "b",
+             "ZeroParadox/AxiomProfile.lean": "c",      # top level — dropped by **/
+             "ZeroParadox/Miniature.lean": "d"}         # top level — dropped by **/
+    inv = _scoped(ledger, config_dir, tmp_path, "ZeroParadox/**/*.lean", files)
+    d = inv["dead_patterns"]
+    assert d, "the partial-drop case must be caught, not just the zero case"
+    assert d[0]["kind"] == "narrowing"
+    assert d[0]["matches_now"] == 2 and d[0]["would_match"] == 4
+    assert d[0]["drops"] == 2
+    assert d[0]["suggestion"] == "ZeroParadox/*.lean"
+
+
+def test_the_corrected_glob_is_not_flagged(ledger, config_dir, tmp_path):
+    """⚠ THE CONTROL, and it is what makes the finding actionable: the fix must
+    actually clear it, or the detector is just noise pointing at a wall."""
+    files = {"ZeroParadox/Order/Snap.lean": "a",
+             "ZeroParadox/AxiomProfile.lean": "c"}
+    inv = _scoped(ledger, config_dir, tmp_path, "ZeroParadox/*.lean", files)
+    assert inv["dead_patterns"] == []
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["scope"] == 2, "`*` crosses `/`, so this reaches both depths"
+
+
+def test_a_glob_with_no_star_star_is_never_flagged(ledger, config_dir, tmp_path):
+    """⚠ The detector loosens ONLY `**/`. A plain glob that matches nothing is an
+    honest narrowing, not a typo, and flagging it would fire on every push carrying no
+    file of that kind."""
+    inv = _scoped(ledger, config_dir, tmp_path, "*.rs", {"a.md": "x"})
+    assert inv["dead_patterns"] == []
