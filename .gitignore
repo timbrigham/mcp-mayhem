@@ -8,3 +8,10 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# The run data lives in its own repository (mcpMayhemLocal), nested here and ignored
+# by the parent. Same arrangement as ZeroParadox/.claude-local: public code, private
+# stream. The servers read it directly via ZPLEDGER_DATA / GITROBOT_DATA -- these are
+# NOT copies, and restoring by putting a file back under verdictLedger/data/ would
+# create two ledgers with the servers reading the stale one.
+.mcp-local/
