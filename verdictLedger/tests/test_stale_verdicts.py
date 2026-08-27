@@ -22,6 +22,7 @@ one thing it is for. Both directions of wrong, at once.
 
 import pytest
 
+from conftest import good
 from core import crossref as crossref_mod
 from core import inventory as inventory_mod
 
@@ -589,3 +590,66 @@ def test_a_glob_with_no_star_star_is_never_flagged(ledger, config_dir, tmp_path)
     file of that kind."""
     inv = _scoped(ledger, config_dir, tmp_path, "*.rs", {"a.md": "x"})
     assert inv["dead_patterns"] == []
+
+
+# -- ⚠⚠ `when` asks about the TREE, never about the diff -----------------------
+
+def test_a_when_naming_an_always_present_file_narrows_nothing(ledger, config_dir,
+                                                              tmp_path):
+    """⚠⚠ MEASURED 2026-08-26, and the hazard is a propagating mental model rather
+    than a gate hole. `check_claude_md` declares `when: "CLAUDE.md"` and was promoted
+    on the understanding that this would make it NOT_APPLICABLE on commits leaving the
+    file alone. It does not: `when` is evaluated against the TRACKED FILE SET, not the
+    diff, so a file that is always tracked always matches and the type is ALWAYS
+    required.
+
+    ⚠ It is STRICTER than intended, never looser, so nothing leaks. The cost is that a
+    reader believes the type is conditional and reasons from it — the ZP session said
+    it "would have reached for it again to suppress work on other always-present
+    files." One wrong model becomes several wrong declarations.
+
+    ⚠ The outcome was still right, by a better mechanism: CONTENT STALENESS. The row
+    reads SATISFIED — "checked and still current" — which claims more than "does not
+    apply".
+    """
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["decls"] = {"family": "mechanical", "when": "CLAUDE.md",
+                             "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "w.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+
+    # a tree where CLAUDE.md exists but the commit "changed" only other files
+    files = {"CLAUDE.md": "unchanged", "src/a.py": "moved", "src/b.py": "moved"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "CLAUDE.md", "git_blob_id": "unchanged"}])
+    rec["id"] = "decls@t#0"
+    inv = inventory_mod.build(config=led.config, records=[rec], action="push",
+                              files=files, ref="t", admission=["decls"])
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["status"] == "SATISFIED", "not NOT_APPLICABLE — the when matched"
+    assert row["status"] != "NOT_APPLICABLE"
+
+
+def test_a_when_the_tree_can_genuinely_fail_is_the_right_shape(ledger, config_dir,
+                                                               tmp_path):
+    """⚠ THE CONTRAST, so the rule is usable rather than a prohibition.
+    `pdf_coupling`'s `when: "*.pdf"` is correct BECAUSE a tree can genuinely contain
+    no PDFs, and then the type genuinely does not apply. The test is not "is this glob
+    narrow" but "can this tree ever fail to match it?"."""
+    import json
+    from core.ledger import Ledger
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["decls"] = {"family": "mechanical", "when": "*.pdf",
+                             "reason": "probe"}
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led = Ledger(tmp_path / "x.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    inv = inventory_mod.build(config=led.config, records=[], action="push",
+                              files={"README.md": "a"}, ref="t", admission=["decls"])
+    row = next(r for r in inv["rows"] if r["step"] == "decls")
+    assert row["status"] == "NOT_APPLICABLE"
+    assert "*.pdf" in row["why"]
