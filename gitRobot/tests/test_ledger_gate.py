@@ -357,3 +357,37 @@ def test_the_other_review_gates_still_admit_a_push():
     push = ledger_client.admission_for("push")
     for step in ("editorial", "adversary", "claim_review", "pdf_coupling"):
         assert step in push, f"{step} fell out of the push bar"
+
+
+# -- ⚠ check_claude_md: promoted for TWO properties, not for its name ----------
+
+def test_check_claude_md_gates_every_action():
+    """Promoted 2026-08-26. Not circular the way `rely` was — it reviews CLAUDE.md,
+    not the verification tooling — so edit, re-run, commit is an ordinary loop."""
+    from core import ledger as ledger_client
+    for action in ("commit", "push", "tag"):
+        assert "check_claude_md" in ledger_client.admission_for(action), action
+
+
+def test_promoting_it_does_not_claim_the_cap_is_enforced():
+    """⚠⚠ WHAT A GREEN ROW DOES *NOT* SAY, pinned because the argument for promoting
+    it was that R-NOTINLIB reached 36 lines against a 12-line cap and nothing noticed.
+
+    Measured at the source: `cap` is a WARN leg, and `check_claude_md.py:257` says
+    "THE VERDICT IS THE BLOCKING LEGS ONLY." So an over-cap entry still records a
+    PASS, and promoting this does NOT fix the case that motivated promoting it. There
+    are exactly two blocking legs — rooted paths resolve, named checkers exist — plus
+    three legs declared PENDING and, in the checker's own words, "NOT checked and NOT
+    passing."
+
+    This test does not assert behaviour; it holds the REASON in the suite so nobody
+    later reads a green row as coverage of the shape contract.
+    """
+    import io, json
+    from pathlib import Path
+    cfg = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
+    note = json.load(io.open(cfg, encoding="utf-8-sig")).get(
+        "_check_claude_md_promoted", "")
+    assert "cap` is a WARN leg" in note
+    assert "does not fix that case" in note
+    assert "NOT checked and NOT passing" in note
