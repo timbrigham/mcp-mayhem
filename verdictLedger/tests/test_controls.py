@@ -1158,3 +1158,42 @@ def test_declaring_a_switch_did_not_displace_an_existing_one(ledger):
     assert "tools/verify/pov_baseline.txt" in reqs["check_pov"]["switches"]
     assert "tools/verify/encoding_whitelist.txt" in reqs["check_encoding"]["switches"]
     assert len(reqs["check_pov"]["switches"]) == 2
+
+
+# -- ⚠ the MCP tool descriptions are the only guide an agent gets ---------------
+
+def test_the_append_tool_documents_the_vocabulary_an_agent_must_use():
+    """⚠⚠ Tim, 2026-08-28: "might be worth better descriptions of the available tools
+    on the mcp server to help guide the instance on how to get things entered right."
+
+    The writing guidance lived in `client/record.py`'s docstring — which an agent
+    calling `append` over MCP NEVER SEES. That is how a correct emitter came to be
+    written against half the contract: `delegated`, `outstanding` and the mixed-round
+    split were each absent from the tool description, and the identity line described
+    the pre-§4b hash that was retired months ago.
+
+    Pinned as a test because a docstring nothing asserts is a docstring that goes
+    stale — which is exactly what happened to the one this replaces.
+    """
+    import inspect
+    from ledger_server import server
+    doc = inspect.getdoc(server.append.fn if hasattr(server.append, "fn")
+                         else server.append)
+    for token in ("delegated", "outstanding", "evidence", "V1-V18",
+                  "thirty-nine", "revision: 1"):
+        assert token in doc, f"append's description never mentions {token!r}"
+    assert "(step, basis, verdict, reason, subjects, revision)" not in doc, (
+        "the retired pre-§4b identity is back in the description")
+
+
+def test_the_inventory_tool_warns_that_covered_is_not_passing():
+    """⚠ The field most often misread. A 70-subject FAIL makes all 70 COVERED and
+    none PASSING, which is what sent a sibling session looking for an aggregation
+    that does not exist."""
+    import inspect
+    from ledger_server import server
+    doc = inspect.getdoc(server.inventory.fn if hasattr(server.inventory, "fn")
+                         else server.inventory)
+    assert "COVERED IS NOT PASSING" in doc
+    assert "coverage_gap" in doc
+    assert "worst covering verdict" in doc.lower()

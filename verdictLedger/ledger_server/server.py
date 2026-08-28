@@ -144,14 +144,54 @@ def _files(ref: str) -> dict:
 
 @mcp.tool()
 async def append(record: dict) -> dict:
-    """Validate against V1-V16, then append. Returns {id}. REFUSES invalid records.
+    """Append one verdict. Validated against V1-V18; REFUSES anything short.
 
-    Idempotent on identity — (step, basis, verdict, reason, subjects, revision).
-    No wall clock is in the hash, so the same verdict over the same content is the
-    same record however long it took to reach.
+    ⚠ THIS DOCSTRING IS THE WRITING GUIDE. `client/record.py` carries the same advice
+    for callers that import it, and an agent calling this tool directly never sees
+    that file — which is how a correct emitter came to be written against half the
+    contract. If you are about to hand-build a record, read to the end.
 
-    ⚠ A refusal is TERMINAL. Do not retry it: fix the record. Retrying a rejected
-    record is how a validation rule gets worn down."""
+    THE KEY IS `step@basis#revision`. Nothing else. An identical record at an
+    occupied key dedupes and returns `appended: false`; a DIFFERENT one at the same
+    key is refused by V11 as a conflict, naming the field that moved.
+
+    HOW TO PICK `decided.how` — this is the field agents get wrong:
+
+      mechanical  a computation ran. REQUIRES `evidence` on a PASS (V16): the checker
+                  module's {path, git_blob_id}. Editing that module then stales the
+                  key, which is the point.
+      delegated   ONE agent round under a named brief. REQUIRES `who` (the gate) and,
+                  on a PASS, `evidence` naming the BRIEF. tier must be "A". This is
+                  the route for a review gate (V17).
+      agreement   a real panel: V3 wants `agreed == passes >= policy.min_passes`.
+                  ONE record carries the whole round; do NOT write one per pass.
+      signature   a HUMAN accepted a verdict the round did not produce. `who` is a
+                  person (V5). Never an agent's name — `delegated` is for that.
+      override    a REGRADE: "the gate erred". V12 forbids overriding your own prior
+                  decision on a key without unanimity.
+
+    ⭐⭐ SPLIT A MIXED ROUND. A step that examined forty files and failed on one emits
+    a PASS over the thirty-nine and a FAIL over the one — that is what keeps coverage
+    exact, and a single FAIL over all forty leaves the thirty-nine with NO passing
+    coverage for ever. Both records carry the same basis; the second needs
+    `revision: 1`, because `(step, basis, revision)` is unique. Nothing is superseded:
+    revision only supersedes WITHIN one content key, and disjoint subject sets never
+    collide.
+
+    ⚠ FINDINGS THAT SURVIVE A PASS go in `outstanding` — [{severity, note, path}].
+    Only `ordinary` may ride a PASS (V18); bedrock or blocking must FAIL. This is
+    STOP-ORDINARY: reviewed, ordinary findings left, loop cap reached, proceed.
+
+    ⚠ `subjects` is WHAT THE VERDICT IS ABOUT, carrying git BLOB IDs — the value
+    `git ls-tree` prints, never a content digest of the file. `inputs` is for
+    AGGREGATES and holds RECORD KEYS, never blob ids (V4).
+
+    ⚠ `run.id` is required (V9). Export ZPLEDGER_RUN before the run; a hand-run sets
+    it exactly the way the pipeline does.
+
+    ⚠ A REFUSAL IS TERMINAL. Do not retry it — fix the record. Retrying a rejected
+    record is how a validation rule gets worn down, and the errors list names every
+    violation at once so one round trip is enough."""
     return await _guard(_ledger().append, record)
 
 
@@ -196,7 +236,8 @@ async def genesis(commit: str, note: Optional[str] = None) -> dict:
 
 @mcp.tool()
 async def validate(record: dict) -> dict:
-    """Schema plus V1-V16. Pure, no write. Returns {ok, errors[]} with EVERY
+    """Schema plus V1-V18. Pure, no write — use it to check a record BEFORE
+    appending. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
     up and works around the thing."""
     return await _guard(_ledger().validate, record)
@@ -290,11 +331,32 @@ async def inventory(action: str, ref: str = "staged",
     records that happen to exist" is worthless, because "3 of 3 passed" and "5
     never ran" render identically.
 
-    Five statuses and none may collapse into another: SATISFIED · STALE (examined,
+    Six statuses and none may collapse into another: SATISFIED · STALE (examined,
     content moved — re-run) · MISSING (never examined — run at all) ·
     NOT_APPLICABLE (a `when` glob did not match, and it carries the glob) ·
-    FAIL/UNDECIDED. `complete` is true only when missing, stale, undecided and
-    failed are all zero — gitRobot REQUIRES that; the ledger COMPUTES it.
+    LEGACY_IDENTITY (recorded under the superseded `sha256` scheme — RE-RECORD, not
+    re-run) · FAIL/UNDECIDED. `complete` is true only when missing, stale, undecided,
+    failed and legacy are all zero — gitRobot REQUIRES that; the ledger COMPUTES it.
+
+    ⚠⚠ COVERED IS NOT PASSING, AND THIS IS THE FIELD MOST OFTEN MISREAD.
+    `subjects_covered` counts paths some record examined at THIS content — including
+    a record that FAILED. So a 70-subject FAIL makes all 70 covered and none of them
+    passing, and the step accumulates no usable coverage. If you want "which paths
+    still owe a PASS", call `coverage_gap`; it is PASS-only and returns the list.
+
+    ⚠ THE ROW'S VERDICT IS THE WORST COVERING VERDICT, not the newest and not the
+    first. A step with a FAIL over some paths and a PASS over others reads FAIL, and
+    `record_id` names the record that failed. (Until 2026-08-28 it named whichever
+    record covered the alphabetically-first path, which let a recorded FAIL go
+    invisible when its filenames sorted late.)
+
+    ⚠ EXTRA NUMBERS THAT DO NOT BLOCK BUT SHOULD BE READ: `subjects_unexamined`
+    (in-scope paths this step has NEVER examined — `guards` once read SATISFIED over
+    4 of 504), `evidence_stale` (the checker or brief that produced the verdict has
+    moved — re-run), `unscoped` (paths a step examined that its declared scope
+    excludes), `dead_patterns` (a glob that matches nothing, or that silently drops
+    paths a looser form would catch), and `outstanding` (findings riding a PASS under
+    V18). Set `policy.coverage.require_complete` to make unexamined paths BLOCK.
 
     ⚠⚠ TWO LISTS. `admission` names which registered types GATE this action; the registry
     says only what may be RECORDED. Twenty experimental gates recording while three admit a
