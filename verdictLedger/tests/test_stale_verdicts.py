@@ -653,3 +653,75 @@ def test_a_when_the_tree_can_genuinely_fail_is_the_right_shape(ledger, config_di
     row = next(r for r in inv["rows"] if r["step"] == "decls")
     assert row["status"] == "NOT_APPLICABLE"
     assert "*.pdf" in row["why"]
+
+
+# -- ⭐⭐ A RECORDED FAIL MUST NOT BECOME INVISIBLE BECAUSE OF FILENAMES ---------
+#
+# Measured 2026-08-28 while answering ZeroParadox's question about split rounds.
+# `covered_rec = covered_rec or rec` took the FIRST covering record in path order, so
+# the row's verdict came from whichever record happened to cover the alphabetically
+# earliest path. Same records, same basis, same content, opposite admission.
+#
+# ⚠ It matters because the split is the DOCUMENTED design: `record.emit` says "a step
+# that examined forty files and failed on one emits a PASS over the thirty-nine and a
+# FAIL over the one". Every round that does what the docstring asks produces exactly
+# the shape this mishandled — the correct usage was the trigger.
+
+def _split(ledger, bad, ok):
+    """One round, one basis: FAIL over `bad`, PASS over `ok`."""
+    B = {"kind": "tree", "value": "t", "resolved_from": "explicit"}
+    mk = lambda v, paths, rev: dict(
+        good(step="editorial", tier="A", verdict=v, basis=B, revision=rev,
+             reason=("bedrock" if v == "FAIL" else None),
+             subjects=[{"path": p, "git_blob_id": "b" * 40} for p in paths],
+             evidence=[{"path": ".claude/commands/editorial-review.md",
+                        "git_blob_id": "e" * 40}],
+             decided={"how": "delegated", "passes": 1, "agreed": 1,
+                      "who": "editorial"}),
+        id=f"editorial@t#{rev}")
+    records = [mk("FAIL", bad, 0), mk("PASS", ok, 1)]
+    files = {p: "b" * 40 for p in sorted(bad + ok)}
+    inv = inventory_mod.build(config=ledger.config, records=records, action="push",
+                              files=files, ref="t", admission=["editorial"])
+    return inv, next(r for r in inv["rows"] if r["step"] == "editorial")
+
+
+def test_a_fail_blocks_however_its_filenames_sort(ledger):
+    """⭐⭐ THE FAIL-OPEN. With the PASS subjects sorting first this returned
+    SATISFIED and complete=True — admitting a push while a FAIL for that step at that
+    basis sat in the stream."""
+    for bad, ok, label in ((["bad1.md", "bad2.md"], ["ok1.md", "ok2.md"], "FAIL first"),
+                           (["zbad1.md", "zbad2.md"], ["aok1.md", "aok2.md"], "PASS first")):
+        inv, row = _split(ledger, bad, ok)
+        assert row["status"] == "FAIL", f"{label}: got {row['status']}"
+        assert inv["complete"] is False, f"{label}: admitted with a FAIL on record"
+
+
+def test_the_row_names_the_record_that_failed(ledger):
+    """⚠ A blocked row whose `record_id` points at the PASSING record sends the reader
+    to a reason that explains nothing."""
+    _, row = _split(ledger, ["zbad1.md"], ["aok1.md"])
+    assert row["record_id"] == "editorial@t#0"
+
+
+def test_the_clean_subjects_still_count_as_covered(ledger):
+    """⚠ THE CONTROL. Worst-verdict-wins must not discard the passing half — the
+    whole point of a split is that the clean files keep their coverage."""
+    inv, row = _split(ledger, ["zbad1.md"], ["aok1.md", "aok2.md"])
+    assert row["subjects_covered"] == 3
+    gap = inventory_mod.coverage_gap(
+        config=ledger.config, records=[], action="push",
+        files={"a.md": "x"}, admission=["editorial"])
+    assert gap["steps"][0]["missing"] == 1        # sanity: the tool still answers
+
+
+def test_a_genuine_regrade_is_not_treated_as_a_split(ledger):
+    """⚠⚠ THE OTHER CONTROL, and the one that keeps the fix from breaking `revision`.
+    A FAIL properly superseded by a later PASS over the SAME bytes must still clear.
+    `by_content` resolves each path to its highest-revision record BEFORE this runs,
+    so the old FAIL never reaches the comparison — taking the worst ACROSS paths is a
+    different question from taking the latest AT a path, and only the second is what
+    `revision` means."""
+    inv, row = _split(ledger, ["same.md"], ["same.md"])   # rev 1 PASS regrades rev 0
+    assert row["status"] == "SATISFIED"
+    assert inv["complete"] is True

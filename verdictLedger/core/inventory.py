@@ -345,17 +345,45 @@ def build(*, config, records, action: str, files: dict,
         # subjects are DISJOINT from its evidence, so it is the first place the two
         # could be told apart at all.
         judged = [p for p in files if p in in_scope or p in switch_set]
+        # ⚠⚠ THE WORST COVERING VERDICT WINS, NOT THE FIRST ONE FOUND. This was
+        # `covered_rec = covered_rec or rec`, so the row's verdict came from whichever
+        # record happened to cover the alphabetically-first path — and that is a
+        # FAIL-OPEN, measured 2026-08-28 while answering ZeroParadox:
+        #
+        #   FAIL over {bad1.md, bad2.md} + PASS over {ok1.md, ok2.md}
+        #      -> status FAIL, complete False        (the FAIL sorts first)
+        #   FAIL over {zbad1.md, zbad2.md} + PASS over {aok1.md, aok2.md}
+        #      -> status SATISFIED, complete TRUE    (the PASS sorts first)
+        #
+        # Same records, same basis, same content, opposite admission — decided by
+        # FILENAME. A recorded FAIL became invisible and the push was allowed.
+        #
+        # ⚠ IT MATTERS NOW BECAUSE THE SPLIT IS THE DOCUMENTED DESIGN. `record.emit`
+        # says "a step that examined forty files and failed on one emits a PASS over
+        # the thirty-nine and a FAIL over the one". Every round that does what the
+        # docstring asks produces exactly the two-record shape this mishandled, so the
+        # correct usage was the one that triggered it.
+        #
+        # ⚠ GENUINE SUPERSESSION IS UNAFFECTED. `by_content` already resolves each
+        # path to its HIGHEST-revision record for that content, so a FAIL properly
+        # regraded by a later PASS over the same bytes never reaches this list. Taking
+        # the worst ACROSS paths is a different question from taking the latest AT a
+        # path, and only the second is what `revision` means.
         covered, stale = 0, 0
-        covered_rec, stale_rec = None, None
+        covered_recs, stale_rec = [], None
         for path in judged:
             rec = by_content.get((step, path, files[path]))
             if rec is not None:
                 covered += 1
-                covered_rec = covered_rec or rec
+                covered_recs.append(rec)
             elif (step, path) in by_path:
                 # examined, but never at THIS content
                 stale += 1
                 stale_rec = stale_rec or by_path[(step, path)]
+        _SEVERITY = {"FAIL": 0, "UNDECIDED": 1, "PASS": 2}
+        covered_rec = min(covered_recs,
+                          key=lambda r: _SEVERITY.get(r.get("verdict"), 3),
+                          default=None)
 
         # ⭐⭐ THE PRODUCER MOVING IS A DIFFERENT FACT FROM THE CORPUS MOVING, and
         # ZeroParadox asked the exact right question: does editing `common.py` stale a
