@@ -377,6 +377,49 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
 
 
 @mcp.tool()
+async def progress(action: str = "push", ref: str = "staged",
+                   admission: Optional[list[str]] = None, rounds: int = 8) -> dict:
+    """ONE VIEW: what blocks the action, and is it CONVERGING?
+
+    `inventory` answers "is it green now". `coverage_gap` answers "which paths owe a
+    PASS". Neither answers "is this getting better" — and that is the question a loop
+    hides in, because every round can look identical while the numbers drift the wrong
+    way and each snapshot is read on its own.
+
+    Returns, for every gating step that is NOT satisfied: its status, covered/scope,
+    how many paths still owe a PASS, what remedy that needs (run it, or fix findings),
+    and its `history` — the last `rounds` records with verdict, subject count and
+    outstanding count, newest last. A review gate whose verdicts stay FAIL while its
+    subject count does not move is the loop, made visible.
+
+    ⚠⚠ `bar_drift` NAMES EVERY STEP THAT WENT GREEN UNDER A DIFFERENT BAR. Records
+    carry `run.config_sha`, the identity of the policy AND registry they were judged
+    under. Widening a scope mid-convergence does NOT re-open a row — coverage is keyed
+    on content, not on the bar — so a green step can be resting on a rule set that no
+    longer exists. This is the field to read before trusting a `complete: true`.
+
+    ⚠ It is reported at zero as well, so "nothing drifted" is a statement rather than
+    an absence."""
+    return await _guard(_sync_progress, action, ref, admission, rounds)
+
+
+def _sync_progress(action, ref, admission, rounds) -> dict:
+    led = _ledger()
+    cfg = led._require_config()
+    if admission is None:
+        from core.errors import UsageError
+        raise UsageError(
+            "progress requires an admission set — which steps gate this action. "
+            "Omitting it is not an empty set; it means nobody said, and a convergence "
+            "report over nothing would read as convergence.")
+    out = inventory_mod.progress(config=cfg, records=led.store.records(),
+                                 action=action, files=_files(ref),
+                                 admission=admission, rounds=rounds)
+    out["ref"] = ref
+    return out
+
+
+@mcp.tool()
 async def coverage_gap(action: str = "push", ref: str = "staged",
                        admission: Optional[list[str]] = None,
                        step: Optional[str] = None, limit: int = 200) -> dict:

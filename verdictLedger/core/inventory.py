@@ -666,6 +666,100 @@ def coverage_gap(*, config, records, action: str, files: dict,
             "tracked": len(files)}
 
 
+def progress(*, config, records, action: str, files: dict, admission: list,
+             rounds: int = 8) -> dict:
+    """ONE VIEW: what blocks the push, and is it converging?
+
+    ⭐⭐ Tim, 2026-08-29: "my only concern is that you end up in some kind of a loop
+    where you're not actually making progress.. so we would definitely need some kind
+    of progress tracking done so that we're actually seeing everything from a single
+    viewpoint, and actually making progress towards convergence."
+
+    `inventory` answers "is it green NOW" and `coverage_gap` answers "which paths owe
+    a PASS". Neither answers "is this getting better", and that is the question a loop
+    hides in: every round can look identical while the underlying numbers drift the
+    wrong way, and nobody notices because each snapshot is read on its own.
+
+    ⚠⚠ THE BAR MUST NOT MOVE UNDER THE WORK, AND THIS IS WHERE THAT IS VISIBLE.
+    Every record carries `run.config_sha` — the identity of the policy AND registry it
+    was judged under. A scope widened mid-convergence silently invalidates the reason a
+    step went green, and the row keeps reading SATISFIED because coverage is keyed on
+    content, not on the bar. `bar_drift` names every step whose passing records were
+    earned under a DIFFERENT config than the one now in force. Tim, same day: "no more
+    random ass stuff getting into scope at a later point."
+
+    ⚠ `history` is per step, newest last, so a reader sees direction rather than a
+    point. A review gate whose findings are not shrinking across rounds is the loop
+    this exists to surface — and the honest signal is that its verdicts stay FAIL while
+    its subject count does not move.
+    """
+    inv = build(config=config, records=records, action=action, files=files,
+                admission=admission)
+    gap = coverage_gap(config=config, records=records, action=action, files=files,
+                       admission=admission, limit=0)
+    gap_by_step = {s["step"]: s for s in gap["steps"]}
+    current_sha = config.config_sha
+
+    # per step, the verdicts in the order they were recorded
+    by_step: dict = {}
+    for r in sorted(records, key=lambda r: ((r.get("run") or {}).get("started") or "")):
+        by_step.setdefault(r.get("step"), []).append(r)
+
+    blocking, converging, drift = [], [], []
+    for row in sorted(inv["rows"], key=lambda r: r["step"]):
+        if not row["gating"]:
+            continue
+        step = row["step"]
+        hist = by_step.get(step, [])[-rounds:]
+        seq = [{"at": ((h.get("run") or {}).get("started") or "")[:16],
+                "verdict": h.get("verdict"),
+                "subjects": len(h.get("subjects") or []),
+                "outstanding": len(h.get("outstanding") or [])} for h in hist]
+
+        # ⚠ A step is only counted as EARNED under the current bar if every record
+        # that satisfies it was judged under this config. Anything else is a green row
+        # resting on a different rule set.
+        sat_shas = {((h.get("run") or {}).get("config_sha")) for h in hist
+                    if h.get("verdict") == "PASS"}
+        if sat_shas and current_sha not in sat_shas:
+            drift.append({"step": step,
+                          "why": "its passing records were judged under a different "
+                                 "policy+registry than the one now in force"})
+
+        if row["status"] != "SATISFIED":
+            g = gap_by_step.get(step, {})
+            blocking.append({
+                "step": step, "status": row["status"],
+                "covered": row["subjects_covered"], "scope": row["scope"],
+                "owes_a_pass": g.get("missing"),
+                "never_examined": row["subjects_unexamined"],
+                "remedy": g.get("remedy"),
+                "history": seq,
+            })
+        else:
+            converging.append(step)
+
+    return {
+        "action": action, "complete": inv["complete"],
+        "satisfied": len(converging),
+        "gating": len(converging) + len(blocking),
+        "config_sha": current_sha,
+        # ⚠ The whole point: what is left, with its direction attached.
+        "blocking": blocking,
+        "green": sorted(converging),
+        "bar_drift": drift,
+        # ⚠ Reported even at zero, so "nothing drifted" is a statement rather than an
+        # absence — the same reason `signals` prints its counts when they are clean.
+        "bar_drift_note": ("no gating step's coverage predates the current bar"
+                           if not drift else
+                           f"{len(drift)} step(s) went green under a DIFFERENT bar; "
+                           f"widening scope mid-convergence does not re-open a row, "
+                           f"because coverage is keyed on content"),
+        "unexamined_total": inv.get("unexamined"),
+        "outstanding_total": inv.get("outstanding"),
+    }
+
+
 def coverage(*, records, paths: list) -> dict:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 

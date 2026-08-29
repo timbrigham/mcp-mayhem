@@ -359,3 +359,61 @@ def test_truncation_is_reported_never_silent(ledger):
     assert len(step["paths"]) == 10
     assert step["truncated"] == 20
     assert step["missing"] == 30
+
+
+# -- ⭐⭐ progress: is it converging, or is it a loop? --------------------------
+
+def test_progress_shows_direction_not_just_a_snapshot(ledger):
+    """⭐⭐ Tim, 2026-08-29: "my only concern is that you end up in some kind of a loop
+    where you're not actually making progress." `inventory` answers "green now" and
+    `coverage_gap` answers "which paths owe a PASS"; neither answers "is this getting
+    better", and that is where a loop hides — every round looks identical because each
+    snapshot is read on its own."""
+    files = {"a.md": "b1"}
+    mk = lambda v, n, at: dict(
+        good(step="decls", verdict=v, reason=(None if v == "PASS" else "found things"),
+             basis={"kind": "tree", "value": f"t{n}", "resolved_from": "explicit"},
+             subjects=[{"path": "a.md", "git_blob_id": f"old{n}"}],
+             run={"id": "r", "started": at, "config_sha": None}),
+        id=f"decls@t{n}#0")
+    recs = [mk("FAIL", 1, "2026-08-01T00:00"), mk("FAIL", 2, "2026-08-02T00:00"),
+            mk("FAIL", 3, "2026-08-03T00:00")]
+    out = inventory_mod.progress(config=ledger.config, records=recs, action="push",
+                                 files=files, admission=["decls"], rounds=5)
+    row = next(b for b in out["blocking"] if b["step"] == "decls")
+    assert [h["verdict"] for h in row["history"]] == ["FAIL", "FAIL", "FAIL"]
+    assert row["history"][0]["at"] < row["history"][-1]["at"], "newest last"
+
+
+def test_bar_drift_names_steps_that_went_green_under_another_bar(ledger):
+    """⚠⚠ Tim, same day: "no more random ass stuff getting into scope at a later
+    point." Widening a scope mid-convergence does NOT re-open a green row — coverage
+    is keyed on content, not on the bar — so a step can be resting on a rule set that
+    no longer exists. `run.config_sha` is what makes that visible."""
+    files = {"a.md": "b1"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "b1"}],
+               run={"id": "r", "started": "2026-08-01T00:00",
+                    "config_sha": "a-bar-that-no-longer-exists"})
+    rec["id"] = "decls@t#0"
+    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
+                                 files=files, admission=["decls"], rounds=5)
+    assert [d["step"] for d in out["bar_drift"]] == ["decls"]
+    assert "DIFFERENT bar" in out["bar_drift_note"]
+
+
+def test_no_drift_is_stated_rather_than_absent(ledger):
+    """⚠ Reported at zero too — "nothing drifted" must be a statement, the same reason
+    `signals` prints its counts when they are clean."""
+    files = {"a.md": "b1"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "b1"}],
+               run={"id": "r", "started": "2026-08-01T00:00",
+                    "config_sha": ledger.config.config_sha})
+    rec["id"] = "decls@t#0"
+    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
+                                 files=files, admission=["decls"], rounds=5)
+    assert out["bar_drift"] == []
+    assert "no gating step" in out["bar_drift_note"]
