@@ -718,12 +718,33 @@ def progress(*, config, records, action: str, files: dict, admission: list,
 
         if row["status"] != "SATISFIED":
             g = gap_by_step.get(step, {})
+            # ⚠⚠ A BLOCKING ROW MUST EXPLAIN ITSELF EVEN WHEN IT OWES NOTHING.
+            # Measured 2026-08-29 cycle 1: `claim_review` read STALE / owes 0 / remedy
+            # "nothing owed" — three fields that look like a contradiction and are not.
+            # It was stale on its EVIDENCE (the producer moved), and `coverage_gap`
+            # counts SCOPE paths only, so the work number is legitimately zero while
+            # the step is legitimately blocked.
+            #
+            # Two correct numbers reading as a contradiction is the indicator problem
+            # Tim named an hour earlier, arriving in the tool built to answer it. The
+            # row now carries `why` from the inventory and states the real remedy.
+            owes = g.get("missing")
+            remedy = g.get("remedy")
+            if not owes and row["status"] != "SATISFIED":
+                remedy = (f"nothing in SCOPE is owed — this step is {row['status']} for "
+                          f"another reason: "
+                          + (f"its producer moved ({', '.join(row.get('evidence_moved') or [])})"
+                             if row.get("evidence_stale") else
+                             (row.get("why") or "see the inventory row"))
+                          + ". Re-run it.")
             blocking.append({
                 "step": step, "status": row["status"],
                 "covered": row["subjects_covered"], "scope": row["scope"],
-                "owes_a_pass": g.get("missing"),
+                "owes_a_pass": owes,
                 "never_examined": row["subjects_unexamined"],
-                "remedy": g.get("remedy"),
+                "evidence_stale": row.get("evidence_stale", 0),
+                "why": row.get("why"),
+                "remedy": remedy,
                 "history": seq,
             })
         else:

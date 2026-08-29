@@ -500,3 +500,31 @@ def test_the_work_number_is_named_as_the_one_to_drive_down(ledger):
                                  files={"a.md": "b1"}, admission=["decls"], rounds=3)
     assert "number to drive down" in out["numbers"]["note"]
     assert "decides the push" in out["numbers"]["note"]
+
+
+def test_a_blocking_row_owing_nothing_still_explains_itself(ledger):
+    """⚠⚠ CYCLE 1 OF THE CONVERGENCE WATCH, 2026-08-29: `claim_review` read
+    STALE / owes 0 / remedy "nothing owed" — three fields that look like a
+    contradiction and are not. It was stale on its EVIDENCE (the producer moved) while
+    `coverage_gap` counts SCOPE paths only, so the work number is legitimately zero
+    and the step is legitimately blocked.
+
+    Two correct numbers reading as a contradiction is the indicator problem, arriving
+    inside the tool built to answer it."""
+    # ⚠ `check_hashes` declares a scope that EXCLUDES its own module, which is what
+    # makes the zero-owed case reachable: the evidence path is judged but not scoped.
+    files = {"register.md": "b1", "tools/verify/check_hashes.py": "MOVED"}
+    rec = good(step="check_hashes", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "register.md", "git_blob_id": "b1"}],
+               evidence=[{"path": "tools/verify/check_hashes.py",
+                          "git_blob_id": "e" * 40}])
+    rec["id"] = "check_hashes@t#0"
+    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
+                                 files=files, admission=["check_hashes"], rounds=3)
+    row = next(b for b in out["blocking"] if b["step"] == "check_hashes")
+    assert row["owes_a_pass"] == 0
+    assert row["status"] == "STALE"
+    assert "nothing in SCOPE is owed" in row["remedy"]
+    assert "producer moved" in row["remedy"]
+    assert row["evidence_stale"] == 1
