@@ -552,3 +552,32 @@ def test_v9_does_not_claim_to_authenticate_the_run(ledger):
         if e.startswith("V9")][0]
     assert "ATTRIBUTION, not authentication" in found
     assert "caller's imagination" not in found
+
+
+def test_v2_names_the_empty_index_as_the_likely_cause(ledger):
+    """⚠⚠ MEASURED 2026-08-29, AND IT COST THE ZP SESSION A DEBUGGING DETOUR. With
+    an empty index, `ledger_subjects` correctly fences every edited path, the subject
+    list arrives empty, and three checkers reported `exit 1` / `exit 2 — ran, but its
+    verdict was NOT RECORDED`. That reads as three broken checkers. All five passed
+    the moment anything was staged — same command, same bytes, only the index changed.
+
+    The old message said only that a step cannot pass having examined nothing: true,
+    and it points at the CHECKER. This is the THIRD of my refusals to send them
+    somewhere else (V9 cost a preflight cycle; V11 sent them to supersede when staging
+    was the answer), and all three were written from the RULE's point of view rather
+    than the caller's."""
+    found = [e for e in errs(ledger, good(subjects=[])) if e.startswith("V2")]
+    assert found
+    assert "NOTHING IS STAGED" in found[0]
+    assert "stage the paths you edited" in found[0]
+    assert "The checker is fine" in found[0]
+
+
+def test_v2_still_names_the_defect_it_was_written_for(ledger):
+    """⚠ THE CONTROL. Adding the common cause must not bury the rule: an empty subject
+    set on a PASS is warrant-satisfied-while-empty, five measured instances, and the
+    message must still say so for the case where the step really did examine
+    nothing."""
+    found = [e for e in errs(ledger, good(subjects=[])) if e.startswith("V2")][0]
+    assert "cannot pass having examined nothing" in found
+    assert "the defect this rule exists to catch" in found

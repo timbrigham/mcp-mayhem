@@ -267,8 +267,28 @@ def rules(record: dict, *, config: Config, existing_ids: set,
 
     # V2 — warrant-satisfied-while-empty. Five measured instances.
     if verdict == "PASS" and not (record.get("subjects") or []):
+        # ⚠⚠ NAME THE COMMON CAUSE, NOT JUST THE FACT. Measured 2026-08-29: with an
+        # EMPTY INDEX, `ledger_subjects` correctly fences every edited path (worktree
+        # differs from index), the subject list comes back empty, and three checkers
+        # reported `exit 1` / `exit 2 — ran, but its verdict was NOT RECORDED`. That
+        # reads as three broken checkers. All five passed and recorded the moment
+        # anything was staged — same command, same bytes on disk, only the index
+        # changed. The ZP session ran each checker bare, then with --block, then with
+        # --block --record before the basis was the variable it looked at.
+        #
+        # The old text said only that a step cannot pass having examined nothing —
+        # true, and it points at the CHECKER. §3's rule applies here as everywhere: a
+        # refusal that does not name the alternative sends the reader somewhere else.
+        # This is the third of my messages to do that (V9 cost a preflight cycle, V11
+        # sent them to supersede when staging was the answer), and all three share one
+        # shape: written from the RULE's point of view rather than the caller's.
         out.append("V2: verdict PASS with an empty subjects array — a step cannot "
-                   "pass having examined nothing")
+                   "pass having examined nothing. ⚠ IF YOU ARE RECORDING AGAINST THE "
+                   "INDEX AND NOTHING IS STAGED, THAT IS THE CAUSE: every edited path "
+                   "differs from the index, `ledger_subjects` fences all of them, and "
+                   "the subject list arrives empty. The checker is fine — stage the "
+                   "paths you edited and re-run. Otherwise the step genuinely examined "
+                   "nothing, and that is the defect this rule exists to catch.")
 
     # V3 — fake unanimity, and single-pass AI verdicts wearing an agreement badge.
     if verdict == "PASS" and how == "agreement":
