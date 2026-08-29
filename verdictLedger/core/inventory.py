@@ -775,6 +775,58 @@ def progress(*, config, records, action: str, files: dict, admission: list,
         # weaker one noisier is the two-copies defect — kept as a comment rather than a
         # deletion, because a rule removed for a reason is worth more on the page than
         # a gap someone re-derives.
+        # ⭐⭐ THE NUMBERS, RECONCILED IN ONE PLACE. Tim, 2026-08-29: "we also keep
+        # having issues with which indicators to use... that's a concern."
+        #
+        # Measured the same day, same tree: FIVE "how much is left" numbers across four
+        # different denominators — 13/19 steps, 812 unexamined, 877 missing, 12
+        # uncovered, 38 unscoped. Each was added to answer a real question and none
+        # said how it related to the others, so a reader could not tell which to act on
+        # — and 812 against 877 is the worst kind of disagreement, close enough to look
+        # like one of them is a bug.
+        #
+        # They are not in conflict; they are nested, and nobody had ever written the
+        # nesting down:
+        #
+        #   uncovered  ⊂  unexamined  ⊂  owes_a_pass
+        #
+        # `coverage.uncovered`  paths NO step ever named. A day-one floor.
+        # `unexamined`          (step, path) pairs where THAT step never examined the
+        #                       path. Wider: a path can be covered by one step and
+        #                       unexamined by another.
+        # `owes_a_pass`         (step, path) pairs lacking a PASSING verdict at the
+        #                       CURRENT content. Widest, and the only one that is
+        #                       actually the work: it also counts paths a step DID
+        #                       examine, at bytes that have since moved or under a
+        #                       verdict that failed.
+        #
+        # ⚠ `owes_a_pass` IS THE WORK NUMBER. `satisfied/gating` is the GATE number.
+        # Everything else is a drill-down, and this block exists so nobody has to
+        # reconcile them by hand again.
+        "numbers": {
+            "gate": {"value": f"{len(converging)}/{len(converging) + len(blocking)}",
+                     "means": "admitted steps SATISFIED — this is what `complete` is",
+                     "act_on": "the `blocking` list above"},
+            "work": {"value": gap.get("total_missing"),
+                     "means": "(step, path) pairs lacking a PASSING verdict at the "
+                              "current content — the actual remaining work",
+                     "act_on": "coverage_gap(step=...) for the path list"},
+            "never_examined": {"value": inv.get("unexamined"),
+                               "means": "a SUBSET of `work`: pairs that step has never "
+                                        "examined at all, as opposed to examined and "
+                                        "since moved or failed"},
+            "unscoped": {"value": len(inv.get("unscoped") or []),
+                         "means": "paths a step examined that its declared scope "
+                                  "EXCLUDES — a scope that does not match what the "
+                                  "checker reads. Never blocks; read it when a step "
+                                  "cannot close"},
+            "outstanding": {"value": inv.get("outstanding"),
+                            "means": "findings riding a PASS under V18 — ordinary "
+                                     "only, and they do not block"},
+            "note": ("uncovered ⊂ never_examined ⊂ work. They are nested, not "
+                     "competing. `work` is the number to drive down; `gate` is the "
+                     "number that decides the push."),
+        },
         "unexamined_total": inv.get("unexamined"),
         "outstanding_total": inv.get("outstanding"),
     }

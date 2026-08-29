@@ -439,3 +439,64 @@ def test_the_freeze_keys_on_the_registry_not_the_composite(ledger, config_dir,
                    required_path=config_dir / "required.v2.json")
     assert after.config.registry_sha == before_registry, "a threshold moved the scope sha"
     assert after.config.config_sha != before_config, "the composite should have moved"
+
+
+# -- ⭐⭐ the indicators are NESTED, and that has to be stated ------------------
+
+def test_the_progress_numbers_are_reconciled_in_one_place(ledger):
+    """⭐⭐ Tim, 2026-08-29: "we also keep having issues with which indicators to
+    use... that's a concern."
+
+    Measured the same day on one tree: FIVE "how much is left" numbers across four
+    denominators — 13/19 steps, 812 unexamined, 877 missing, 12 uncovered, 38
+    unscoped. Each answered a real question; none said how it related to the others.
+    812 against 877 is the worst kind of disagreement, close enough to read as a bug in
+    one of them.
+
+    They are NESTED, not competing: uncovered ⊂ never_examined ⊂ work. Nobody had
+    written that down, so every reader reconciled it by hand — or did not, and acted
+    on the wrong one.
+    """
+    files = {"a.md": "b1", "b.md": "b2"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "b1"}])
+    rec["id"] = "decls@t#0"
+    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
+                                 files=files, admission=["decls"], rounds=3)
+    n = out["numbers"]
+    assert set(n) >= {"gate", "work", "never_examined", "unscoped", "outstanding",
+                      "note"}
+    for k in ("gate", "work", "never_examined", "unscoped", "outstanding"):
+        assert "means" in n[k], f"{k} has a value but no meaning"
+    assert "nested, not" in n["note"]
+
+
+def test_never_examined_is_a_subset_of_the_work_number(ledger):
+    """⚠ THE RELATIONSHIP THAT WAS NEVER STATED, asserted so it cannot drift.
+    `work` counts pairs lacking a PASSING verdict at current content; `never_examined`
+    counts pairs the step never looked at. A path examined last week at bytes that have
+    since moved is in `work` and NOT in `never_examined` — which is exactly the 65-pair
+    gap between 812 and 877 that looked like a discrepancy."""
+    files = {"a.md": "MOVED", "b.md": "b2"}
+    rec = good(step="decls", verdict="PASS",
+               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
+               subjects=[{"path": "a.md", "git_blob_id": "OLD"}])
+    rec["id"] = "decls@t#0"
+    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
+                                 files=files, admission=["decls"], rounds=3)
+    work = out["numbers"]["work"]["value"]
+    never = out["numbers"]["never_examined"]["value"]
+    assert never <= work, "never_examined must be a subset of the work number"
+    assert work == 2 and never == 1, (
+        "a.md was examined at bytes that moved: work counts it, never_examined does not")
+
+
+def test_the_work_number_is_named_as_the_one_to_drive_down(ledger):
+    """⚠ Five numbers with no stated priority is how a reader picks the flattering
+    one. `work` is the remaining effort and `gate` is what decides the push; the rest
+    are drill-downs, and the block says so."""
+    out = inventory_mod.progress(config=ledger.config, records=[], action="push",
+                                 files={"a.md": "b1"}, admission=["decls"], rounds=3)
+    assert "number to drive down" in out["numbers"]["note"]
+    assert "decides the push" in out["numbers"]["note"]
