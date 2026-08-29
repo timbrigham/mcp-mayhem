@@ -385,35 +385,57 @@ def test_progress_shows_direction_not_just_a_snapshot(ledger):
     assert row["history"][0]["at"] < row["history"][-1]["at"], "newest last"
 
 
-def test_bar_drift_names_steps_that_went_green_under_another_bar(ledger):
-    """⚠⚠ Tim, same day: "no more random ass stuff getting into scope at a later
-    point." Widening a scope mid-convergence does NOT re-open a green row — coverage
-    is keyed on content, not on the bar — so a step can be resting on a rule set that
-    no longer exists. `run.config_sha` is what makes that visible."""
-    files = {"a.md": "b1"}
-    rec = good(step="decls", verdict="PASS",
-               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
-               subjects=[{"path": "a.md", "git_blob_id": "b1"}],
-               run={"id": "r", "started": "2026-08-01T00:00",
-                    "config_sha": "a-bar-that-no-longer-exists"})
-    rec["id"] = "decls@t#0"
-    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
-                                 files=files, admission=["decls"], rounds=5)
-    assert [d["step"] for d in out["bar_drift"]] == ["decls"]
-    assert "DIFFERENT bar" in out["bar_drift_note"]
+# -- ⭐⭐ the frozen bar: a scope freeze that is CHECKED, not remembered ---------
+
+def _prog(led, frozen=None):
+    if frozen is not None:
+        set_policy_raw = led.config.policy
+        set_policy_raw["convergence"] = {"frozen_registry_sha": frozen}
+    return inventory_mod.progress(
+        config=led.config, records=[], action="push",
+        files={"a.md": "b1"}, admission=["decls"], rounds=3)
 
 
-def test_no_drift_is_stated_rather_than_absent(ledger):
-    """⚠ Reported at zero too — "nothing drifted" must be a statement, the same reason
-    `signals` prints its counts when they are clean."""
-    files = {"a.md": "b1"}
-    rec = good(step="decls", verdict="PASS",
-               basis={"kind": "tree", "value": "t", "resolved_from": "explicit"},
-               subjects=[{"path": "a.md", "git_blob_id": "b1"}],
-               run={"id": "r", "started": "2026-08-01T00:00",
-                    "config_sha": ledger.config.config_sha})
-    rec["id"] = "decls@t#0"
-    out = inventory_mod.progress(config=ledger.config, records=[rec], action="push",
-                                 files=files, admission=["decls"], rounds=5)
-    assert out["bar_drift"] == []
-    assert "no gating step" in out["bar_drift_note"]
+def test_no_freeze_is_reported_as_a_risk_not_as_silence(ledger):
+    """⚠ An unfrozen run is not a neutral state: scope can widen mid-run, and a
+    widened scope does NOT re-open a green row because coverage is keyed on content.
+    Saying nothing would let that read as "nothing to worry about"."""
+    out = _prog(ledger)
+    assert out["bar"]["frozen"] is False
+    assert "NO FROZEN BAR" in out["bar"]["note"]
+
+
+def test_a_held_freeze_says_so(ledger):
+    """⚠ Reported when clean too — "the bar held" is the statement a reader needs
+    before trusting the numbers underneath it."""
+    out = _prog(ledger, frozen=ledger.config.registry_sha)
+    assert out["bar"]["held"] is True
+    assert "unchanged since this run was frozen" in out["bar"]["note"]
+
+
+def test_a_moved_bar_is_loud_and_says_the_numbers_mean_less(ledger):
+    """⭐⭐ Tim, 2026-08-29: "no more random ass stuff getting into scope at a later
+    point." Stating that as a rule makes it a convention someone remembers; recording
+    the sha makes every `progress` call check it. The message must also say what the
+    reader most needs: a green row will NOT re-open on its own, so the count below is
+    now measuring against a scope nobody agreed to."""
+    out = _prog(ledger, frozen="a-registry-that-no-longer-exists")
+    assert out["bar"]["held"] is False
+    assert "THE BAR MOVED MID-RUN" in out["bar"]["note"]
+    assert "will NOT re-open" in out["bar"]["note"]
+
+
+def test_the_freeze_keys_on_the_registry_not_the_composite(ledger, config_dir,
+                                                           tmp_path):
+    """⚠⚠ SCOPE LIVES IN THE REGISTRY, so the freeze must not fire on a THRESHOLD
+    change. `config_sha` covers policy.v1.json too — keying on it would turn every
+    min_passes tweak into "the scope moved", and a freeze that cries wolf gets ignored
+    while still reading as protection."""
+    from core.ledger import Ledger
+    before_registry = ledger.config.registry_sha
+    before_config = ledger.config.config_sha
+    set_policy(config_dir, **{"agreement.min_passes": 4})
+    after = Ledger(tmp_path / "f.jsonl", policy_path=config_dir / "policy.v1.json",
+                   required_path=config_dir / "required.v2.json")
+    assert after.config.registry_sha == before_registry, "a threshold moved the scope sha"
+    assert after.config.config_sha != before_config, "the composite should have moved"

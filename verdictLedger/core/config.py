@@ -208,6 +208,30 @@ class Config:
                     "where §7 says the bar belongs")}
 
     @property
+    def registry_sha(self) -> str:
+        """The identity of the TYPE REGISTRY alone — not the composite `config_sha`.
+
+        ⚠⚠ SCOPE LIVES IN THE REGISTRY, so freezing scope means freezing THIS. It is
+        deliberately separate from `config_sha`, which also covers `policy.v1.json`:
+        raising a threshold or flipping a migration switch must not read as "the scope
+        moved", or the freeze cries wolf and gets ignored — and a freeze people ignore
+        is worse than none, because it still reads as protection.
+        """
+        return _sha(self.required_path)
+
+    @property
+    def frozen_registry_sha(self):
+        """The registry sha this convergence run was started against, or None.
+
+        ⚠ Tim, 2026-08-29: "no more random ass stuff getting into scope at a later
+        point." Stating that as a rule makes it a convention someone remembers; putting
+        the sha here makes every `progress` call check it. The mechanism is the point —
+        `bar_drift` already showed that 8 of 12 green steps had earned their green
+        under a registry that no longer existed, and nothing had surfaced it.
+        """
+        return (self.policy.get("convergence") or {}).get("frozen_registry_sha")
+
+    @property
     def coverage_complete_required(self) -> bool:
         """Whether an in-scope path a step has NEVER examined blocks the action.
 

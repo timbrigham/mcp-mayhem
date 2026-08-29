@@ -705,7 +705,7 @@ def progress(*, config, records, action: str, files: dict, admission: list,
     for r in sorted(records, key=lambda r: ((r.get("run") or {}).get("started") or "")):
         by_step.setdefault(r.get("step"), []).append(r)
 
-    blocking, converging, drift = [], [], []
+    blocking, converging = [], []
     for row in sorted(inv["rows"], key=lambda r: r["step"]):
         if not row["gating"]:
             continue
@@ -715,16 +715,6 @@ def progress(*, config, records, action: str, files: dict, admission: list,
                 "verdict": h.get("verdict"),
                 "subjects": len(h.get("subjects") or []),
                 "outstanding": len(h.get("outstanding") or [])} for h in hist]
-
-        # ⚠ A step is only counted as EARNED under the current bar if every record
-        # that satisfies it was judged under this config. Anything else is a green row
-        # resting on a different rule set.
-        sat_shas = {((h.get("run") or {}).get("config_sha")) for h in hist
-                    if h.get("verdict") == "PASS"}
-        if sat_shas and current_sha not in sat_shas:
-            drift.append({"step": step,
-                          "why": "its passing records were judged under a different "
-                                 "policy+registry than the one now in force"})
 
         if row["status"] != "SATISFIED":
             g = gap_by_step.get(step, {})
@@ -739,22 +729,52 @@ def progress(*, config, records, action: str, files: dict, admission: list,
         else:
             converging.append(step)
 
+    # ⚠⚠ HAS THE SCOPE MOVED SINCE THIS RUN STARTED? A frozen bar that is merely
+    # AGREED is a convention; one recorded as a sha is checked on every call. Scope
+    # lives in the registry, so the freeze is keyed on the registry sha alone —
+    # a threshold change must not read as a scope change.
+    frozen = config.frozen_registry_sha
+    now = config.registry_sha
+    if not frozen:
+        freeze = {"frozen": False, "note": (
+            "NO FROZEN BAR. Scope may widen mid-run and a widened scope does NOT "
+            "re-open a green row, so progress can be reset invisibly. Set "
+            "policy.convergence.frozen_registry_sha to the current registry_sha "
+            "before starting a convergence run."), "registry_sha": now}
+    elif frozen == now:
+        freeze = {"frozen": True, "held": True, "registry_sha": now,
+                  "note": "the registry is unchanged since this run was frozen"}
+    else:
+        freeze = {"frozen": True, "held": False, "registry_sha": now,
+                  "frozen_at": frozen,
+                  "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
+                           "this convergence run was frozen, so any step that went "
+                           "green earlier was judged against a different scope and "
+                           "will NOT re-open on its own. Either revert the registry, "
+                           "or re-freeze deliberately and expect the numbers below to "
+                           "mean less than they did.")}
+
     return {
         "action": action, "complete": inv["complete"],
+        "bar": freeze,
         "satisfied": len(converging),
         "gating": len(converging) + len(blocking),
         "config_sha": current_sha,
         # ⚠ The whole point: what is left, with its direction attached.
         "blocking": blocking,
         "green": sorted(converging),
-        "bar_drift": drift,
-        # ⚠ Reported even at zero, so "nothing drifted" is a statement rather than an
-        # absence — the same reason `signals` prints its counts when they are clean.
-        "bar_drift_note": ("no gating step's coverage predates the current bar"
-                           if not drift else
-                           f"{len(drift)} step(s) went green under a DIFFERENT bar; "
-                           f"widening scope mid-convergence does not re-open a row, "
-                           f"because coverage is keyed on content"),
+        # ⚠⚠ `bar_drift` WAS HERE AND IS DELETED, 40 MINUTES AFTER IT WAS WRITTEN.
+        # It keyed on `run.config_sha`, which covers policy.v1.json as well as the
+        # registry — so the very act of recording this convergence freeze in the policy
+        # made it report 19 of 19 steps drifted, while the SCOPE had not moved at all.
+        # A signal that fires on every threshold tweak is one people scroll past, and
+        # it would have been permanently red from the moment it shipped.
+        #
+        # `bar` above answers the same question properly, keyed on the REGISTRY sha
+        # alone, which is where scope lives. Two mechanisms for one question with the
+        # weaker one noisier is the two-copies defect — kept as a comment rather than a
+        # deletion, because a rule removed for a reason is worth more on the page than
+        # a gap someone re-derives.
         "unexamined_total": inv.get("unexamined"),
         "outstanding_total": inv.get("outstanding"),
     }
