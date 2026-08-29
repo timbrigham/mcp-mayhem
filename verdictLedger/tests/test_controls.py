@@ -1197,3 +1197,41 @@ def test_the_inventory_tool_warns_that_covered_is_not_passing():
     assert "COVERED IS NOT PASSING" in doc
     assert "coverage_gap" in doc
     assert "worst covering verdict" in doc.lower()
+
+
+# -- ⭐⭐ every tracked config must be LF, because I broke someone else's push ---
+
+def test_no_tracked_json_config_carries_CRLF():
+    """⭐⭐ MEASURED 2026-08-29, AND IT ESCAPED THIS REPO. `pathlib.write_text` on
+    Windows silently translates '\n' to '\r\n', so EVERY json config written this
+    session carried CRLF: policy.v1.json 31, required.v2.json 235, admission.v1.json
+    85, mcp-servers.json 163.
+
+    ⚠⚠ ONE OF THEM LANDED IN ZeroParadox. The convergence freeze I wrote into their
+    `policy.v1.json` carried 37 CRLFs into a repo whose `.gitattributes` declares
+    `* text=auto eol=lf`, and `check_invariants`' byte-portability leg FAILED on it —
+    a hard block on their push, arriving inside the change meant to stabilise their
+    run. They found it, not me.
+
+    ⚠ `_sha` normalising line endings (72852fd) protected the ledger's IDENTITY from
+    this and did nothing for the FILE's portability. Two different properties, and
+    fixing the first made the second easier to miss.
+
+    A habit is not a fix. This asserts the property so the next `write_text` is caught
+    by the suite rather than by a sibling session's blocked push.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    bad = []
+    for f in sorted(root.rglob("*.json")):
+        s = str(f)
+        if any(x in s for x in (".git", "__pycache__", "node_modules", ".mcp-local",
+                                "data", ".pytest_cache")):
+            continue
+        raw = f.read_bytes()
+        n = raw.count(b"\r\n")
+        if n:
+            bad.append(f"{f.relative_to(root)} ({n} CRLF)")
+    assert not bad, (
+        "CRLF in tracked JSON config — pathlib.write_text does this on Windows; "
+        "write bytes, or newline='' :\n  " + "\n  ".join(bad))

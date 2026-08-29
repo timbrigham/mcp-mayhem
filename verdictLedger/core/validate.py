@@ -382,13 +382,32 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                 was, now = schema.payload(occupant), schema.payload(record)
                 differs = sorted(k for k in set(was) | set(now)
                                  if was.get(k) != now.get(k))
+                # ⚠⚠ NAME THE ORDERING RULE FIRST. Measured 2026-08-29: a checker
+                # FAILED, its finding was fixed IN THE WORKTREE, and the re-run hit
+                # this — because an unstaged fix leaves the INDEX unchanged, so the
+                # basis is the same and the subjects are the same and the verdict
+                # flipped. The message said "supersede it with revision N+1", which is
+                # (a) wrong for this case and (b) not something the checker wrappers
+                # can even do — they expose no --revision. A remedy the tool cannot
+                # perform is LED-2's shape arriving in a validation message.
+                #
+                # ⚠ Staging the fix is the actual answer: it moves the index tree, so
+                # the basis changes and there is no collision to supersede. The
+                # supersede route is real but it is for a genuine REGRADE of content
+                # that has not moved, which is the rarer case.
                 out.append(f"V11: revision {rev} already exists for step {step!r} at this "
                            f"basis, with a DIFFERENT {', '.join(differs)} — "
                            f"(step, basis, revision) is unique, so branching is "
                            f"unrepresentable rather than merely detected. An identical "
                            f"record would have deduped silently; this one is a second, "
-                           f"conflicting claim about the same content. Supersede it with "
-                           f"revision {rev + 1}, or fix the field that moved.")
+                           f"conflicting claim about the same content. "
+                           f"⚠ IF YOU JUST FIXED A FINDING AND RE-RAN: STAGE THE FIX "
+                           f"FIRST. An unstaged edit leaves the INDEX unchanged, so the "
+                           f"basis does not move and the new verdict collides with the "
+                           f"old one. `git add` the fix and re-run — the basis changes "
+                           f"and there is nothing to supersede. Only if the content "
+                           f"genuinely has not moved is this a REGRADE, and that is "
+                           f"revision {rev + 1}.")
             if rev > 0 and seen is not None and (rev - 1) not in seen.get("revisions", {}):
                 out.append(f"V11: revision {rev} has no revision {rev - 1} to supersede "
                            f"at this basis — a chain never crosses bases")

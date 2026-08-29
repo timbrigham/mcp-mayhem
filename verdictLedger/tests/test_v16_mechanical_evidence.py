@@ -256,6 +256,9 @@ def test_v11_names_the_field_that_differs(ledger):
     assert "V11" in msg
     assert "DIFFERENT evidence" in msg
     assert "would have deduped silently" in msg
+    assert "STAGE THE FIX FIRST" in msg, (
+        "the common case is an unstaged fix, and the message must say so "
+        "before offering a supersede the checker wrappers cannot perform")
 
 
 def test_an_unchanged_re_run_still_dedupes_rather_than_conflicting(ledger):
