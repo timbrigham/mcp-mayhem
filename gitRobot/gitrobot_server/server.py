@@ -114,6 +114,28 @@ async def stage(paths: list[str], repo_mode: str = "main") -> dict:
 
 
 @mcp.tool()
+async def unstage(paths: list[str], reason: Optional[str] = None,
+                  repo_mode: str = "main") -> dict:
+    """Remove NAMED paths from the index. The WORKING TREE IS UNTOUCHED.
+
+    The inverse of , and it exists because on this pipeline staging is a
+    VERIFICATION step rather than a statement of commit intent: checkers record against
+    the STAGED content, so a file must be staged to be verified — and until now there
+    was no way back out. A session that verified more than it was ready to commit had
+    an index it could not narrow.
+
+    This is NOT in the Tier 1 class with reset --hard, checkout -- . and clean. Those
+    are refused because they destroy uncommitted WORKING-TREE state that exists nowhere
+    else. This cannot touch the working tree at all; it clears index entries and the
+    files on disk are exactly as they were. What it can discard is a staged
+    INTERMEDIATE that differs from the worktree — a way-point, not the work.
+
+    Named paths only, no bulk form: background agents write to this checkout
+    concurrently, so 'unstage everything' would clear entries this session never made."""
+    return await _guard(_robot().unstage, paths, reason=reason, repo_mode=repo_mode)
+
+
+@mcp.tool()
 async def commit(message_file: str, reason: Optional[str] = None,
            repo_mode: str = "main") -> dict:
     """Commit the staged index. The message is read from a FILE, never passed as an argument.

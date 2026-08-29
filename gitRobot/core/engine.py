@@ -289,6 +289,80 @@ class GitRobot:
         return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "allowed",
                              extra={"staged": paths}, target=target)
 
+    def unstage(self, paths, reason=None, repo_mode: str = "main") -> dict:
+        """Remove NAMED paths from the index. The working tree is untouched.
+
+        ⭐⭐ THE MISSING INVERSE OF A `stage` THAT WAS NEVER ONLY ABOUT INTENT.
+        Raised by ZeroParadox 2026-08-29 and it is not a corner case: `batch.py
+        precommit` records verdicts against the STAGED content, so three checkers
+        exited 2 with "differs from HEAD in the worktree or index" until the files were
+        staged, and the identical run then passed. **On this pipeline staging is a
+        VERIFICATION step, not a statement of commit intent** — and until now there was
+        no way back out of it. Any session that verifies more than it is ready to
+        commit ended up with an index it could not narrow: a gate-exempt tooling change
+        and a gated document could only be committed together or not at all.
+
+        ⚠⚠ WHY NOT A `paths` PARAMETER ON `commit`, WHICH WAS THE OTHER CANDIDATE AND
+        THE ONE ZeroParadox LEANED TOWARD. Measured before choosing:
+
+            index tree (what the gate verified) : b6293d90
+            commit tree (what a pathspec commit lands) : 2a1c180d
+
+        `git commit -- <paths>` builds a TEMPORARY tree: staged content for the named
+        paths, HEAD's content for everything else. So the commit does NOT carry the
+        index tree, and verdictLedger records against `write-tree`. It would name a
+        tree that never became a commit — §12-0-alpha's exact defect ("attesting to
+        bytes that are not the ones being committed") returning through a new door, and
+        it would destroy the property that a record made at the index basis SURVIVES
+        the commit of that index. Clean-looking in the abstract, wrong for this system.
+
+        ⚠ THE RISK CLASS IS GENUINELY DIFFERENT FROM TIER 1, and that is why this is
+        allowed where `reset --hard` is not. Those are refused because they destroy
+        UNCOMMITTED WORKING-TREE state that exists nowhere else. This cannot: measured,
+        `index=v0 worktree=v2-WORKTREE` after unstaging a file staged at v1 and then
+        edited. What it CAN discard is a staged INTERMEDIATE that differs from the
+        worktree — above, `v1-STAGED` survives only as a dangling blob. A way-point,
+        not the work, and git treats it the same way.
+
+        ⚠ Named paths only, no bulk form, for the same reason `stage` refuses one:
+        background agents write to this checkout concurrently, so "unstage everything"
+        would clear entries this session never made.
+        """
+        paths = [str(p) for p in (paths or [])]
+        if not paths:
+            raise UsageError(
+                "unstage requires at least one path; there is no bulk form. Naming "
+                "them is the point — a bulk unstage would clear index entries this "
+                "session never made, and background agents write to this checkout "
+                "concurrently.")
+        target = self._target(repo_mode)
+        bulk = [p for p in paths if p in BULK_ADD_TOKENS]
+        if bulk:
+            raise self._refuse(
+                "unstage", {"paths": paths, "repo": repo_mode},
+                f"{bulk[0]!r} would clear the whole index, including entries this "
+                f"session never staged. Background agents write to this checkout "
+                f"concurrently.",
+                "Name the paths you actually want out of the index: "
+                "unstage(paths=['a.md'], reason='…'). read(op='status') shows what is "
+                "staged.",
+            )
+        escaped = [p for p in paths if p.startswith("-")]
+        if escaped:
+            raise UsageError(
+                f"path {escaped[0]!r} looks like a flag; gitRobot passes paths only, "
+                f"never options, to git restore")
+        # `--staged` touches the INDEX ONLY. Without it this would be `git restore`,
+        # which overwrites the working tree from the index and IS a Tier 1 destroy.
+        # The flag is the whole difference and it is not a caller parameter.
+        result = target.run(["restore", "--staged", "--", *paths], timeout=120)
+        decision = "allowed" if result.ok else "failed"
+        return self._receipt(
+            "unstage", {"paths": paths, "repo": repo_mode}, decision,
+            reason=reason, detail=result.output,
+            extra={"paths": paths, "output": result.output, "ok": result.ok},
+            target=target)
+
     def commit(self, message_file: str, *, reason: Optional[str] = None,
                repo_mode: str = "main", run_gate: bool = True) -> dict:
         """Commit the staged index, with the message read from a FILE.
