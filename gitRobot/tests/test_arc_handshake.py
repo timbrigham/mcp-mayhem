@@ -208,3 +208,72 @@ def test_read_refuses_an_unregistered_worktree(robot, repo, tmp_path):
     stranger.mkdir()
     with pytest.raises(RefusalError):
         robot.read("status", [], worktree=str(stranger))
+
+
+# -- ⛔ the arc's own bookkeeping must not block the arc ------------------------
+
+def test_a_bumped_round_does_not_block_a_merge(robot, repo, tmp_path):
+    """⛔⛔ THE ARC FLOW WOULD HAVE BLOCKED ITSELF ON ITS OWN BOOKKEEPING. Measured 2026-09-03 on
+    the live repo: `gate_round.json` sat at round 1 in the MAIN checkout, so the tree read dirty,
+    and `_require_clean` guards `merge` — which is exactly what an arc does at the end.
+
+    ⚠ Nothing seals the main checkout, because nothing CREATES it: `worktree add` sets
+    `--skip-worktree`, and there is no equivalent moment for the tree you already have. So a round
+    bump there is indistinguishable from uncommitted work unless the guard is told otherwise.
+
+    ⭐ Counting it as dirt is the same category error as counting a build cache: a file whose whole
+    contract is "differs locally, never commits" is not uncommitted WORK."""
+    _track_arc(repo)
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=repo, capture_output=True)
+    (repo / "feature.txt").write_text("arc work\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.txt"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "arc work"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "checkout", "-q", "illustrated"], cwd=repo, capture_output=True)
+
+    _write_arc(repo, 3)                      # the arc bumped its round; NOT staged
+
+    out = robot.merge("side", reason="ending the arc")
+    assert out["decision"] == "allowed", (
+        f"a round bump blocked the merge that ends the arc: {out}")
+
+
+def test_real_dirt_still_blocks_a_merge(robot, repo, tmp_path):
+    """⚠ THE CONTROL, AND IT IS WHAT KEEPS THE EXEMPTION FROM BEING A HOLE. Only the arc-state
+    file is exempt. Genuine uncommitted work must still refuse, or the narrowing has quietly
+    removed the guard rather than corrected it."""
+    from core.errors import RefusalError
+
+    _track_arc(repo)
+    subprocess.run(["git", "checkout", "-q", "-b", "side2"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "checkout", "-q", "illustrated"], cwd=repo, capture_output=True)
+
+    _write_arc(repo, 3)                                          # exempt
+    (repo / "tracked.txt").write_text("PRECIOUS EDIT\n", encoding="utf-8")   # NOT exempt
+
+    with pytest.raises(RefusalError):
+        robot.merge("side2", reason="should refuse")
+
+
+def test_the_refusal_names_the_repo_and_never_claims_staged(robot, repo, tmp_path):
+    """⚠⚠ MEASURED COST, 2026-09-03. `_staged_arc_round` reads `git show :<path>` — the INDEX
+    copy, which equals HEAD whenever nothing is staged. So the old wording "is staged" was FALSE
+    in the ordinary case, and it sent ZeroParadox to inspect a clean main checkout FOUR TIMES
+    while the value came from a second `gate_round.json` inside `.claude-local` at round 5.
+
+    ⭐ The refusal was correct; the message cost the diagnosis. §3's rule that a refusal must name
+    the alternative has a sibling: **it must name the OBJECT it read.** A caller who checks the
+    stated mechanism and finds it absent concludes the guard is stale — and a caller who thinks a
+    guard is stale is a caller looking for a way around it."""
+    _track_arc(repo)
+    _write_arc(repo, 7)
+    subprocess.run(["git", "add", "-f", ARC], cwd=repo, capture_output=True)
+
+    with pytest.raises(RefusalError) as exc:
+        robot.commit(_msg(tmp_path, "bump\n"), run_gate=False)
+    msg = str(exc.value)
+
+    assert "index copy" in msg, "the message must say WHAT it read"
+    assert "main" in msg, "the message must name WHICH repo it read"
+    assert "is staged carrying" not in msg, (
+        "the message still asserts staging, which is false whenever the tracked copy alone "
+        "carries the round — the exact claim that misdirected the diagnosis")

@@ -481,16 +481,35 @@ class GitRobot:
         # round; this cannot be skipped.
         staged_round = self._staged_arc_round(target)
         if staged_round is not None and staged_round != 0:
+            # ⚠⚠ SAY WHAT WAS READ AND WHERE, NOT "STAGED" — measured cost, 2026-09-03.
+            # `_staged_arc_round` reads `git show :<path>`, the INDEX copy, which equals HEAD
+            # whenever nothing is staged. So "is staged" was FALSE in the ordinary case, and it
+            # sent ZeroParadox to look at a clean main checkout four times while the value came
+            # from a SECOND `gate_round.json` inside `.claude-local` carrying round 5 from a
+            # different arc. The refusal was correct; its message cost the diagnosis.
+            #
+            # ⭐ §3's rule about refusals naming the alternative has a sibling: a refusal must
+            # name the OBJECT it read. "Staged" described a mechanism the caller could check and
+            # find absent, which reads as a stale guard rather than a true one — and a caller who
+            # concludes the guard is stale is a caller looking for a way around it.
+            where = f"{repo_mode or 'main'}:{self._ARC_STATE}"
             raise self._refuse(
                 "commit", {"message_file": str(path), "repo": repo_mode},
-                (f"{self._ARC_STATE} is staged carrying round={staged_round}, and the tracked "
-                 f"copy must stay at 0." if staged_round >= 0 else
-                 f"{self._ARC_STATE} is staged but its `round` is unreadable, so the count this "
-                 f"commit would publish is UNKNOWN — an unknown count next to a cap fails closed."),
-                (f"unstage it: unstage(paths=['{self._ARC_STATE}']). It is the ARC HANDSHAKE — a "
-                 f"tracked default that every worktree opens with, never a place to record this "
-                 f"arc's progress. Its local round is meant to stay local and die with the "
-                 f"worktree. A committed non-zero round is inherited by every future arc."),
+                (f"the index copy of {where} carries round={staged_round}, and the tracked copy "
+                 f"must stay at 0. ⚠ This is read from the INDEX, so it fires whether or not you "
+                 f"staged anything — a tracked file already at a non-zero round reads the same "
+                 f"way." if staged_round >= 0 else
+                 f"the index copy of {where} has an unreadable `round`, so the count this commit "
+                 f"would publish is UNKNOWN — an unknown count next to a cap fails closed."),
+                (f"⚠ CHECK THE REPO NAMED ABOVE — {repo_mode or 'main'} — not whichever tree "
+                 f"you are looking at. There is a separate {self._ARC_STATE} per repo, and a "
+                 f"clean main checkout tells you nothing about the one this read.\n"
+                 f"If it is genuinely staged: unstage(paths=['{self._ARC_STATE}']). If the "
+                 f"TRACKED copy is at a non-zero round, that is the real defect — reset it to 0 "
+                 f"and commit that, because every future arc inherits it.\n"
+                 f"It is the ARC HANDSHAKE: a tracked default every worktree opens with, never a "
+                 f"place to record this arc's progress. Its round stays local and dies with the "
+                 f"worktree."),
                 reason=reason, target=target,
             )
 
@@ -1142,7 +1161,24 @@ class GitRobot:
         catches is the quieter one: carrying uncommitted work across a branch
         change, so it ends up committed on a branch it was never written for.
         """
-        if not self.git.is_dirty():
+        # ⭐⭐ THE ARC STATE FILE IS NOT DIRT. It is TRACKED so every worktree inherits the
+        # default, and DESIGNED to be modified locally and never committed — `worktree add`
+        # seals it with `--skip-worktree` precisely so its bumps stay invisible to git.
+        #
+        # ⛔ BUT NOTHING CREATES THE MAIN CHECKOUT, so nothing seals it there, and a round bump
+        # in the main tree reads as ordinary dirtiness. Measured 2026-09-03: `gate_round.json`
+        # at round 1 in the main checkout, and **the next `merge` would have refused** — which
+        # is exactly what an arc does at the end, so the arc flow would have blocked itself on
+        # its own bookkeeping.
+        #
+        # ⚠ Counting it as dirt is the same category error as counting a build cache: a file
+        # whose whole contract is "differs locally, never commits" is not uncommitted WORK.
+        # Nothing is weakened — the commit backstop still refuses a STAGED non-zero round, and
+        # `status` still reports the file honestly. Only the branch-moving guard stops treating
+        # expected local state as a reason to refuse.
+        blocking = [ln for ln in self.git.porcelain()
+                    if ln[3:].strip().strip('"') != self._ARC_STATE]
+        if not blocking:
             return
         tree = self.git.tree_state()
         raise self._refuse(
