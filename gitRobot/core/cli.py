@@ -59,6 +59,9 @@ def cmd_preflight(args) -> int:
 
 
 def cmd_push(args) -> int:
+    # ⚠ Blocks by default (engine `wait=True`): the CLI has neither the 300s call window
+    # nor the supervisor health poll, and an exit code that reported success for a push
+    # still running would be worse than a slow command. Only the MCP tool opts out.
     result = _robot(args).push(args.branch, reason=args.reason,
                                repo_mode=args.repo_mode)
     _emit(result)

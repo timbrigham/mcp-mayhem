@@ -91,7 +91,16 @@ def test_an_interrupted_run_reports_died_not_silence(robot, repo, fake_gate):
     state = robot.preflight_status()
     assert state["state"] == "died"
     assert state["run_id"] == "deadrun"
-    assert "interrupted" in state["note"]
+    # ⚠ THE NOTE MUST NAME WHAT HAPPENED — silence was the original defect and a bare
+    # `died` would reinstate it. It is no longer pinned to the literal word "interrupted":
+    # this branch means "started by a process that is not this one", and thread liveness
+    # CANNOT be read across processes, so flatly asserting death is an overclaim. It says
+    # killed-mid-flight AND carries the pid so a caller can settle it.
+    assert "killed mid-flight" in state["note"]
+    assert state["started_pid"] == 999999, (
+        "the note hedges on whether the run is really dead, so the pid that would settle "
+        "it must be on the row — otherwise the caller is told to check something it "
+        "has not been given")
     # and it still does not authorise a push
     with pytest.raises(ledger_client.LedgerUnreachable):
         robot.push("illustrated", reason="shipping on a corpse")
@@ -288,3 +297,37 @@ def test_a_registered_worktree_is_still_removed_by_git_not_by_rmtree(robot):
     assert out["decision"] == "allowed"
     assert out.get("orphan") is None
     assert _fwd(added["path"]) not in _listed(robot)
+
+
+def test_a_dead_worker_in_a_live_process_reports_orphaned_not_running(robot, repo, fake_gate):
+    """⭐⭐ THE STATE THE OLD CODE COULD NOT EXPRESS, AND IT COST AN HOUR ON 2026-09-02.
+
+    `preflight_status` read `if alive or started.get("pid") == os.getpid(): running`. The `or`
+    meant that once THIS process had written the start row, the answer was `running` whether or
+    not any worker existed — so a thread that died while the process lived reported `running`
+    forever, with no owner and no way for a caller to tell it from work in flight.
+
+    ⭐ ZeroParadox's framing: **"`preflight_status` reports the LOCK, and I asked it about the
+    PIPELINE."** Two different objects, one answer.
+
+    ⚠ The night this was reported the pipeline was in fact ALIVE and the alarm was false — a
+    stale `running` had been inferred from a bad process count. The defect is real regardless,
+    and it is precisely why neither session could settle the question without enumerating
+    processes by hand. `orphaned` is what makes a re-run a legitimate remedy rather than a guess
+    about whether a lock has gone stale.
+    """
+    fake_gate(0)
+    head = robot.git.head()
+    # ⚠ OUR pid, and NO worker thread — the shape the `or` made unreportable. Distinct from the
+    # `died` case above only in whose process started it, which is exactly the distinction.
+    robot.audit.append(actor="test", op="preflight", args={}, decision="started",
+                       head=head, branch=robot.git.branch(), tree=robot.git.tree_state(),
+                       detail="pre-push preflight started", run_id="orphanrun")
+
+    state = robot.preflight_status()
+
+    assert state["state"] == "orphaned", (
+        f"a dead worker in a live process reported {state['state']!r} — a caller is told to "
+        f"wait for a verdict that nothing will ever write")
+    assert state["state"] != "running"
+    assert "not a lock you are waiting on" in state["note"]

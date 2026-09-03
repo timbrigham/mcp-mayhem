@@ -227,3 +227,38 @@ def nested_local(repo, tmp_path):
     return local
 
 
+@pytest.fixture(autouse=True)
+def _no_leak_into_the_shared_scratch():
+    """⛔⛔ NO TEST MAY LEAVE A WORKTREE IN THE SHARED PRODUCTION SCRATCH AREA.
+
+    Measured 2026-09-03 by ZeroParadox: **24 leftover directories in
+    `%TEMP%/gitrobot-worktrees`, 20 carrying a dangling `.lake` junction** into pytest fixtures
+    that were deleted seconds after the run. `worktree list` registered none of them, and
+    `prune` cannot help — it drops records whose DIRECTORIES vanished, and this is the mirror
+    case: directories whose RECORDS vanished.
+
+    ⚠ Cause: three `GitRobot(...)` constructions in `test_worktree_junction.py` omitted
+    `scratch=`, so they fell back to `DEFAULT_SCRATCH`. The fixture above has always passed one;
+    a direct construction silently did not, and nothing said so.
+
+    ⚠⚠ WHY IT IS A CONTROL RATHER THAN JUST A FIX. None of those junctions pointed at the real
+    `.lake` — which is the only reason Mathlib was never at risk. A fixture whose junction DID
+    point at the real one, plus a teardown that failed, is the destroyed-dependency hazard with
+    a fresh door. The mistake is one forgotten kwarg, so it must be caught rather than
+    remembered.
+    """
+    from core.engine import DEFAULT_SCRATCH
+
+    def _snapshot():
+        try:
+            return {p.name for p in Path(DEFAULT_SCRATCH).iterdir()}
+        except OSError:
+            return set()
+
+    before = _snapshot()
+    yield
+    leaked = sorted(_snapshot() - before)
+    assert not leaked, (
+        f"this test left {len(leaked)} directory(ies) in the SHARED scratch "
+        f"{DEFAULT_SCRATCH}: {leaked[:5]}. Pass scratch=tmp_path/'scratch' to GitRobot(...) — "
+        f"a leftover there can hold a .lake junction into a deleted fixture.")

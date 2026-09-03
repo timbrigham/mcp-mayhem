@@ -190,3 +190,18 @@ def inventory(ref: str, action: str, admission: Optional[list] = None) -> dict:
     if admission is None:
         admission = admission_for(action)
     return call("inventory", {"action": action, "ref": ref, "admission": admission})
+
+
+def admission_doc(path=None) -> dict:
+    """The whole admission document, including its `_`-prefixed rationale keys.
+
+    ⚠ `admission_for` returns one list because that is all the gate needs. This returns the
+    document so `requirements()` can quote WHY a registered type was excluded, in the words
+    already written next to the exclusion, rather than a second explanation that drifts."""
+    p = Path(path or os.environ.get("GITROBOT_ADMISSION") or DEFAULT_ADMISSION)
+    if not p.exists():
+        raise GitRobotError(f"admission set not found at {p}.")
+    try:
+        return json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GitRobotError(f"admission set unreadable at {p}: {exc}") from exc

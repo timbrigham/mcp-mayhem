@@ -32,6 +32,35 @@ PHASES = ("pre-commit", "pre-push")
 PHASE_TIMEOUT = {"pre-commit": 300, "pre-push": 1800}
 
 _MAX_OUTPUT = 8000     # gate output echoed back to the caller, capped (receipt, not warehouse)
+# ⚠⚠ A FAILING PIPELINE PUTS ITS REASON AT THE END, SO KEEPING THE HEAD DISCARDS THE ONE
+# PART ANYBODY NEEDS. This was `self.output[:_MAX_OUTPUT]` — the first 8000 characters — and
+# the pre-push pipeline prints ~20 plan rows and hundreds of `ok` lines before it reaches the
+# failure. Measured 2026-08-30 on preflight `025a6f16`: exit 1, stored output ends mid-line at
+# `ok   prose ext ` with **no FAIL row anywhere in it**. The cause was unrecoverable from the
+# audit record of the run that produced it.
+#
+# ⚠ IT HAS COST THE SAME READER TWICE. ZeroParadox, opening this arc: *"preflight_status
+# truncated the output before the failing row, so I reproduced the pipeline myself."* A receipt
+# that forces you to re-run a 25-minute pipeline to learn why it failed is not a receipt.
+#
+# ⭐ SO: KEEP THE TAIL, AND SAY THE MIDDLE WAS DROPPED. A head slice is right for a passing
+# run (the plan is the interesting part) and wrong for a failing one. Keeping both ends with an
+# EXPLICIT elision marker means the truncation is visible rather than silent — a cut output that
+# renders like a complete one is the defect this project keeps finding, and it would be
+# especially poor here, in the record of why something was refused.
+_HEAD_KEEP = 2000
+_TAIL_KEEP = _MAX_OUTPUT - _HEAD_KEEP
+
+
+def _clip(output: str) -> str:
+    """Head + tail with a visible marker, never a silent cut."""
+    if len(output) <= _MAX_OUTPUT:
+        return output
+    dropped = len(output) - _HEAD_KEEP - _TAIL_KEEP
+    return (output[:_HEAD_KEEP]
+            + f"\n\n… [{dropped} characters elided by gitRobot — head and TAIL kept, because a "
+              f"failing gate states its reason at the end] …\n\n"
+            + output[-_TAIL_KEEP:])
 
 
 @dataclass(frozen=True)
@@ -50,7 +79,7 @@ class GateResult:
         """The shape stored in the audit log."""
         return {"phase": self.phase, "ran": self.ran, "exit_code": self.exit_code,
                 "passed": self.passed, "note": self.note,
-                "output": self.output[:_MAX_OUTPUT]}
+                "output": _clip(self.output)}
 
 
 class Gates:

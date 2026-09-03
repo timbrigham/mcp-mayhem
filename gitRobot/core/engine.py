@@ -24,6 +24,13 @@ import json
 import os
 import shutil
 import tempfile
+import stat as _stat
+# ⚠ THE ONLY DIRECT subprocess USE IN THIS MODULE, AND IT IS NOT GIT. Every git call goes through
+# `gitio.run`, which is where the option guards and the audit live — nothing here may bypass it.
+# This is for `mklink /J`, which has no Python equivalent that works without elevation:
+# `os.symlink` on a directory needs admin or developer mode, and a tool that only works for an
+# administrator is one people work around.
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -81,8 +88,47 @@ class GitRobot:
 
     # -- helpers ---------------------------------------------------------------
 
-    def _target(self, repo_mode: str) -> Git:
-        """The main tree, or the ONE named nested repository. Never a free path."""
+    def _target(self, repo_mode: str, worktree: Optional[str] = None) -> Git:
+        """The main tree, the ONE named nested repository, or a worktree GIT VOUCHES FOR.
+
+        ⚠⚠ `worktree` IS NOT A FREE PATH, AND THE DISTINCTION IS THE WHOLE SAFETY ARGUMENT.
+        `sub_repo`'s docstring says taking a path argument "would reopen the general-proxy hole
+        this class exists to close" — correct, and the objection is to paths the CALLER INVENTS,
+        not to paths as such. This one is validated against `git worktree list`: the caller can
+        name only something git already reports as a worktree of THIS repo, and the only way
+        into that set is `worktree(action='add')`, which gitRobot owns. A path outside the repo,
+        a different repository, a removed worktree, or a made-up string is simply not in the
+        list and is refused.
+
+        ⭐ THAT IS A STRONGER CHECK THAN `sub_repo`'s, which validates with two hand-written
+        tests (`parents` contains the repo, `.git` exists). This one asks git.
+
+        ⚠ WHY IT EXISTS: concurrent edits. A worktree has its own HEAD, index and working tree,
+        so two sessions can author in two worktrees without contending for the state they would
+        otherwise share. Until now the mediated path could not reach a worktree at all — you
+        could read and run checkers in one, but not commit from it — which is why the intended
+        worktree-per-change flow lapsed into serial commits on one branch.
+        """
+        if worktree:
+            if repo_mode not in ("", "main", None):
+                raise UsageError(
+                    f"worktree and repo_mode={repo_mode!r} are mutually exclusive; a nested "
+                    f"repository has no worktrees of its own")
+            resolved = Path(worktree).resolve()
+            known = self._worktree_paths()
+            if resolved == self.repo:
+                raise UsageError(
+                    "that is the main checkout, not a worktree; omit `worktree` to target it")
+            if resolved not in known:
+                raise self._refuse(
+                    "worktree.target", {"worktree": str(worktree)},
+                    f"git does not list {resolved} as a worktree of this repository.",
+                    "worktree(action='list') shows what is targetable. Create one with "
+                    "worktree(action='add') — gitRobot will not accept a path git has not "
+                    "vouched for, because that is the general-proxy hole the repo modes exist "
+                    "to close.",
+                )
+            return Git(resolved, timeout=self.git.timeout)
         if repo_mode in ("", "main", None):
             return self.git
         if repo_mode == BULK_ADD_EXEMPT_REPO:
@@ -114,12 +160,16 @@ class GitRobot:
 
     def _receipt(self, op: str, args: Any, decision: str, *, gates=None,
                  reason=None, detail=None, extra: Optional[dict] = None,
-                 target: Optional[Git] = None) -> dict:
+                 target: Optional[Git] = None, run_id: Optional[str] = None) -> dict:
+        # ⚠ `run_id` TIES A TERMINAL ROW TO THE `started` ROW THAT OPENED IT. Needed once
+        # an operation runs on a worker thread, because the receipt no longer arrives in
+        # the call that requested it and `push_status` has to match them up. Optional, so
+        # every synchronous caller is unaffected.
         # The audit must name the tree the operation actually touched. Recording the
         # main repo's HEAD for a `.claude-local` write would be a log that lies.
         git = target or self.git
         record = self.audit.append(
-            actor=self.actor, op=op, args=args, decision=decision,
+            actor=self.actor, op=op, args=args, decision=decision, run_id=run_id,
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
             gates=gates, reason=reason, detail=detail,
         )
@@ -136,11 +186,23 @@ class GitRobot:
     # =========================================================================
 
     def read(self, op: str, args: Optional[Sequence[str]] = None,
-             repo_mode: str = "main") -> dict:
+             repo_mode: str = "main", worktree: Optional[str] = None) -> dict:
         """Run an allow-listed read-only git command.
 
         Unrecognised operations are REFUSED, not passed through: the allow-list
         is what makes "everything not yet classified" safe by default.
+
+        ⚠⚠ `worktree=` ADDED 2026-09-03, AND ITS ABSENCE WAS A REAL GAP. `stage`, `unstage` and
+        `commit` all gained a worktree target when worktrees became the sanctioned unit of work;
+        `read` did not. So an agent could WRITE to a worktree through gitRobot and then had no
+        sanctioned way to LOOK at it — ZeroParadox hit exactly that verifying the arc handshake:
+        *"`git ls-files -v` is denied to me and `read` has no worktree parameter, so I cannot see
+        the `S` flag directly. I did not work around it."* That refusal was correct and the gap
+        was mine.
+
+        ⭐ A MEDIATED SURFACE THAT CAN WRITE SOMEWHERE IT CANNOT READ PUSHES CALLERS TOWARD RAW
+        GIT — which is the one outcome the whole design exists to prevent. The asymmetry, not the
+        missing feature, is the defect.
         """
         args = list(args or [])
         if not op or not isinstance(op, str):
@@ -180,9 +242,13 @@ class GitRobot:
                 f"allow-listed read.",
                 alternative,
             )
-        target = self._target(repo_mode)
+        # ⚠ Validated against the registered worktree set by `_target`, exactly as the write
+        # paths are — a read aimed at an arbitrary directory would describe a tree gitRobot does
+        # not guard, which is what `forbidden_token` above refuses in flag form.
+        target = self._target(repo_mode, worktree)
         result = target.run([op, *args])
-        return {"op": op, "args": args, "exit_code": result.exit_code,
+        return {"op": op, "args": args, "worktree": worktree,
+                "exit_code": result.exit_code,
                 "output": result.output, "ok": result.ok}
 
     def status(self) -> dict:
@@ -239,12 +305,13 @@ class GitRobot:
     # Tier 2 — mediated.
     # =========================================================================
 
-    def stage(self, paths: Sequence[str], repo_mode: str = "main") -> dict:
+    def stage(self, paths: Sequence[str], repo_mode: str = "main",
+              worktree: Optional[str] = None) -> dict:
         """Stage NAMED paths. Bulk forms are refused on the main repository."""
         paths = [str(p) for p in (paths or [])]
         if not paths:
             raise UsageError("stage requires at least one path; there is no bulk form")
-        target = self._target(repo_mode)
+        target = self._target(repo_mode, worktree)
         nested = [p for p in paths if _first_segment(p) == BULK_ADD_EXEMPT_REPO]
         if nested and repo_mode == "main":
             raise self._refuse(
@@ -289,7 +356,8 @@ class GitRobot:
         return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "allowed",
                              extra={"staged": paths}, target=target)
 
-    def unstage(self, paths, reason=None, repo_mode: str = "main") -> dict:
+    def unstage(self, paths, reason=None, repo_mode: str = "main",
+                worktree: Optional[str] = None) -> dict:
         """Remove NAMED paths from the index. The working tree is untouched.
 
         ⭐⭐ THE MISSING INVERSE OF A `stage` THAT WAS NEVER ONLY ABOUT INTENT.
@@ -335,7 +403,7 @@ class GitRobot:
                 "them is the point — a bulk unstage would clear index entries this "
                 "session never made, and background agents write to this checkout "
                 "concurrently.")
-        target = self._target(repo_mode)
+        target = self._target(repo_mode, worktree)
         bulk = [p for p in paths if p in BULK_ADD_TOKENS]
         if bulk:
             raise self._refuse(
@@ -364,6 +432,7 @@ class GitRobot:
             target=target)
 
     def commit(self, message_file: str, *, reason: Optional[str] = None,
+               worktree: Optional[str] = None,
                repo_mode: str = "main", run_gate: bool = True) -> dict:
         """Commit the staged index, with the message read from a FILE.
 
@@ -385,7 +454,7 @@ class GitRobot:
         if not message:
             raise UsageError(f"message file is empty: {path}")
 
-        target = self._target(repo_mode)
+        target = self._target(repo_mode, worktree)
         if not target.run(["diff", "--cached", "--quiet"]).exit_code:
             raise self._refuse(
                 "commit", {"message_file": str(path), "repo": repo_mode},
@@ -394,16 +463,58 @@ class GitRobot:
                 reason=reason, target=target,
             )
 
+        # ⛔⛔ THE BACKSTOP: A COMMIT MAY NEVER CARRY A NON-ZERO ARC ROUND.
+        # The tracked default is `round: 0`, and `--skip-worktree` normally makes a bumped round
+        # unstageable outright. This covers the case that flag CANNOT cover: a worktree gitRobot
+        # did not create, a checkout where the index flag was lost, or the main checkout, where
+        # nothing "creates" the arc and so nothing seals it.
+        #
+        # ⚠ WHY IT IS WORTH A SECOND CONTROL. One committed non-zero round is inherited by EVERY
+        # future arc, permanently, and it arrives from the TREE rather than from a stale local
+        # file — so `gate_round.py`'s existing "base recorded X, HEAD is now Y" warning never
+        # fires and the over-count it exists to catch becomes invisible. Cheap to prevent, very
+        # expensive to notice.
+        #
+        # ⭐ IT LIVES HERE RATHER THAN IN A CHECKER because gitRobot is the CHOKE POINT: direct
+        # git is denied by a PreToolUse hook, so every agent commit comes through this method. A
+        # scanner in the verify bundle would have to remember to run and would buy a routing
+        # round; this cannot be skipped.
+        staged_round = self._staged_arc_round(target)
+        if staged_round is not None and staged_round != 0:
+            raise self._refuse(
+                "commit", {"message_file": str(path), "repo": repo_mode},
+                (f"{self._ARC_STATE} is staged carrying round={staged_round}, and the tracked "
+                 f"copy must stay at 0." if staged_round >= 0 else
+                 f"{self._ARC_STATE} is staged but its `round` is unreadable, so the count this "
+                 f"commit would publish is UNKNOWN — an unknown count next to a cap fails closed."),
+                (f"unstage it: unstage(paths=['{self._ARC_STATE}']). It is the ARC HANDSHAKE — a "
+                 f"tracked default that every worktree opens with, never a place to record this "
+                 f"arc's progress. Its local round is meant to stay local and die with the "
+                 f"worktree. A committed non-zero round is inherited by every future arc."),
+                reason=reason, target=target,
+            )
+
         gate_records = []
         if run_gate and repo_mode == "main":
-            gate = self.gates.run("pre-commit")
+            # ⚠⚠ THE GATE MUST RUN IN THE TREE BEING COMMITTED. `self.gates` is bound to the
+            # MAIN checkout, so once `worktree` became targetable this would have verified the
+            # main tree while committing the worktree's content — **the check and the act about
+            # different objects**, which is the defect class this project has spent three days
+            # removing, introduced by the fix for something else. Caught by a test that could
+            # not find the pipeline, not by review.
+            gates = self.gates if target is self.git else Gates(target.repo)
+            gate = gates.run("pre-commit")
             gate_records = [gate.record()]
             if not gate.passed:
                 self.audit.append(
                     actor=self.actor, op="commit",
-                    args={"message_file": str(path), "repo": repo_mode},
-                    decision="refused", head=self.git.head(), branch=self.git.branch(),
-                    tree=self.git.tree_state(), gates=gate_records, reason=reason,
+                    args={"message_file": str(path), "repo": repo_mode,
+                          "worktree": worktree},
+                    # ⚠ And the receipt records the TARGET's head/branch/tree, not the main
+                    # tree's. An audit row naming the wrong tree is a log that lies about where
+                    # the work landed.
+                    decision="refused", head=target.head(), branch=target.branch(),
+                    tree=target.tree_state(), gates=gate_records, reason=reason,
                     detail="pre-commit gate did not pass",
                 )
                 raise RefusalError(
@@ -505,19 +616,85 @@ class GitRobot:
                 return {"state": "passed" if record["decision"] == "allowed" else "failed",
                         "head": head, "run_id": run_id, "ts": record["ts"],
                         "gates": record.get("gates")}
+        # ⭐⭐ THREE STATES, AND THE OLD `or` COLLAPSED TWO OF THEM. This read
+        # `if alive or started.get("pid") == os.getpid(): running`, so once the audit row had
+        # been written by THIS process the answer was "running" whether or not any worker
+        # existed. A thread that died while the process lived reported `running` FOREVER, with
+        # no owner and no way for a caller to tell it from work in flight.
+        #
+        # ⭐ ZeroParadox's framing, 2026-09-02: **"`preflight_status` reports the LOCK, and I
+        # asked it about the PIPELINE."** Two different objects, one answer — the same
+        # check-and-claim-are-about-different-objects shape this codebase keeps finding.
+        #
+        # ⚠ THE NIGHT IT WAS REPORTED THE PIPELINE WAS GENUINELY ALIVE and the alarm was
+        # false — a stale `running` was inferred from a bad process count. The defect is real
+        # anyway, and it is the reason neither of us could settle the question without
+        # enumerating processes by hand.
         alive = any(t.name == f"preflight-{run_id}" and t.is_alive()
                     for t in threading.enumerate())
-        if alive or started.get("pid") == os.getpid():
+        if alive:
             return {"state": "running", "head": head, "run_id": run_id,
                     "started_at": started["ts"]}
+        if started.get("pid") == os.getpid():
+            # ⚠⚠ OUR PROCESS, NOT OUR THREAD. Nothing is executing and nothing will ever write
+            # the verdict, so a caller told `running` waits for an event that cannot arrive.
+            # Naming it ORPHANED is what makes re-running a legitimate remedy rather than a
+            # guess about whether a lock is stale.
+            return {"state": "orphaned", "head": head, "run_id": run_id,
+                    "started_at": started["ts"],
+                    "note": "this process started the run and its worker thread is gone, so no "
+                            "verdict will ever be written. Nothing is executing — this is not a "
+                            "lock you are waiting on. Re-run preflight()."}
+        # ⚠ A DIFFERENT PROCESS OWNS IT AND WE CANNOT SEE ITS THREADS. Thread liveness is
+        # process-local, so "it is dead" and "I cannot observe it from here" are different
+        # claims; this branch is the second wearing the first's name, and the note says so
+        # rather than letting a restart-survivor read as a corpse.
         return {"state": "died", "head": head, "run_id": run_id,
                 "started_at": started["ts"],
-                "note": "the run was interrupted (its process is gone) and never recorded a "
-                        "verdict — most likely killed mid-flight. Re-run preflight()."}
+                "started_pid": started.get("pid"),
+                "note": "the run was started by a process that is not this one and never "
+                        "recorded a verdict — most likely killed mid-flight by a restart. "
+                        "⚠ Thread liveness cannot be read across processes: if that pid is "
+                        "still alive the run may be too. Check the pid before re-running."}
 
     def push(self, branch: str, *, reason: Optional[str] = None,
-             repo_mode: str = "main") -> dict:
+             repo_mode: str = "main", wait: bool = True) -> dict:
         """Push a branch. On the main repo, only if verdictLedger says so.
+
+        ⚠⚠ THE GIT PUSH RUNS ON A WORKER THREAD AND THIS RETURNS A ``run_id``. Poll
+        ``push_status()``. `preflight` has had this shape since 2026-08-22 and its
+        docstring argues for it in terms; `push` did not, and on 2026-08-30 that cost
+        a real push. Measured: the MCP client abandons the call at **300s**, this
+        method capped git at **900s**, and the pre-push hook — which is the backstop,
+        so it always runs — now takes **1498s**. The sanctioned route was
+        unreachable by ~5x, and BOTH ceilings were below the floor, so raising one
+        would have fixed nothing.
+
+        ⭐ AND THE CAUSE IS WORTH KEEPING: the pipeline got slower BECAUSE the routing
+        control was repaired the same night (`RLY41-1` — it stopped inheriting a red
+        baseline and started constructing one, at the price of extra `prepush` runs).
+        **A control we made honest became, by the same change, expensive enough that
+        the compliant path stopped working.** Nobody decided to cheat; every honest
+        route closed at once, which is how a bypass gets invented. **The cost of a
+        control is part of the control**, and it was not priced. ZeroParadox's
+        framing, and it is the durable lesson here rather than the timeout number.
+
+        ⚠ WHAT STAYS SYNCHRONOUS, DELIBERATELY: every refusal — branch shape, missing
+        reason, and the ledger inventory. A caller must learn "this push is not
+        allowed" from the call it made, not from a later poll. Only the irreversible
+        act itself is backgrounded.
+
+        ⚠⚠ A DIED PUSH IS NOT LIKE A DIED PREFLIGHT, AND `push_status` SAYS SO. A
+        preflight that dies changed nothing; a push that dies MAY ALREADY HAVE
+        PUBLISHED. The remote is the only authority on that, so the ``died`` state
+        names `ls-remote` as the check rather than implying nothing happened.
+
+        ⚠ ``wait`` DEFAULTS TO **True**, AND THE DEFAULT SITS HERE DELIBERATELY. The 300s
+        ceiling is a property of the MCP TRANSPORT, not of pushing, so the MCP tool is the
+        one that opts out (``wait=False``) and everything else — the CLI, tests, any
+        script — keeps a call that returns the real outcome. Defaulting to async would
+        have made every existing caller report success for a push that had not happened
+        yet, which is exactly the confusion the ``started`` decision exists to prevent.
 
         THE ONLY PRECONDITION IS THE LEDGER'S INVENTORY FOR THE EXACT HASH BEING
         PUSHED. There is deliberately no second route. A preflight bit used to sit
@@ -583,27 +760,224 @@ class GitRobot:
         if repo_mode == "main":
             inv = self._require_inventory(branch, args, reason=reason, target=target)
 
-        result = target.run(["push", "origin", branch], timeout=900)
-        decision = "allowed" if result.ok else "failed"
+        # ⚠ ONE PUSH AT A TIME, same reason `preflight` refuses a second run: two
+        # concurrent pushes of one branch race, and the audit could not say which
+        # receipt belonged to which act.
+        running = self.push_status()
+        if running.get("state") == "running":
+            raise self._refuse(
+                "push", args, "a push is already running for this store.",
+                "Wait for it and poll push_status(). The pre-push hook re-runs the full "
+                "pipeline on every push, so a second run would spend it twice.",
+                reason=reason, target=target,
+            )
+
+        run_id = _refusal_id("push", f"{self.git.head()}|{branch}|{len(self.audit.read())}")
+        self.audit.append(
+            actor=self.actor, op="push", args=args, decision="started",
+            head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
+            reason=reason, detail="push started", run_id=run_id,
+        )
+
+        def _do_push() -> dict:
+            # ⚠⚠ THE TIMEOUT MUST CLEAR THE HOOK, NOT THE NETWORK. This was 900s, chosen
+            # when the pre-push pipeline took ~155s. It is the BACKSTOP hook — it runs on
+            # every push by design — and it now takes 1498s, so 900s killed the push
+            # mid-gate and looked like a network fault. Sized well above the measured
+            # pipeline rather than just above it, because the pipeline grows whenever a
+            # control is added and the next person to add one will not revisit this number.
+            result = target.run(["push", "origin", branch], timeout=3600)
+            decision = "allowed" if result.ok else "failed"
+            return self._receipt(
+                "push", push_args, decision, gates=None, reason=reason,
+                detail=result.output, run_id=run_id,
+                extra={"output": result.output, "ok": result.ok, "run_id": run_id},
+                target=target)
+
+        push_args = args
         if inv is not None:
             # ⚠ The audit row NAMES the inventory that authorised this push and the
             # policy it was judged under, so a bar that moved later cannot
             # re-interpret a past action.
-            args = {**args, "inventory_ref": inv.get("tip") or inv.get("ref"),
-                    "inventory_range": inv.get("range"),
-                    "commits_gated": inv.get("commits_in_range"),
-                    # ⚠ RENAMED 2026-08-25: the ledger key is config_sha, because it
-                    # covers the policy AND the registry. Reading the old key here
-                    # would have silently written null into every push audit row --
-                    # the audit still LOOKS complete, which is the shape that hides.
-                    "config_sha": inv.get("config_sha"),
-                    "admission": inv.get("admitted")}
-        return self._receipt(
-            "push", args, decision, gates=gates, reason=reason, detail=result.output,
-            extra={"output": result.output, "ok": result.ok,
-                   "inventory": None if inv is None else inv.get("line")},
-            target=target,
-        )
+            push_args = {**args, "inventory_ref": inv.get("tip") or inv.get("ref"),
+                         "inventory_range": inv.get("range"),
+                         "commits_gated": inv.get("commits_in_range"),
+                         # ⚠ RENAMED 2026-08-25: the ledger key is config_sha, because it
+                         # covers the policy AND the registry. Reading the old key here
+                         # would have silently written null into every push audit row --
+                         # the audit still LOOKS complete, which is the shape that hides.
+                         "config_sha": inv.get("config_sha"),
+                         "admission": inv.get("admitted"),
+                         "inventory": inv.get("line")}
+
+        if wait:
+            return _do_push()
+
+        thread = threading.Thread(target=_do_push, name=f"push-{run_id}", daemon=True)
+        thread.start()
+        return {"op": "push", "run_id": run_id, "branch": branch, "state": "running",
+                "head": self.git.head(),
+                "inventory": None if inv is None else inv.get("line"),
+                "note": ("the push is running in the background; poll push_status(). The "
+                         "pre-push hook re-runs the full pipeline as the backstop, measured "
+                         "at ~25 minutes, so expect minutes not seconds.")}
+
+    def push_status(self) -> dict:
+        """Where the last started push got to. The sibling of `preflight_status`.
+
+        ⚠⚠ `died` MEANS SOMETHING DIFFERENT HERE THAN IT DOES FOR A PREFLIGHT, AND THE
+        DIFFERENCE IS THE WHOLE REASON THIS IS NOT A COPY. A preflight that dies changed
+        nothing — re-run it. A push that dies **may already have published**: the git
+        process can be killed after the remote accepted the ref and before the receipt is
+        written. So this never says "it did not happen"; it names the remote as the only
+        authority and tells the caller to ask it.
+        """
+        started = None
+        for record in self.audit.read():
+            if record.get("op") == "push" and record.get("decision") == "started":
+                started = record
+        if started is None:
+            return {"state": "none", "note": "no push has been started from this store."}
+
+        run_id = started.get("run_id")
+        for record in self.audit.read():
+            if record.get("run_id") == run_id and record.get("decision") in ("allowed", "failed"):
+                return {"state": record["decision"], "run_id": run_id,
+                        "branch": started.get("args", {}).get("branch"),
+                        "head": started.get("head"), "ts": record["ts"],
+                        "output": (record.get("extra") or {}).get("output")}
+
+        alive = any(t.name == f"push-{run_id}" and t.is_alive()
+                    for t in threading.enumerate())
+        if alive:
+            return {"state": "running", "run_id": run_id,
+                    "branch": started.get("args", {}).get("branch"),
+                    "head": started.get("head"),
+                    "note": "still running; the pre-push hook re-runs the full pipeline (~25 min)."}
+        return {"state": "died", "run_id": run_id,
+                "branch": started.get("args", {}).get("branch"),
+                "head": started.get("head"),
+                "note": ("the worker is gone and no receipt was written — the server most "
+                         "likely restarted mid-push. THIS DOES NOT MEAN NOTHING WAS PUSHED: "
+                         "git can be killed after the remote accepted the ref. Ask the remote, "
+                         "which is the only authority: read(op='ls-remote') or compare "
+                         "origin/<branch> against local. Do NOT retry until you have."),
+                "check": "ls-remote"}
+
+    # ⚠⚠ SHARED, GITIGNORED BUILD DEPENDENCIES A FRESH WORKTREE CANNOT HAVE. `.lake` holds the
+    # pinned Mathlib and nine other packages; it is gitignored, so `git worktree add` produces a
+    # checkout without it, and in that checkout Lean cannot build and `check_paths` WITHHOLDS on
+    # "Mathlib absent". Measured 2026-08-30 during a real healing run.
+    #
+    # ⭐⭐ THAT IS WHY THE WORKTREE FLOW LAPSED. The intended model is a private worktree per
+    # change, converging at a local merge — but a worktree straight out of the tool could not
+    # build the corpus, so work went serially onto one branch instead. 26 commits in three days,
+    # all on `illustrated`, every other branch months stale. **A sanctioned path that does not
+    # produce a working tree is not a sanctioned path**, and the mandatory rule could not be
+    # enforced because compliance was impossible.
+    #
+    # ⚠ A JUNCTION, NOT A COPY: `.lake` is far too large to duplicate per worktree (a `du` over
+    # it did not finish in two minutes). Tim confirms a link to the folder was tested and works.
+    _SHARED_DEPS = (".lake",)
+
+    # ⭐⭐ THE ARC HANDSHAKE. Tim, 2026-09-02: **a worktree is the project root and the instance
+    # acting inside it IS the arc.** So the review-round counter is per-arc BY CONSTRUCTION rather
+    # than by convention — it lives at the arc's own root, and it dies with the worktree, which is
+    # correct because the arc is over.
+    #
+    # ⚠ The file is TRACKED, committed once at `round: 0`, so every fresh checkout OPENS with the
+    # known-good state — "what is supposed to be there by default". That solves the thing that made
+    # worktrees unusable: a gitignored file is ABSENT in a fresh worktree, and absence had to be
+    # guessed at. `gate_round.py` treats missing as `{'round': 0, 'fresh': True}` and says so,
+    # because "deleting the file is otherwise an unlogged reset" — nine bypass routes have been
+    # found and closed on that one counter. A tracked default removes the guess entirely.
+    #
+    # ⚠⚠ AND `--skip-worktree` IS WHAT MAKES THE MISTAKE UNAVAILABLE RATHER THAN MERELY UNLIKELY.
+    # Git then treats local modifications as nonexistent: `git add` on the file is a no-op, so a
+    # bumped round CANNOT be staged or committed even deliberately. Without it the file is an
+    # ordinary tracked file, every bump shows dirty, and one committed non-zero round would be
+    # inherited by every future arc — permanently, and arriving from the TREE rather than from a
+    # stale file, which is the invisible version of the over-count `gate_round.py` already warns
+    # about ("an inherited count stops a fresh arc early").
+    #
+    # ⚠ NOT `--assume-unchanged`: documented as not a guarantee, and git clobbers it on checkout
+    # and merge. The index flag is also PER WORKTREE — each has its own index — which is precisely
+    # why it is set here, at the one place that creates worktrees.
+    _ARC_STATE = "gate_round.json"
+
+    def _seal_arc_state(self, worktree: Path) -> dict:
+        """Mark the arc handshake file skip-worktree in a fresh worktree, so its local round
+        bumps can never be staged. A no-op when the file is not tracked (it is not, yet)."""
+        target = Git(Path(worktree), timeout=self.git.timeout)
+        probe = target.run(["ls-files", "--error-unmatch", self._ARC_STATE], timeout=30)
+        if not probe.ok:
+            # ⚠ Not tracked here. That is the state TODAY — the file still lives under
+            # `.claude-local/` and has not been migrated — so this must be silent and inert
+            # rather than a failure, and it must start working the moment the file lands.
+            return {"sealed": False, "reason": "not tracked in this worktree"}
+        res = target.run(["update-index", "--skip-worktree", self._ARC_STATE], timeout=30)
+        return {"sealed": bool(res.ok), "file": self._ARC_STATE,
+                "reason": None if res.ok else (res.output or "").strip()[:200]}
+
+    def _staged_arc_round(self, target) -> Optional[int]:
+        """The `round` in the INDEX copy of the handshake, or None if absent/unreadable.
+
+        ⚠ Read from the index (`:path`), never the working tree — the question is what a commit
+        WOULD carry, and those differ by exactly the local bump this exists to keep out.
+        """
+        res = target.run(["show", f":{self._ARC_STATE}"], timeout=30)
+        if not res.ok:
+            return None
+        try:
+            doc = json.loads(res.output)
+        except (ValueError, TypeError):
+            # ⚠ Unparseable is NOT "no round". `gate_round.py` fails closed on a corrupt counter
+            # for the same reason, and this returns a sentinel the caller refuses on rather than
+            # a None that reads as "nothing to see".
+            return -1
+        value = doc.get("round") if isinstance(doc, dict) else None
+        if isinstance(value, bool) or not isinstance(value, int):
+            return -1
+        return value
+
+    def _link_shared_deps(self, worktree: Path) -> list:
+        """Junction the shared, gitignored build deps into a fresh worktree. Best effort."""
+        made = []
+        for name in self._SHARED_DEPS:
+            src = self.repo / name
+            dst = Path(worktree) / name
+            if not src.is_dir() or dst.exists():
+                continue
+            # ⚠ `mklink /J` needs no elevation, unlike a directory SYMLINK on Windows. A tool
+            # that only works for an administrator is one people work around.
+            proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)],
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+            if proc.returncode == 0:
+                made.append(name)
+        return made
+
+    def _unlink_shared_deps(self, worktree: Path) -> list:
+        """Remove OUR junctions before git sees the tree. ⚠⚠ THE ORDER IS THE WHOLE SAFETY
+        ARGUMENT: measured 2026-08-30, `git worktree remove --force` FOLLOWS a junction and
+        deletes what it points at while returning 0. Left in place, removing a worktree would
+        destroy the pinned Mathlib. `Path.rmdir()` on a junction removes the LINK only, never
+        the target — the same non-recursive delete that was done by hand, four times, verified."""
+        removed = []
+        for name in self._SHARED_DEPS:
+            dst = Path(worktree) / name
+            try:
+                attrs = getattr(dst.lstat(), "st_file_attributes", 0)
+            except OSError:
+                continue
+            if not (attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+                continue          # a real directory here is NOT ours to delete
+            try:
+                dst.rmdir()
+                removed.append(name)
+            except OSError:
+                pass
+        return removed
 
     def _push_range(self, branch: str, target) -> str:
         """What this push will PUBLISH, as a git range expression.
@@ -701,6 +1075,43 @@ class GitRobot:
             short = (f"{inv.get('blocking_count')}/{inv.get('commits_in_range')} "
                      f"commit(s) in {rev_range}"
                      if inv.get("commits_in_range") else head[:12])
+            # ⚠⚠ NAME THE STALE-EARLIER-COMMITS SHAPE, BECAUSE ITS REMEDY IS NOT THE
+            # OBVIOUS ONE AND THE GENERIC TEXT SENDS PEOPLE THE WRONG WAY. Coverage is
+            # content-keyed, so an old commit's blobs never move and its verdicts stay
+            # valid for it — EXCEPT that `evidence` points at the CHECKER, not at the
+            # commit. Edit `tools/verify/*` or a brief, and every earlier commit in the
+            # same range cites a checker that no longer exists: green when made, stale
+            # now, through no change of theirs. Measured 2026-08-30 on 2dc895e4 — five
+            # STALE, zero missing. Told only "record the verdicts", a caller goes hunting
+            # for a recording bug that is not there.
+            commits = inv.get("commits") or []
+            tip_ok = any(c.get("is_tip") and c.get("complete") for c in commits)
+            stale_under = [c for c in commits
+                           if not c.get("is_tip") and not c.get("complete")
+                           and (c.get("stale") or [])]
+            extra = ""
+            if tip_ok and stale_under:
+                worst = ", ".join(sorted(stale_under[0].get("stale") or [])[:5])
+                extra = (
+                    f"\n\n⚠ THE TIP IS COMPLETE AND {len(stale_under)} EARLIER COMMIT(S) ARE "
+                    f"STALE — e.g. {stale_under[0]['commit'][:8]}: {worst}. **That is almost "
+                    f"never a recording failure, so do not go looking for one** — those commits "
+                    f"recorded plenty. Call heal_plan(action='push', ref=…, admission=…): it "
+                    f"reports `subjects_stale` and `evidence_stale` SEPARATELY, which is the "
+                    f"distinction that tells you what to do.\n"
+                    f"  · subjects_stale — the covered files changed. Ordinary, expected, and the "
+                    f"common case. Re-run those checkers and record; measured 2026-08-30 the six "
+                    f"usual suspects re-run in 16.1s total.\n"
+                    f"  · evidence_stale — the CHECKER or BRIEF moved, so verdicts died for files "
+                    f"that did not change. Same remedy, different cause; worth knowing which so "
+                    f"you do not go hunting content that never moved.\n"
+                    f"⚠ SQUASH IS NOT THE REMEDY FOR EITHER. It is remediation for a backlog that "
+                    f"recorded nothing, and rewriting history on every push to satisfy a rule that "
+                    f"exists BECAUSE intermediate commits are permanent is self-defeating. ⚠ NOTE "
+                    f"the standing defect behind this: `precommit` records 11 of the commit set "
+                    f"while six mechanical steps are recorded only against the TIP, so "
+                    f"intermediates sit at 11/19 by construction. Moving those six into precommit "
+                    f"is the fix; healing them by hand each time is the workaround.")
             raise self._refuse(
                 "push", args,
                 f"verdictLedger reports the admission set is not satisfied for "
@@ -708,7 +1119,7 @@ class GitRobot:
                 "Every required verdict must be recorded and passing for the EXACT hash "
                 "being pushed. This is not advisory and there is no flag that skips it — "
                 "a push allowed while the ledger said 0/19 is the failure this gate "
-                "exists to prevent.",
+                "exists to prevent." + extra,
                 reason=reason, target=target)
         return inv
 
@@ -808,6 +1219,147 @@ class GitRobot:
         return self._receipt("rebase", args, "allowed" if result.ok else "failed",
                              reason=reason, detail=result.output,
                              extra={"output": result.output, "ok": result.ok})
+
+    def squash(self, onto: str, message_file: str, *, reason: str) -> dict:
+        """Replace ``onto..HEAD`` with ONE commit carrying HEAD's EXISTING tree.
+
+        ⚠⚠ THE MESSAGE IS READ FROM A FILE, NEVER PASSED AS AN ARGUMENT — same as
+        `commit`, and the first cut of this method got it wrong. It shipped with
+        ``-m <message>`` on argv, which contradicted `commit`'s own stated rule for the
+        one thing both tools produce: a commit object. Caught by ZeroParadox 2026-08-29,
+        and the argument is that a SQUASH message is strictly worse than a commit
+        message on every axis the rule names — it summarises N commits, so it is longer,
+        more likely to quote prose, and more likely to carry a glyph. This corpus writes
+        ε₀, ⊥ and p-adic notation into prose constantly. R-SHELL: "CONTENT NEVER TRAVELS
+        ON A COMMAND LINE — argv breaks on LENGTH (Windows caps at ~32k), QUOTING and
+        ENCODING; move it by file or stdin." Only the PATH goes on argv, via `-F`.
+
+        ⭐⭐ WHY THIS EXISTS AT ALL: `can_push` WALKS EVERY COMMIT, SO INTERMEDIATES
+        ARE THE PROBLEM. Measured 2026-08-29 on the convergence run:
+
+            can_push(origin/illustrated..HEAD)      REFUSED  short 31/31
+            can_push(origin/illustrated..<squashed>) REFUSED  short  1/1
+
+        Every one of those 31 recorded nothing (`admission_state: UNSET, required: 0`),
+        because they were intermediate states of a single remediation — fix, commit,
+        fix, commit. `can_push` is right to refuse them: they are just as published as
+        the tip, and "fetchable, bisectable, citable forever" is its own docstring's
+        phrase. The two honest ways out are to certify all 31 after the fact, which
+        `crossref` would correctly flag BACKFILLED, or to stop creating 31 published
+        commits. This is the second. **It relaxes no gate** — it makes the published
+        history equal to the tree that actually passed.
+
+        ⚠⚠ commit-tree, NOT `reset --soft` + commit, AND THE DIFFERENCE IS THE POINT.
+        The ordinary squash idiom moves the branch and rebuilds the commit FROM THE
+        INDEX, so the result depends on index state at the moment it runs. This takes
+        HEAD's existing tree OBJECT and gives it a new parent: the tree is not
+        recomputed, it is reused by id. Verified below rather than assumed. Nothing
+        reads or writes the index or the working tree, which is why this is reachable
+        where `reset` is not — §3 Tier 1 refuses `reset --hard` for destroying
+        uncommitted state, and this cannot touch any.
+
+        ⚠ MEASURED THE DAY THIS WAS WRITTEN, and it is the fact that makes the
+        operation worth having: verdict records survive it. A probe commit built with
+        this exact shape (same tree, new sha, new parent) returned an identical
+        inventory to HEAD — 18/19, same rows, same STALE. Coverage is content-keyed on
+        (step, path, blob), so an identical tree inherits every verdict. Squashing does
+        NOT force a re-sweep.
+
+        ⚠ THE PUBLISHED GUARD IS THE SAME ONE `rebase` USES, for the same reason:
+        rewriting commits someone has already pulled breaks their checkout and the
+        damage only surfaces later. Refused, not flagged.
+
+        ⚠ THE OLD TIP IS NAMED IN THE RECEIPT because after this the old commits are
+        unreferenced. They are not gone — git keeps them until gc — and the receipt is
+        how a person finds them again. An irreversible-looking operation that records
+        no way back is how §7's audit stops being an audit.
+        """
+        if not onto or onto.startswith("-"):
+            raise UsageError(f"{onto!r} is not a ref")
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("squash requires a non-empty reason")
+        if not (isinstance(message_file, str) and message_file.strip()):
+            raise UsageError(
+                "squash requires message_file=<path>; the message is read from a file, "
+                "never passed as an argument. Write the message to a file and name it.")
+        msg_path = Path(message_file)
+        if not msg_path.is_file():
+            raise UsageError(f"message file not found: {msg_path}")
+        if not msg_path.read_text(encoding="utf-8").strip():
+            raise UsageError(f"message file is empty: {msg_path}")
+
+        args = {"onto": onto, "message_file": str(msg_path)}
+        self._require_clean("squash", args, f"squashing {onto!r}..HEAD", reason=reason)
+
+        # ⚠ A DETACHED HEAD HAS NO BRANCH TO MOVE. Refuse rather than silently
+        # leaving the new commit unreferenced, which looks like success and loses it.
+        head_ref = self.git.run(["symbolic-ref", "--quiet", "HEAD"])
+        branch = (head_ref.stdout or "").strip()
+        if not head_ref.ok or not branch.startswith("refs/heads/"):
+            raise self._refuse(
+                "squash", args,
+                "HEAD is detached, so there is no branch to move; the squashed commit "
+                "would be created and immediately unreferenced.",
+                "Check out the branch you mean to rewrite first.",
+                reason=reason)
+
+        published = self._published_commits_rewritten_by(onto)
+        if published:
+            raise self._refuse(
+                "squash", args,
+                f"this would rewrite {published} commit(s) that are already on the "
+                f"remote. Rewriting published history breaks every checkout that "
+                f"already has it, and the damage only surfaces when someone else pulls.",
+                "Squash only unpublished work. Confirm with "
+                "read(op='branch', args=['-r','--contains','<oldest sha>']) — an empty "
+                "result means no remote has it.",
+                reason=reason)
+
+        count = self.git.run(["rev-list", "--count", f"{onto}..HEAD"])
+        n = int(count.stdout.strip()) if count.ok and count.stdout.strip().isdigit() else 0
+        if n == 0:
+            raise self._refuse(
+                "squash", args,
+                f"{onto}..HEAD is empty — there is nothing to squash.",
+                "Check the base ref: read(op='log', args=['--oneline', f'{onto}..HEAD']).",
+                reason=reason)
+
+        old_tip = self.git.run(["rev-parse", "HEAD"]).stdout.strip()
+        tree = self.git.run(["rev-parse", "HEAD^{tree}"])
+        if not tree.ok or not tree.stdout.strip():
+            raise UsageError("could not resolve HEAD's tree")
+        tree_id = tree.stdout.strip()
+
+        # ⚠ `-F <path>`: the PATH travels on argv, the CONTENT never does. Same shape as
+        # `commit`'s `--file`, for the same reason.
+        made = self.git.run(["commit-tree", tree_id, "-p", onto, "-F", str(msg_path)],
+                            timeout=120)
+        if not made.ok or not made.stdout.strip():
+            return self._receipt("squash", args, "failed", reason=reason,
+                                 detail=made.output,
+                                 extra={"output": made.output, "ok": False})
+        new_sha = made.stdout.strip()
+
+        # ⚠⚠ VERIFY THE TREE CARRIED BEFORE MOVING THE BRANCH. The whole safety
+        # argument is "the tree object is reused, not recomputed". Asserting it after
+        # the fact is what separates this from hoping.
+        check = self.git.run(["rev-parse", f"{new_sha}^{{tree}}"])
+        if check.stdout.strip() != tree_id:
+            return self._receipt(
+                "squash", args, "failed", reason=reason,
+                detail=(f"refusing to move {branch}: squashed commit {new_sha} has tree "
+                        f"{check.stdout.strip()}, expected {tree_id}"),
+                extra={"ok": False, "expected_tree": tree_id,
+                       "got_tree": check.stdout.strip()})
+
+        moved = self.git.run(["update-ref", "-m", f"squash: {reason}", branch, new_sha,
+                              old_tip], timeout=120)
+        decision = "allowed" if moved.ok else "failed"
+        return self._receipt(
+            "squash", args, decision, reason=reason, detail=moved.output,
+            extra={"ok": moved.ok, "branch": branch, "onto": onto,
+                   "commits_squashed": n, "old_tip": old_tip,
+                   "new_sha": new_sha, "tree": tree_id, "output": moved.output})
 
     def _published_commits_rewritten_by(self, onto: str) -> int:
         """How many commits a rebase onto ``onto`` would rewrite that are ALREADY upstream.
@@ -1168,10 +1720,15 @@ class GitRobot:
             result = self.git.run(["worktree", "add", "--detach", str(path), ref],
                                   timeout=300)
             decision = "allowed" if result.ok else "failed"
+            linked = self._link_shared_deps(path) if result.ok else []
+            # ⭐ THE ARC OPENS HERE. Creating the worktree IS entering the arc, so the handshake
+            # is sealed at the same moment — one place, the only place that makes worktrees.
+            arc = self._seal_arc_state(path) if result.ok else {"sealed": False}
             return self._receipt("worktree.add", {"ref": ref, "path": str(path)}, decision,
                                  detail=result.output,
                                  extra={"path": str(path), "output": result.output,
-                                        "ok": result.ok})
+                                        "ok": result.ok, "linked": linked,
+                                        "arc_state": arc})
         if action == "prune":
             result = self.git.run(["worktree", "prune", "-v"], timeout=120)
             return self._receipt("worktree.prune", {}, "allowed" if result.ok else "failed",
@@ -1188,6 +1745,37 @@ class GitRobot:
             # enumerable from the repo instead of taken from the caller.
             known = self._worktree_paths()
             resolved = path.resolve()
+            # ⚠⚠ REFUSE BEFORE GIT EVER SEES IT. `git worktree remove` FOLLOWS JUNCTIONS and
+            # deletes what they point at, returning 0 — measured 2026-08-30, a junction to a
+            # scratch target was removed along with the target while git reported success. The
+            # documented procedure for healing pre-fix commits puts a junction to the pinned
+            # Mathlib inside a worktree, so this is the live path to destroying it.
+            #
+            # ⚠ REFUSE RATHER THAN AUTO-CLEAN. Silently deleting something the caller created is
+            # not this tool's shape, and a refusal that NAMES the junction teaches the hazard
+            # where a quiet cleanup hides it. The escape is an action, not a flag.
+            # ⚠⚠ REMOVE OUR OWN JUNCTIONS FIRST, THEN LET THE GUARD JUDGE WHAT IS LEFT. The
+            # ones `worktree add` created are known and safely removable (rmdir on a junction
+            # takes the link, never the target). Anything still present afterwards was made by
+            # hand, and THAT is what the refusal below is for — a caller who linked something we
+            # do not know about must clear it themselves, because we cannot know what it points
+            # at. Before this, the guard refused the tool's OWN provisioning, which would have
+            # made the sanctioned worktree flow un-teardownable.
+            unlinked = self._unlink_shared_deps(resolved) if resolved.exists() else []
+            if resolved.exists():
+                links = _reparse_points_under(resolved)
+                if links:
+                    raise self._refuse(
+                        "worktree.remove", {"name": name},
+                        f"this worktree contains {len(links)} junction/symlink(s) — "
+                        f"{', '.join(links[:5])}. `git worktree remove` FOLLOWS them and deletes "
+                        f"what they point at, reporting success. If one targets the pinned "
+                        f"Mathlib checkout, removing this worktree destroys it.",
+                        "Remove each link FIRST, non-recursively, so only the link goes and not "
+                        "its target — PowerShell: [System.IO.Directory]::Delete($p, $false). "
+                        "Verify the target still exists, then remove the worktree. Note "
+                        "os.path.islink() returns FALSE for a junction, so do not rely on it.",
+                    )
             if resolved == self.repo:
                 raise self._refuse(
                     "worktree.remove", {"name": name},
@@ -1235,7 +1823,8 @@ class GitRobot:
                 )
             result = self.git.run(["worktree", "remove", "--force", str(path)], timeout=300)
             decision = "allowed" if result.ok else "failed"
-            return self._receipt("worktree.remove", {"name": str(path)}, decision,
+            return self._receipt("worktree.remove", {"name": str(path), "unlinked": unlinked},
+                                 decision,
                                  detail=result.output,
                                  extra={"output": result.output, "ok": result.ok})
         raise UsageError(
@@ -1316,3 +1905,137 @@ class GitRobot:
                      f"or filter with op=/decision="),
             "records": shown,
         }
+
+    def requirements(self, action: str = "push") -> dict:
+        """⭐⭐ THE SUCCESS CONDITIONS FOR `action`, SERVED FROM THE CONFIG THAT ACTUALLY GATES.
+
+        Tim, 2026-08-30: *"it might be worthwhile having a specific endpoint to call that
+        documents the exact success conditions for things to work.. that way whenever a chronic
+        mistake like that is made, it will have the 'this is what you need to do to fix it'
+        directly in front at the right moment."*
+
+        ⚠⚠ IT EXISTS BECAUSE gitRobot SERVED ITS ADMISSION SET NOWHERE, AND THAT CAUSED A
+        MEASURED DEFECT. 2026-08-30: ZeroParadox reported `heal_plan` for dropping a failing
+        gating step (`rely`). It had not — `rely` is REGISTERED but deliberately NOT ADMITTED,
+        and the only queryable list was the ledger's REGISTRY, which is a superset. With no way
+        to ask what actually gates, a caller derives a set, and then two internally-consistent
+        systems disagree about what "complete" means. **Registered means RECORDABLE; admitted
+        means REQUIRED.** That distinction had a home in a contract document nobody is obliged
+        to open, and none on the tool surface where the mistake gets made.
+
+        ⚠ EVERY FIELD IS DERIVED FROM LIVE CONFIG, NOT WRITTEN HERE. The admitted list comes
+        from the same `admission.v1.json` that `_require_inventory` reads, and the exclusion
+        reasons are quoted out of that file's own `_`-prefixed keys. A hand-maintained copy of
+        the success conditions would be the second copy this project keeps removing — and it
+        would be the most convincing kind, because it would read as authoritative.
+        """
+        # ⚠⚠ THE LIST COMES FROM `admission_for`, NOT FROM THE RAW DOCUMENT, AND THE FIRST
+        # VERSION OF THIS GOT IT WRONG. Reading `doc["admission"][action]` directly returned []
+        # for an unknown action, so `requirements("shove")` reported "0 admitted" — an unnamed
+        # action rendering as unrestricted, which is the precise failure `admission_for`
+        # validates against and which this tool exists to make legible. Caught by its own test.
+        # `admission_doc` is used ONLY for the rationale prose below.
+        admitted = sorted(ledger_client.admission_for(action))
+        doc = ledger_client.admission_doc()
+        # ⚠⚠ THE FIRST VERSION CALLED A FUNCTION THAT DOES NOT EXIST AND SWALLOWED THE
+        # AttributeError, so `registered_not_admitted` came back `[]` — reading as "nothing is
+        # excluded" when it meant "I could not look". That is a fail-open rendering as a clean
+        # result, in the field this tool was BUILT to surface: the whole point is naming `rely`.
+        # Caught by running it against the live repo rather than by the tests, which never
+        # asserted the list was non-empty. A bare `except` around the load-bearing lookup was
+        # the actual defect; the wrong name was just what triggered it.
+        registry, registry_error = [], None
+        try:
+            registry = sorted((ledger_client.call("requirements", {}) or {}).get("types") or [])
+        except Exception as exc:                       # noqa: BLE001 - reported, never hidden
+            registry_error = f"{type(exc).__name__}: {exc}"
+        not_admitted = sorted(set(registry) - set(admitted))
+        # the file's own words for why something was excluded — never a paraphrase
+        rationale = {k: v for k, v in doc.items()
+                     if k.startswith("_") and isinstance(v, str)}
+        return {
+            "action": action,
+            "admitted": admitted,
+            "admitted_count": len(admitted),
+            "registered_not_admitted": not_admitted,
+            # ⚠ AN EMPTY LIST AND AN UNREADABLE REGISTRY MUST NOT LOOK THE SAME. If the lookup
+            # failed, say so here rather than letting `[]` read as "nothing excluded".
+            "registry_unreadable": registry_error,
+            "_registered_vs_admitted": (
+                "REGISTERED means a verdict of that type may be RECORDED. ADMITTED means it "
+                "must be GREEN for this action. The registry is deliberately larger. A step in "
+                "`registered_not_admitted` failing does NOT block this action — see the "
+                "rationale below before spending rounds on it."),
+            "exclusion_rationale": rationale,
+            "preconditions": [
+                "a `reason` on every mutating call — it is the only durable record of why",
+                "a clean tree for anything that moves a branch (untracked files count as dirty)",
+                "for push: EVERY commit in the range carries its own admission set, not just "
+                "the tip — can_push walks them all",
+                "no force, no lease, no --no-verify: no parameter reaches them, so the "
+                "pre-push hook always runs as the backstop",
+            ],
+            "order_of_operations": [
+                "1. heal_plan(action, ref, admission) — ask what is owed",
+                "2. FIX everything in `blocked` first. Those are FAILED, not stale; re-running "
+                "finds the same finding, and recording before the fix buys keys that die on "
+                "the next commit",
+                "3. THEN re-run everything in `auto` and record (mechanical, no judgement)",
+                "4. `agent` needs a review round — an agent and a judgement, never automated",
+                "5. push(branch, reason) — returns a run_id; poll push_status()",
+            ],
+            "which_tool_answers_what": {
+                "may this action proceed?": "verdictLedger inventory(action, ref, admission) -> complete",
+                "may this RANGE be pushed?": "verdictLedger can_push(rev_range, admission, commit_admission)",
+                "what do I need to re-run?": "verdictLedger heal_plan(action, ref, admission)",
+                "which PATHS does step X owe?": "verdictLedger coverage_gap(step=X)",
+                "is it converging?": "verdictLedger progress(action, ref, admission)",
+                "what gates this action?": "gitRobot requirements(action) — this call",
+                "why was I refused?": "gitRobot explain(refusal_id)",
+            },
+            "source": "gitRobot/config/admission.v1.json (the file _require_inventory reads)",
+        }
+
+
+def _reparse_points_under(root: Path, limit: int = 20) -> list:
+    """Every junction / symlink / reparse point inside `root`, as relative paths.
+
+    ⭐⭐ MEASURED 2026-08-30, AND THE RESULT IS THE REASON THIS EXISTS:
+
+        git worktree add --detach wt HEAD     rc=0
+        mklink /J wt/.lake -> REAL/           rc=0
+        git worktree remove --force wt        rc=0     <- reports SUCCESS
+        PRECIOUS SURVIVED:                    False    <- the target was DELETED
+
+    **`shutil.rmtree` does not follow junctions; `git worktree remove` DOES.** So the safety
+    argument that covers gitRobot's ORPHAN path does not cover its REGISTERED path, which shells
+    out to git — a control whose reasoning is about a different code path than the one that runs.
+
+    ⚠ THIS IS NOT HYPOTHETICAL. Healing pre-fix commits requires checking each one out in a
+    worktree and running the checkers there, and a fresh worktree has no `.lake`, so `check_paths`
+    withholds. The documented remedy is a directory junction to the main checkout's `.lake` —
+    which points at the pinned Mathlib. Removing that worktree through git deletes it.
+
+    ⚠⚠ `os.path.islink()` RETURNS FALSE FOR A JUNCTION (Python 3.12.10, measured), so the obvious
+    guard does not fire. Detection is the REPARSE POINT attribute, which is the thing junctions
+    and symlinks actually share.
+    """
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in list(dirnames) + list(filenames):
+            full = Path(dirpath) / name
+            try:
+                attrs = getattr(full.lstat(), "st_file_attributes", 0)
+            except OSError:
+                continue
+            if attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                found.append(str(full.relative_to(root)))
+                if len(found) >= limit:
+                    return found
+        # ⚠ DO NOT DESCEND INTO ONE WHILE LOOKING FOR THEM. Walking into a junction would
+        # enumerate the target — here that is the whole of Mathlib, and it would also report
+        # its contents as if they lived in the worktree.
+        dirnames[:] = [d for d in dirnames
+                       if not (getattr((Path(dirpath) / d).lstat(), "st_file_attributes", 0)
+                               & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))]
+    return found

@@ -148,6 +148,14 @@ MEDIATED_ELSEWHERE: dict[str, str] = {
     "switch": "switch(branch=…)",
     "merge": "merge(branch=…, reason=…)",
     "rebase": "rebase(onto=…, reason=…)",
+    # ⚠ THE TWO PLUMBING COMMANDS `squash` IS BUILT FROM. A caller who has worked out
+    # that commit-tree collapses a range is reaching for the right operation through the
+    # wrong door, and the generic "not an allow-listed read" would send them looking for
+    # a way around rather than at the tool that does it with the published-history guard.
+    "commit-tree": "squash(onto=…, message=…, reason=…)",
+    "update-ref": "squash(onto=…, message=…, reason=…) moves the branch as part of a "
+                  "squash; there is no general branch-pointer write, because one would "
+                  "reach every Tier 1 outcome without naming any of them",
     "rm": "remove_files(paths=[…], reason=…)",
     "mv": "remove_files(...) plus stage(...) — a rename is a delete and an add, and "
           "gitRobot would rather you see both",
