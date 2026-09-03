@@ -289,6 +289,48 @@ def render(result: dict) -> str:
     if "commits" in result and not result["commits"]:
         return f"REFUSED  push  {result.get('why')}"
 
+    # ⛔⛔ "NOT EVALUATED" AND "REFUSED, N SHORT" ARE DIFFERENT FACTS AND MUST NOT SHARE A LINE.
+    # Reported by ZeroParadox 2026-09-03 against a real push: the headline read
+    # `REFUSED push 13/13 commit(s) short` with every commit at `0/0`, under a correct ⚠⚠ line
+    # saying the admission set was not set. Their words: **"the surface reads as a refusal and
+    # means unconfigured, and those are different facts."**
+    #
+    # ⚠ "SHORT" MEANS MISSING REQUIRED KEYS. With nothing required, nothing is short — so the
+    # headline asserted thirteen failures where zero checks had run, and `0/0` per commit reads
+    # as satisfied-of-required rather than nobody-said-what-to-check.
+    #
+    # ⚠⚠ `allowed` STAYS FALSE. An unconfigured gate must fail closed; only the RENDERING
+    # changes. `progress`, `coverage_gap` and `heal_plan` all REFUSE a bare call outright, and
+    # this was the one sibling that computed a confidently misleading answer instead.
+    #
+    # ⭐ AND IT NAMES THE ALTERNATIVE RATHER THAN THE PROBLEM — Tim, 2026-09-03: *"instead of a
+    # refusal you include the exact instructions that it needs to provide."* The ledger CANNOT
+    # print the step names: the admission set lives in gitRobot's `admission.v1.json` and the
+    # two-lists separation is deliberate. What it can do is name the tool that serves them.
+    if result.get("admission_state") in ("EMPTY", "UNSET"):
+        unset = result["admission_state"] == "UNSET"
+        return "\n".join([
+            f"NOT EVALUATED  push  {result['commits_in_range']} commit(s)  @ {result['range']}",
+            f"  ⚠⚠ NOTHING GATED THIS RANGE — the admission set is "
+            f"{'not set' if unset else 'empty'}, so no commit was checked against anything.",
+            f"  ⚠ This is NOT a verdict on the commits. None of them is 'short': nothing was "
+            f"required, so nothing could be missing. Treated as REFUSED because an unconfigured "
+            f"gate fails closed.",
+            "  TO GET A REAL ANSWER, pass both sets — the tip carries the push bar, the commits "
+            "under it carry the bar that applied when they were made:",
+            "",
+            "      gitRobot:  requirements(action='push')     -> the push set",
+            "      gitRobot:  requirements(action='commit')   -> the commit set",
+            "",
+            f"      can_push(rev_range='{result['range']}',",
+            "               admission=<the push set>,",
+            "               commit_admission=<the commit set>)",
+            "",
+            "  ⚠ The sets live in gitRobot's admission.v1.json, NOT in this ledger's registry — "
+            "they differ, and asking the wrong one has already produced a wrong report. "
+            "gitRobot's own push path fills them in automatically; only a direct call omits them.",
+        ])
+
     lines = [f"{'ALLOWED' if result['allowed'] else 'REFUSED'}  push  "
              f"{result['blocking_count']}/{result['commits_in_range']} commit(s) short"
              f"  @ {result['range']}"]
@@ -319,9 +361,9 @@ def render(result: dict) -> str:
     if result.get("audit_note"):
         lines.append("  " + result["audit_note"])
 
-    if result.get("admission_state") in ("EMPTY", "UNSET"):
-        lines.append("  ⚠⚠ NOTHING GATES THIS PUSH — the admission set is "
-                     f"{'empty' if result['admission_state'] == 'EMPTY' else 'not set'}.")
+    # ⚠ The EMPTY/UNSET case returns early above with the full instruction block, so there is
+    # no branch here. Left as a comment rather than deleted silently: a reader looking for where
+    # the admission-state warning went should find it, not conclude it was dropped.
 
     # the whole remaining job, in four lines
     for label, remedy in (("missing", "python tools/verify/batch.py precommit"),

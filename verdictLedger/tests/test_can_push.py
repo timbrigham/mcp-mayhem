@@ -320,3 +320,51 @@ def test_no_floor_means_no_claim_either_way(ledger, tmp_path):
     result = _check(ledger, tmp_path, f"{base}..{shas[-1]}")
     assert result["audit_floor"] is None
     assert result["audit_note"] is None
+
+
+# -- ⛔ "not evaluated" and "refused, N short" are different facts ---------------
+
+def test_an_unset_admission_set_does_not_render_as_commits_short(ledger, tmp_path):
+    """⛔⛔ REPORTED BY ZeroParadox 2026-09-03 AGAINST A REAL PUSH. The headline read
+    `REFUSED push 13/13 commit(s) short` with every commit at `0/0`, under a correct warning that
+    the admission set was not set. Their words: **"the surface reads as a refusal and means
+    unconfigured, and those are different facts."**
+
+    ⚠ "SHORT" MEANS MISSING REQUIRED KEYS. With nothing required, nothing is short — so the line
+    asserted thirteen failures where zero checks had run. A caller reading it concludes their
+    commits failed; the truth is nobody said what to check.
+
+    ⚠ `allowed` STAYS FALSE — an unconfigured gate fails closed. Only the rendering changes."""
+    base, shas = _repo(tmp_path, n=2)
+    result = canpush_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
+                               rev_range=f"{base}..{shas[-1]}", admission=None,
+                               commit_admission=None)
+    text = canpush_mod.render(result)
+
+    assert result["allowed"] is False, "an unconfigured gate must still fail closed"
+    # ⚠ The precise phrase, not the bare word — the explanation deliberately SAYS "none of them
+    # is 'short'", and an over-broad assertion would forbid the sentence that does the correcting.
+    assert "commit(s) short" not in text, (
+        "the headline still claims commits are SHORT when nothing was required of them")
+    assert "0/0" not in text, (
+        "a per-commit 0/0 reads as satisfied-of-required rather than nothing-was-asked")
+    assert "NOT EVALUATED" in text
+
+
+def test_the_unset_render_names_the_exact_call_to_make(ledger, tmp_path):
+    """⭐⭐ TIM, 2026-09-03: *"instead of a refusal you include the exact instructions that it
+    needs to provide."* §3 says a refusal must name the alternative; the strongest form of that is
+    the literal call.
+
+    ⚠ The ledger CANNOT print the step names — the admission set lives in gitRobot's
+    `admission.v1.json` and the two-lists separation is deliberate. So it names the TOOL that
+    serves them, which is what `requirements(action)` was built for."""
+    base, shas = _repo(tmp_path, n=1)
+    text = canpush_mod.render(canpush_mod.check(
+        records=[], config=ledger.config, repo=str(tmp_path),
+        rev_range=f"{base}..{shas[-1]}", admission=None, commit_admission=None))
+
+    assert "requirements(action='push')" in text
+    assert "requirements(action='commit')" in text
+    assert "commit_admission" in text, "both sets must be named, not just the push set"
+    assert f"{base}..{shas[-1]}" in text, "the suggested call must carry the caller's own range"
