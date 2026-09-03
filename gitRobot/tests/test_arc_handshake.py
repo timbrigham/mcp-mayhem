@@ -277,3 +277,33 @@ def test_the_refusal_names_the_repo_and_never_claims_staged(robot, repo, tmp_pat
     assert "is staged carrying" not in msg, (
         "the message still asserts staging, which is false whenever the tracked copy alone "
         "carries the round — the exact claim that misdirected the diagnosis")
+
+
+def test_the_refusal_never_tells_the_caller_to_hand_write_zero(robot, repo, tmp_path):
+    """⛔⛔ THE GUARD USED TO INSTRUCT THE DESTRUCTION OF EVIDENCE. Reported by ZeroParadox
+    2026-09-03: they hand-wrote `gate_round.json` back to 0 to satisfy this refusal, after an arc
+    that had reached the BEDROCK CAP of five. The walk survived only because they chose to narrate
+    it to Tim — and in their words, **"a permitted suppression that depends on the operator
+    choosing to mention it is not a control."**
+
+    ⚠⚠ THEY FRAMED IT AS THEIR CHOICE. IT WAS MY WORDING: the refusal read *"reset it to 0 and
+    commit that"*. The guard was right to refuse and the remedy it named was the harmful one — a
+    hand-written zero is byte-identical to a fresh arc, so nothing downstream can tell a walked cap
+    from a clean start.
+
+    ⭐ `gate_round.py reset` writes `reset_from`, so `show` announces that a cap was reached. The
+    escape stays permitted and becomes VISIBLE, which is the shape a sanctioned bypass has to
+    have — the same argument as the vendored allowlist."""
+    _track_arc(repo)
+    _write_arc(repo, 5)                       # an arc at the bedrock cap
+    subprocess.run(["git", "add", "-f", ARC], cwd=repo, capture_output=True)
+
+    with pytest.raises(RefusalError) as exc:
+        robot.commit(_msg(tmp_path, "cap walked\n"), run_gate=False)
+    msg = str(exc.value)
+
+    assert "gate_round.py reset" in msg, "the refusal must name the route that stays visible"
+    assert "reset it to 0 and commit that" not in msg, (
+        "the refusal still instructs a hand-written zero, which erases that a cap was reached")
+    assert "hand-writing 0" in msg or "hand-written zero" in msg, (
+        "the refusal must say WHY a hand-written zero is wrong, not merely offer the alternative")

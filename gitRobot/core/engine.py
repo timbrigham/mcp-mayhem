@@ -504,9 +504,23 @@ class GitRobot:
                 (f"⚠ CHECK THE REPO NAMED ABOVE — {repo_mode or 'main'} — not whichever tree "
                  f"you are looking at. There is a separate {self._ARC_STATE} per repo, and a "
                  f"clean main checkout tells you nothing about the one this read.\n"
-                 f"If it is genuinely staged: unstage(paths=['{self._ARC_STATE}']). If the "
-                 f"TRACKED copy is at a non-zero round, that is the real defect — reset it to 0 "
-                 f"and commit that, because every future arc inherits it.\n"
+                 f"If it is genuinely staged: unstage(paths=['{self._ARC_STATE}']).\n"
+                 # ⛔⛔ THIS USED TO READ "reset it to 0 and commit that", WHICH TOLD THE CALLER
+                 # TO DESTROY EVIDENCE. Reported by ZeroParadox 2026-09-03: they hand-wrote the
+                 # file back to 0 to satisfy this guard, after an arc that had reached the BEDROCK
+                 # CAP of five. The walk survived only because they chose to narrate it to Tim —
+                 # and in their words, **"a permitted suppression that depends on the operator
+                 # choosing to mention it is not a control."**
+                 #
+                 # ⚠⚠ The guard was right to refuse; the remedy it NAMED was the harmful one. A
+                 # hand-written zero is byte-identical to a fresh arc. `gate_round.py reset` writes
+                 # `reset_from`, so `show` announces that a cap was reached — permitted, but
+                 # visible, which is the shape a sanctioned escape has to have.
+                 f"⚠ If the TRACKED copy carries a non-zero round, clear it with "
+                 f"`python tools/verify/gate_round.py reset` — NEVER by hand-writing 0. A "
+                 f"hand-written zero is byte-identical to a fresh arc, so it ERASES the record "
+                 f"that a cap was ever reached; `reset` writes `reset_from` and `show` announces "
+                 f"it. A permitted route must stay visible.\n"
                  f"It is the ARC HANDSHAKE: a tracked default every worktree opens with, never a "
                  f"place to record this arc's progress. Its round stays local and dies with the "
                  f"worktree."),
