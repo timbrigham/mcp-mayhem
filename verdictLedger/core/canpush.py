@@ -128,7 +128,13 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         files = _files_at(repo, commit)
         inv = inventory_mod.build(config=config, records=records, action=this_action,
                                   files=files, ref=commit, admission=this_admission)
+        if is_tip:
+            tip_files = files
         rows.append({
+            # ⚠ Carried so the TIP-GREEN pass below can ask what each failing row CONDEMNS
+            # rather than only that it failed. Stripped before the result is returned.
+            "_indicted": [i for r in inv["rows"] if r.get("gating")
+                          for i in (r.get("indicted") or [])],
             "commit": commit,
             "judged_as": this_action,
             "is_tip": is_tip,
@@ -181,13 +187,63 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         except ValueError:
             below_floor = 0
 
-    blocking = [r for r in rows if not r["complete"]]
+    # ⭐⭐ THE TIP-GREEN BAR. Tim, 2026-09-02: a range may publish when the tip carries the full
+    # push bar AND every defect an intermediate honestly carries is FIXED BY THE TIP.
+    #
+    # ⚠⚠ THE SECOND CLAUSE IS THE WHOLE SAFETY OF IT. "The tip is green" alone would publish a
+    # broken intermediate whose defect was never fixed at all, which is not what was authorised.
+    # An intermediate is forgiven ONLY when every blob its failing rows INDICT is absent at the
+    # tip — the defect is demonstrably gone from what the world will fetch.
+    #
+    # ⚠ MISSING / STALE / LEGACY STILL BLOCK EVERYWHERE. "We never looked" is not "we looked, it
+    # was broken, and we fixed it"; only the second is a defect a push can carry a fix for.
+    # Collapsing them would silently turn this bar into "the tip is green".
+    #
+    # ⭐ WHY THE OLD BAR HAD TO MOVE: `every_commit` cannot express the NORMAL shape of a
+    # remediation arc — a real defect at N, fixed at M, both in one push. Measured 2026-09-02:
+    # two commits honestly carried an orphan checker, and under `every_commit` that sixteen-
+    # commit range could never be pushed commit-by-commit-green. The only escape was rewriting
+    # history, which is what `squash` does and which is remediation-only on principle.
+    bar = getattr(config, "push_bar", "every_commit")
+    forgiven = []
+    blocking = []
+    for r in rows:
+        if r["complete"]:
+            continue
+        if (bar == "tip_green" and not r["is_tip"]
+                and not r["missing"] and not r["stale"] and not r["legacy"]
+                and r["failed"]
+                # every indicted blob must be GONE at the tip
+                and all(tip_files.get(i["path"]) != i["git_blob_id"]
+                        for i in r["_indicted"])
+                # ⚠ AND THERE MUST BE SOMETHING TO CHECK. A failing row that names no indicted
+                # bytes would vacuously satisfy `all(...)` and be forgiven on no evidence —
+                # the empty-set fail-open this codebase has paid for repeatedly. A pre-`failing`
+                # wide FAIL always names its subjects, so this only excludes genuinely
+                # contentless rows.
+                and r["_indicted"]):
+            forgiven.append({
+                "commit": r["commit"], "steps": r["failed"],
+                "indicted_and_fixed_by_tip": sorted(
+                    {i["path"] for i in r["_indicted"]}),
+            })
+            continue
+        blocking.append(r)
+    for r in rows:
+        r.pop("_indicted", None)
+
     return {
         "ok": True,
         "allowed": not blocking,
         "range": rev_range,
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
+        "push_bar": bar,
+        # ⚠ NEVER FORGIVE SILENTLY. A commit excused by the bar must be named, with the paths
+        # whose defect the tip fixed — otherwise "allowed" renders identically whether the range
+        # was clean or merely forgiven, which is the collapse this whole gate exists to prevent.
+        "forgiven": forgiven,
+        "forgiven_count": len(forgiven),
         "tip": rows[-1]["commit"],
         "commits_below_audit_floor": below_floor,
         "audit_floor": floor,
@@ -245,6 +301,20 @@ def render(result: dict) -> str:
         step, seen, scope = min(thin, key=lambda t: t[1] / t[2] if t[2] else 1)
         lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
                      f"{seen}/{scope} in-scope paths (reported, not blocking)")
+
+    # ⚠⚠ A FORGIVEN COMMIT IS NAMED, ALWAYS. Under the TIP-GREEN bar an intermediate may carry
+    # an honest FAIL and still publish, provided the tip fixed it. That is a real weakening of
+    # what "ALLOWED" used to mean, and an ALLOWED line that renders identically whether the
+    # range was clean or merely forgiven is the exact collapse this gate exists to prevent.
+    if result.get("forgiven"):
+        lines.append(f"  ⚠ {result['forgiven_count']} commit(s) FORGIVEN under the "
+                     f"{result.get('push_bar')} bar — each carries a real FAIL whose indicted "
+                     f"bytes are ABSENT at the tip:")
+        for f in result["forgiven"][:SHOWN]:
+            lines.append(f"    {f['commit'][:12]}  {', '.join(f['steps'])}"
+                         f"  fixed by tip: {', '.join(f['indicted_and_fixed_by_tip'][:3])}")
+        if len(result["forgiven"]) > SHOWN:
+            lines.append(f"    … and {len(result['forgiven']) - SHOWN} more")
 
     if result.get("audit_note"):
         lines.append("  " + result["audit_note"])

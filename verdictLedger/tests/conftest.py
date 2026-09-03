@@ -34,8 +34,10 @@ def ledger(tmp_path, config_dir) -> Ledger:
 
 
 def set_policy(config_dir, **changes):
-    """Edit the policy in place and return a Ledger reading it — the control that
-    proves a threshold is config: change it, restart nothing, verdict changes."""
+    """Edit the policy in place. Returns NOTHING — call it for the side effect, then use the
+    `ledger` fixture, whose config is re-read live.
+
+    ⚠ This docstring used to say "and return a Ledger reading it", which it has never done."""
     path = config_dir / "policy.v1.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
     for dotted, value in changes.items():

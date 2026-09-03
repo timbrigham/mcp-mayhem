@@ -27,5 +27,11 @@
   },
   "genesis": {
     "_comment": "THE FLOOR IS NOT SET HERE. It lives in the stream as a `genesis` RECORD, seeded with `zpledger genesis <sha>`, because it is a claim about when RECORDING began and belongs somewhere append-only, validated and attributable -- not in a file anyone can edit without a trace. An earlier version of this block told readers to set `commit` here and nothing consumed it. It is a fact about when recording began, NEVER a claim that earlier work was verified."
+  },
+  "push": {
+    "_comment": "THE RANGE BAR. Tim, 2026-09-02, choosing between two stated options. `tip_green` \u2014 the published tip carries the full push bar AND every defect an intermediate honestly carries is FIXED BY THE TIP. `every_commit` \u2014 the prior behaviour, each commit individually complete. \u26a0\u26a0 THE SECOND CLAUSE OF tip_green IS A REAL CONDITION, NOT A GRACE NOTE: 'the tip is green' alone would publish a broken intermediate whose defect was never fixed at all. What is forgiven is a FAIL or UNDECIDED whose INDICTED BLOBS ARE ABSENT AT THE TIP -- checkable only because `failing` made a FAIL say which bytes it condemns (see R-11).",
+    "_why_not_every_commit": "`every_commit` cannot express the NORMAL shape of a remediation arc: a real defect at commit N, fixed at commit M, both inside one push. Under it that range can never be pushed commit-by-commit-green, and the only escape is rewriting history -- which `squash` does and which is remediation-only on principle, because `can_push` justifies per-commit strictness on the grounds that intermediates are 'fetchable, bisectable, citable forever'. Squashing satisfies that gate by DESTROYING what the gate protects.",
+    "_what_is_NOT_forgiven": "MISSING, STALE and LEGACY_IDENTITY still block at every commit. 'We never looked' and 'we looked and it was broken, then we fixed it' are different facts; only the second is a defect that can be fixed within a push. Forgiving the first would make the bar mean 'the tip is green', which is the reading Tim did NOT choose.",
+    "bar": "tip_green"
   }
 }

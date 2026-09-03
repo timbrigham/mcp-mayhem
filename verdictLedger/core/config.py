@@ -259,6 +259,36 @@ class Config:
         return bool((self.policy.get("coverage") or {}).get("require_complete", False))
 
     @property
+    def push_bar(self) -> str:
+        """`"tip_green"` or `"every_commit"` — how a RANGE is judged.
+
+        Tim, 2026-09-02, choosing between two stated options: **the published tip carries the
+        full push bar, and every defect an intermediate honestly carries is FIXED BY THE TIP.**
+
+        ⚠⚠ THE SECOND CLAUSE IS A REAL CONDITION, NOT A GRACE NOTE. "The tip is green" alone
+        would publish a broken intermediate whose defect was never fixed at all. What
+        `tip_green` forgives is a FAIL or UNDECIDED whose **indicted blobs are absent at the
+        tip** — checkable only because `failing` made a FAIL say which bytes it condemns.
+
+        ⚠ MISSING, STALE and LEGACY_IDENTITY still block at every commit. *"We never looked"*
+        and *"we looked, it was broken, we fixed it"* are different facts, and only the second
+        is a defect that can be fixed within a push.
+
+        ⭐ WHY THE OLD BAR HAD TO MOVE: `every_commit` cannot express the normal shape of a
+        remediation arc — a real defect at commit N, fixed at commit M, both inside one push.
+        Under it that range can never be pushed commit-by-commit-green, and the only escape is
+        rewriting history. `squash` does that and is remediation-only ON PRINCIPLE, because
+        `can_push` justifies per-commit strictness on the grounds that intermediates are
+        "fetchable, bisectable, citable forever" — so squashing satisfies the gate by destroying
+        exactly what the gate protects.
+
+        ⚠ UNKNOWN VALUES FALL BACK TO THE STRICTER BAR. A typo must not silently widen what may
+        be published; `every_commit` is the safe direction to be wrong in.
+        """
+        value = str((self.policy.get("push") or {}).get("bar", "tip_green")).strip().lower()
+        return value if value in ("tip_green", "every_commit") else "every_commit"
+
+    @property
     def v16_required(self) -> bool:
         """Whether V16 REFUSES a mechanical PASS with no evidence.
 
