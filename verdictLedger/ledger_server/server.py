@@ -223,6 +223,31 @@ async def override(step: str, subjects: list[dict], who: str, reason: str,
 
 
 @mcp.tool()
+async def narrow(record_id: str, failing: list[str],
+                 reason: Optional[str] = None) -> dict:
+    """⭐⭐ NARROW A WIDE FAIL'S INDICTMENT — the sanctioned correction, no retyping.
+
+    A FAIL's `subjects` say what it EXAMINED; `failing` says what it INDICTS. A step that
+    examines forty files and fails on one must emit a PASS over the thirty-nine and a FAIL over
+    the one — a single wide FAIL condemns every byte it merely looked at, backwards through
+    history, unclearable by any re-run.
+
+    This re-emits the record at `revision + 1` with `failing` set, copying `subjects`,
+    `evidence` and `basis` **verbatim from the stored record**. Nothing is edited, nothing is
+    withdrawn, and no blob id is retyped into an append-only stream.
+
+    ⚠ IT CAN ONLY NARROW. The verdict stays FAIL and coverage is unchanged. To regrade a FAIL
+    into a PASS, use `override` — it requires `who` and feeds the opposite signal on purpose.
+
+    ⚠ `failing` must name at least one real SUBJECT. Entries that are not subjects (a
+    `(roster)`-style pseudo-path) are inert for resolution and may ride alongside a real one,
+    but a list of only those would exonerate the record rather than narrow it.
+    """
+    return await _guard(_ledger().narrow, record_id=record_id, failing=failing,
+                        reason=reason)
+
+
+@mcp.tool()
 async def genesis(commit: str, note: Optional[str] = None) -> dict:
     """Seed the recording floor: the commit from which crossref claims anything.
 
@@ -278,17 +303,38 @@ def _sync_render(record_id: str) -> dict:
 
 @mcp.tool()
 async def requirements(action: Optional[str] = None) -> dict:
-    """THE SINGLE COPY of the type registry. gitRobot reads it from here.
+    """THE SINGLE COPY OF THE TYPE REGISTRY — what may be RECORDED. **NOT the admission set.**
 
-    ⚠ Two copies of the requirement list would make every inventory a lie in the
-    most convincing possible way: both sides internally consistent, disagreeing
-    about what "complete" means.
+    ⚠⚠ THIS DOCSTRING USED TO SAY "gitRobot reads it from here", FULL STOP, AND THAT WAS FALSE
+    IN THE HALF THAT MATTERS. gitRobot reads the REGISTRY from here — types, scopes, families,
+    rules. It does NOT read the admission set from here; that lives in
+    `gitRobot/config/admission.v1.json`, deliberately, so that recording verdicts and deciding
+    sufficiency cannot be changed by one edit in one place.
 
-    REQUIRED BY DEFAULT — a registered type binds on every action unless an entry
-    says otherwise, and a narrowing with no `reason` is ignored so the type stays
-    required. Inclusion is free; exclusion takes effort."""
-    return await _guard(lambda: {"action": action,
-                                 "types": _ledger()._require_config().requirements(action)})
+    ⚠⚠ AND THE FALSE HALF COST SOMETHING, MEASURED 2026-08-30. ZeroParadox did exactly what
+    this docstring said: called `requirements(action="push")`, took every `required: true`, and
+    reported `rely` to its user as blocking a push. It is not admitted. Both lists are 20
+    entries long and 19 are shared — the ledger marks `rely` required, gitRobot admits `build`
+    instead — so comparing counts says they agree. The peer followed the contract correctly and
+    the contract was wrong.
+
+    ⚠ `required` HERE MEANS "the registry does not narrow this type out for this action". It
+    does NOT mean "this gates the action". Same word, two notions, and this is the one that is
+    NOT about admission.
+
+    ⭐ **To learn what must be GREEN for an action, call `gitRobot requirements(action)`.** It
+    serves the admission set from the file the gate actually reads, plus the exclusion
+    rationale, preconditions and order of operations."""
+    return await _guard(lambda: {
+        "action": action,
+        "types": _ledger()._require_config().requirements(action),
+        # ⚠ THE WARNING TRAVELS WITH THE DATA. A caveat that lives only in a docstring is one
+        # the reader has already skipped by the time they are looping over `types`.
+        "_not_the_admission_set": (
+            "`required` here means the REGISTRY does not narrow this type out for this action. "
+            "It does NOT mean the type gates the action. For what must be GREEN, call "
+            "gitRobot requirements(action) — measured 2026-08-30, these two lists differ."),
+    })
 
 
 @mcp.tool()
@@ -461,6 +507,50 @@ def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
 
 
 @mcp.tool()
+async def heal_plan(action: str = "push", ref: str = "staged",
+                    admission: Optional[list[str]] = None) -> dict:
+    """⭐⭐ WHAT TO RE-RUN TO MAKE THIS REF GREEN, split by WHO CAN DO IT and by whether
+    re-running would help at all. The witness half of self-healing: the ledger says what is
+    owed; it never runs anything.
+
+    THREE BUCKETS, and the split is the whole value:
+
+      auto     MECHANICAL and STALE — re-run the checker at this basis and record. No
+               judgement, no agent. Measured 2026-08-30: the six that block an ordinary
+               multi-commit push re-run in 16.1s TOTAL.
+      agent    REVIEW family — needs an agent round and a judgement. Automating it would
+               turn a review into a rubber stamp.
+      blocked  FAILED — the checker looked and FOUND something. Re-running finds it again.
+               Fix the finding first.
+
+    ⚠⚠ STALE IS HEALABLE, FAILED IS NOT, and conflating them is how a self-healing loop
+    spins forever on a real finding. `auto` never contains a FAIL.
+
+    ⚠ It names STEPS, not commands: the live registry carries no `module` for any of its 24
+    types, and inventing one here would be a second copy of something the domain repo already
+    knows. You know how to run your own checkers — this tells you which ones are owed.
+
+    Use it after any content change: ask what went stale, re-run exactly that, re-record."""
+    return await _guard(_sync_heal_plan, action, ref, admission)
+
+
+def _sync_heal_plan(action, ref, admission) -> dict:
+    led = _ledger()
+    cfg = led._require_config()
+    if admission is None:
+        from core.errors import UsageError
+        raise UsageError(
+            "heal_plan requires an admission set — which steps gate this action. Omitting "
+            "it is not an empty set; it means nobody said, and a heal plan computed against "
+            "nothing would report that everything is already fine.")
+    out = inventory_mod.heal_plan(config=cfg, records=led.store.records(),
+                                  action=action, files=_files(ref),
+                                  admission=admission)
+    out["ref"] = ref
+    return out
+
+
+@mcp.tool()
 async def coverage(ref: str = "HEAD") -> dict:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 
@@ -474,12 +564,35 @@ async def coverage(ref: str = "HEAD") -> dict:
 async def can_push(rev_range: str, admission: Optional[list[str]] = None,
                    commit_admission: Optional[list[str]] = None,
                    action: str = "push", limit: int = 500) -> dict:
-    """⭐⭐ THE ONE QUESTION A CLIENT ASKS: may this RANGE be pushed?
+    """⭐⭐ THE ADMISSION QUESTION: does every commit in this RANGE carry the admission set?
 
     §12-0-alpha: "these are the keys needed, does commit xyz have them so we can push
     safely. There should be a substantial reduction in the amount of extra stuff to
     compute." The caller hands over a range expression and obeys the answer. It
     assembles no file list, hashes nothing, and re-derives no completeness.
+
+    ⚠⚠ `allowed: true` DOES **NOT** MEAN THE PUSH WILL SUCCEED, AND THE NAME OVERSOLD THAT
+    UNTIL 2026-08-30. Measured that day: `can_push` returned ALLOWED 0/17 while the pre-push
+    hook refused the same range with `BLOCKED: 3 push check(s) failed — 3 routing`. Not a
+    contradiction and not a bug in either — **they enforce different things.**
+
+      · THIS asks whether the ADMISSION SET is recorded and passing, per commit.
+      · The pre-push HOOK runs the checkers, and its routing legs demand a `/rely`
+        signature over changed routed files — an obligation that lives in `batch.py`, has
+        no admission key, and this server cannot see.
+
+    ⚠ AND `rely` IS TWO DIFFERENT THINGS WITH ONE NAME, which is why this reads as a
+    disagreement. The ledger TYPE `rely` is scoped to all of `tools/verify/*` and is
+    unsatisfiable by construction (its own brief forbids running it at full), so it is
+    deliberately absent from the commit and push admission sets. The hook's ROUTING LEG is a
+    per-file signature check over changed routed files, and it is satisfiable and blocking.
+    Excluding the first never disabled the second.
+
+    ⭐ SO THE HONEST MODEL: **`can_push` ALLOWED *and* a passing `preflight` together mean the
+    push will go. Neither alone does.** `preflight` is the only thing that runs the hook's
+    checks ahead of time. Reading ALLOKED as "cleared to publish" is reading a narrower answer
+    than the question you asked — the same "check and claim are about different objects" shape
+    this ledger keeps finding elsewhere.
 
     ⚠⚠ EVERY COMMIT IN THE RANGE, NOT JUST THE TIP. A push publishes a range --
     measured 2026-08-23, a push logged `scope 1 ref(s) -- range 5892cbc..55f2d6a`, 43

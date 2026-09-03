@@ -122,8 +122,31 @@ DECIDED_HOW = ("mechanical", "agreement", "signature", "override", "delegated")
 KEY_FIELDS = ("step", "basis.value", "revision")
 
 TOP_LEVEL = ("schema", "id", "step", "tier", "verdict", "reason", "basis",
-             "subjects", "evidence", "outstanding", "decided", "inputs", "revision",
-             "cost", "run")
+             "subjects", "evidence", "outstanding", "failing", "decided", "inputs",
+             "revision", "cost", "run")
+
+# ⚠⚠ `failing` — WHAT A FAIL INDICTS, WHICH IS NOT WHAT IT EXAMINED. Added 2026-09-02
+# after a wide FAIL condemned an entire sixteen-commit push.
+#
+# `subjects` answers "what bytes did this verdict look at" and is the basis of COVERAGE.
+# Before this field, a FAIL had no way to say "…and only these two of them are bad", so
+# its coverage set WAS its indictment set. `check_checkers` examined 24 checkers, failed
+# on one, and emitted a single FAIL over all 24 — 23 of which carried blobs identical to
+# the clean tip's. Worst-verdict-wins then read FAIL for every commit sharing those 23
+# innocent blobs, including one that predated the bad file existing at all.
+#
+# ⭐ THIS IS THE CONTENT-KEYED RULE IN THE DIRECTION IT WAS MISSING. Coverage already
+# demanded proof that THESE EXACT BYTES were examined; condemnation is the same claim
+# with the sign flipped, and it was travelling freely to bytes nobody had judged.
+#
+# ⚠ ABSENT MEANS ALL SUBJECTS ARE INDICTED — the pre-existing reading exactly, so no
+# historical FAIL is weakened by this field arriving. A wide FAIL is corrected by
+# re-emitting it at a HIGHER REVISION carrying `failing`; the stream is append-only and
+# nothing is withdrawn.
+#
+# ⚠ Entries need not be subjects and need not exist at HEAD. `check_checkers` indicts a
+# `(roster)` pseudo-path for roster-level findings, which is a real indictment that is
+# not a file; nothing resolves these to content, so naming it is honest and inert.
 
 # ⚠⚠ `outstanding` — FINDINGS THAT SURVIVE A PASS, AND THE ONLY SEVERITY ALLOWED ON
 # ONE IS "ordinary". Added 2026-08-26 for STOP-ORDINARY.

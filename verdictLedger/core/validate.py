@@ -47,6 +47,42 @@ def structural(record: dict) -> list[str]:
         if not basis.get("value"):
             out.append("basis.value must be set")
 
+    # ⚠⚠ `failing` IS ONLY MEANINGFUL ON A FAIL, AND A MISPLACED ONE IS THE WORST SHAPE
+    # AVAILABLE: the resolver reads it only on a FAIL, so a `failing` list on a PASS would be
+    # accepted, stored, and silently ignored — a record that LOOKS like it narrows an
+    # indictment while narrowing nothing. Rejected rather than ignored, for the same reason
+    # V7 rejects unknown keys.
+    if "failing" in record:
+        failing = record.get("failing")
+        if not isinstance(failing, list) or not all(
+                isinstance(p, str) and p.strip() for p in failing):
+            out.append("failing must be an array of non-empty path strings")
+        elif record.get("verdict") != "FAIL":
+            out.append(
+                f"failing is only meaningful on a FAIL verdict, got "
+                f"{record.get('verdict')!r} — it names what a FAIL INDICTS, and on any other "
+                f"verdict it would be stored and silently ignored")
+        elif failing and not (set(failing) & {s.get("path") for s in (record.get("subjects") or [])
+                                              if isinstance(s, dict)}):
+            # ⚠⚠ A DISGUISED EXONERATION, AND IT IS THE EMPTY-`failing` HOLE WEARING A HAT.
+            # Entries that are not subjects are INERT for resolution — nothing resolves a
+            # pseudo-path like `tools/verify/(roster)` to content. So a `failing` naming ONLY
+            # non-subjects indicts nothing resolvable, and the FAIL reads as a PASS at every
+            # path it covers. At least one entry must be a real subject of this record.
+            # ⚠ Naming pseudo-paths ALONGSIDE real ones stays legal and is encouraged: the
+            # roster-level finding is a true indictment that happens not to be a file.
+            out.append(
+                "failing names no subject of this record — every entry is inert for "
+                "resolution, so the FAIL would resolve to a PASS everywhere it covers. "
+                "At least one entry must be a path this record actually examined.")
+        elif not failing:
+            # ⚠ An EMPTY list would read as "this FAIL indicts nothing", which resolves to a
+            # PASS everywhere — a FAIL that cannot fail. Absent means all-subjects; empty must
+            # not be a quiet way to spell exoneration.
+            out.append(
+                "failing must not be empty on a FAIL — an empty indictment resolves to a PASS "
+                "at every path. Omit the field to indict every subject.")
+
     subjects = record.get("subjects")
     if not isinstance(subjects, list):
         out.append("subjects must be an array")

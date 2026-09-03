@@ -26,6 +26,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ⚠ TAKEN FROM `schema`, NEVER RESTATED. The vocabulary is declared once at
+# `schema.VERDICTS`; a second copy here would be a list that drifts silently and then
+# disagrees with the validator about what a verdict is. (The first draft of this line
+# invented a fourth value, `WITHDRAWN`, that no record has ever carried — which is
+# exactly the drift, arriving before the code had even landed.)
+_VERDICTS = set(schema.VERDICTS)
+
+
 class Ledger:
     def __init__(self, data_path=None, *, policy_path=None, required_path=None):
         self.data_path = Path(data_path or os.environ.get(
@@ -162,6 +170,98 @@ class Ledger:
         return self._decided(step=step, subjects=subjects, basis=basis, tier=tier,
                              how="override", who=who, reason=reason, run_id=run_id)
 
+    def narrow(self, *, record_id: str, failing: list, reason: Optional[str] = None,
+               run_id: Optional[str] = None) -> dict:
+        """⭐⭐ NARROW AN EXISTING FAIL'S INDICTMENT — the sanctioned correction for a wide FAIL.
+
+        Re-emits the record at `revision + 1` with `failing` set, copying `subjects`, `evidence`,
+        `basis`, `step` and `tier` **verbatim from the stored record**. Nothing is edited and
+        nothing is withdrawn; the original stays readable, and `_index` resolves each content key
+        to the highest revision, so the correction supersedes per content.
+
+        ⚠⚠ THE POINT IS THAT THE SUBJECTS ARE NOT RETYPED. ZeroParadox, asked to correct two wide
+        FAILs, could see only three routes and rejected all three: hand-author the emit
+        (*"retyping 24 blob ids per record into a permanent stream, and transcription risk on an
+        append-only record is exactly the wrong risk to take"*), recompute in a worktree carrying
+        the OLD checker module, or add a `revision` passthrough to `emit_verdict` — which its own
+        docstring forbids, because `revision` is a chain and using it to carry a second
+        SIMULTANEOUS verdict would make a split look like a supersession. **All three were right
+        to refuse.** This is the fourth route and it has none of those costs: the bytes come from
+        the record, the revision comes from the store, and the operation can only ever narrow.
+
+        ⚠ IT CAN ONLY NARROW. The verdict stays FAIL and the subject set is unchanged — this is
+        not a route to regrade a FAIL into a PASS. That is `override`, it requires `who`, and it
+        feeds the opposite signal on purpose.
+        """
+        original = self.store.get(record_id)
+        if original is None:
+            raise UsageError(f"no record {record_id!r} — narrow corrects a record that exists")
+        if original.get("verdict") != "FAIL":
+            raise UsageError(
+                f"narrow applies to a FAIL; {record_id!r} is {original.get('verdict')!r}. "
+                f"`failing` names what a FAIL indicts and is meaningless on anything else.")
+        if not failing:
+            raise UsageError(
+                "narrow requires a non-empty failing list — an empty indictment resolves to a "
+                "PASS at every path. To leave every subject indicted, do nothing: absent "
+                "`failing` already means that.")
+        subject_paths = {s.get("path") for s in (original.get("subjects") or [])}
+        if not (set(failing) & subject_paths):
+            raise UsageError(
+                f"none of {sorted(failing)} is a subject of {record_id!r}. Entries that are not "
+                f"subjects are inert for resolution, so this would exonerate the record rather "
+                f"than narrow it. Pseudo-paths may ride ALONGSIDE a real subject.")
+
+        # ⛔⛔ REFUSE TO RESURRECT A FAIL THAT A LATER VERDICT ALREADY SUPERSEDED.
+        # Narrowing re-emits at a HIGHER revision, and revision is what decides ownership of a
+        # content key — so narrowing a spent FAIL lifts it back ABOVE the PASSes that overtook
+        # it. Measured 2026-09-02 in simulation: narrowing all six `check_checkers` FAILs put
+        # `check_codebox.py@e64f7d16` — the TIP's own bytes, fixed at `972f8c2a` and passed
+        # twice since — back under a FAIL and condemned the tip. Narrowing only the two records
+        # that were genuinely current cleared every FAIL in the range.
+        #
+        # ⭐ ZeroParadox predicted this shape from the record alone and asked me not to build
+        # the tip-green leg until it was settled. They were right that it bites — it bites
+        # through REVISION rather than through blob-presence, and this is where it is stopped.
+        from core import inventory as _inv
+        by_content, _bp, _lg, _ev, _evc = _inv._subject_index(list(self.store))
+        step = original.get("step")
+        superseded = []
+        for s_ in original.get("subjects") or []:
+            if s_.get("path") not in set(failing):
+                continue
+            owner = by_content.get((step, s_.get("path"), s_.get("git_blob_id")))
+            if owner is not None and owner.get("id") != record_id:
+                superseded.append((s_.get("path"), owner.get("id")))
+        if superseded:
+            detail = "; ".join(f"{p} is now held by {oid}" for p, oid in superseded[:4])
+            raise UsageError(
+                f"{record_id!r} has already been SUPERSEDED on the bytes it would indict "
+                f"({detail}). Narrowing re-emits at a higher revision, and revision decides "
+                f"which record owns a content key — so this would lift a spent FAIL back above "
+                f"the verdicts that overtook it, condemning content that has since passed. "
+                f"⚠ If the later verdict is the wrong one, the remedy is a NEW verdict about "
+                f"those bytes, not a narrowing of this one.")
+
+        cfg = self._require_config()
+        key = (original.get("step"), (original.get("basis") or {}).get("value"))
+        tip = (self.store.tips().get(key) or {}).get("latest")
+        revision = (tip.get("revision", 0) + 1) if tip else 1
+        rec = schema.empty_record(
+            step=original["step"], tier=original.get("tier", "M"), verdict="FAIL",
+            reason=reason or original.get("reason"),
+            basis=original.get("basis"),
+            # ⚠ VERBATIM. Copied, never recomputed and never retyped — that is the whole value.
+            subjects=list(original.get("subjects") or []),
+            evidence=list(original.get("evidence") or []),
+            revision=revision,
+            decided=dict(original.get("decided") or {}),
+            run={"id": run_id or os.environ.get("ZPLEDGER_RUN") or f"narrow-{_now()}",
+                 "started": _now(), "config_sha": cfg.config_sha, "env": {}},
+        )
+        rec["failing"] = list(failing)
+        return self.append(rec)
+
     def _decided(self, *, step, subjects, basis, tier, how, who, reason, run_id) -> dict:
         cfg = self._require_config()
         key = (step, (basis or {}).get("value"))
@@ -183,13 +283,36 @@ class Ledger:
 
     def find(self, *, step=None, verdict=None, tier=None, since=None,
              subject_sha=None, limit: int = 50) -> dict:
+        # ⛔⛔ A FILTER THAT SILENTLY RETURNS NOTHING IS A FAIL-OPEN, and this one did.
+        # Reported by ZeroParadox 2026-09-02: `find(step='check_checkers', verdict='fail')`
+        # returned **count 0** while FOUR FAIL records for that step sat in the stream. The
+        # comparison was exact against a stored `"FAIL"`, so the lowercase spelling matched
+        # nothing — and an empty result is exactly what "there are no such records" looks like.
+        #
+        # ⚠ THEY ALMOST ACTED ON IT: *"I would have concluded no FAIL records existed if I had
+        # not queried again unfiltered."* An interrogation tool that answers a typo with a
+        # confident, calm, WRONG empty set is worse than one that errors — the same shape as
+        # `pdf_coupling`'s truthful `NOT_APPLICABLE` over a gate that could never fire.
+        #
+        # Two fixes, because case was only half of it: fold the case, and REFUSE a value that
+        # is not a verdict at all rather than returning the empty set that means "none found".
+        if verdict is not None:
+            verdict = str(verdict).strip().upper()
+            if verdict not in _VERDICTS:
+                raise UsageError(
+                    f"{verdict!r} is not a verdict. Valid values are "
+                    f"{', '.join(sorted(_VERDICTS))} (case-insensitive). Returning an empty "
+                    f"result for an unrecognised filter would be indistinguishable from "
+                    f"'no records match', which is how this was found.")
+        if tier is not None:
+            tier = str(tier).strip().upper()
         out = []
         for r in self.store:
             if step and r.get("step") != step:
                 continue
-            if verdict and r.get("verdict") != verdict:
+            if verdict and str(r.get("verdict") or "").upper() != verdict:
                 continue
-            if tier and r.get("tier") != tier:
+            if tier and str(r.get("tier") or "").upper() != tier:
                 continue
             if since and ((r.get("run") or {}).get("started") or "") < since:
                 continue

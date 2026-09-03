@@ -375,15 +375,82 @@ def build(*, config, records, action: str, files: dict,
             rec = by_content.get((step, path, files[path]))
             if rec is not None:
                 covered += 1
-                covered_recs.append(rec)
+                covered_recs.append((path, rec))
             elif (step, path) in by_path:
                 # examined, but never at THIS content
                 stale += 1
                 stale_rec = stale_rec or by_path[(step, path)]
         _SEVERITY = {"FAIL": 0, "UNDECIDED": 1, "PASS": 2}
-        covered_rec = min(covered_recs,
-                          key=lambda r: _SEVERITY.get(r.get("verdict"), 3),
-                          default=None)
+
+        # ⭐⭐⭐ EXAMINED IS NOT INDICTED. A FAIL record condemns ONLY the paths it
+        # NAMES as failing; for every other subject it is ordinary PASSING coverage.
+        #
+        # ⛔ MEASURED 2026-09-02, and it had condemned an entire push. `check_checkers`
+        # emitted ONE FAIL over all 24 checkers because two of them were bad, so its
+        # subject set and its indictment were the same list:
+        #
+        #     FAIL @140bf315  subjects=24  reason="2 failing subject(s):
+        #                                   tools/verify/(roster), .../check_codebox.py"
+        #     PASS @8cd8cc32  subjects=24        <- the tip, genuinely clean
+        #
+        # 23 of those 24 subjects carry blobs IDENTICAL in both records. The FAIL was
+        # written LAST, so `>=` in `_index` gave it those 23 content keys, and
+        # worst-verdict-wins then read a FAIL for the TIP — whose only actually-indicted
+        # file, `check_codebox.py`, had moved `ddba1f95 -> e64f7d16` and been fixed.
+        #
+        # ⚠⚠ IT SPREAD BACKWARDS THROUGH HISTORY TOO: a commit predating
+        # `check_codebox.py` ENTIRELY still read FAIL, because the 23 innocent blobs it
+        # shares were enough. One real defect in one file condemned every commit that
+        # merely contained the files examined beside it, and no re-run could clear it.
+        #
+        # ⭐ THIS IS THE CONTENT-KEYED RULE APPLIED IN THE DIRECTION IT WAS MISSING.
+        # Coverage already required proof that THESE EXACT BYTES were examined; a
+        # verdict may not travel to bytes nobody judged. Condemnation is the same claim
+        # with the sign flipped, and it was travelling freely.
+        #
+        # ⚠ `record.emit`'s own docstring specifies the correct shape — "a step that
+        # examined forty files and failed on one emits a PASS over the thirty-nine and
+        # a FAIL over the one" — so a single wide FAIL was always malformed. It is
+        # tolerated rather than rejected because the stream is APPEND-ONLY and records
+        # written before this rule existed cannot be withdrawn.
+        #
+        # ⚠⚠ ABSENT `failing` MEANS ALL SUBJECTS ARE INDICTED — the pre-existing
+        # behaviour exactly, so no historical FAIL is silently weakened by this landing.
+        # The remedy for a record like the one above is to re-emit it at a HIGHER
+        # REVISION with `failing` naming the real subset; that is what revisions are
+        # for, and it supersedes per-content without editing the past.
+        def _severity_at(path, rec):
+            v = rec.get("verdict")
+            if v == "FAIL":
+                failing = rec.get("failing")
+                if failing is not None and path not in set(failing):
+                    return _SEVERITY["PASS"]
+            return _SEVERITY.get(v, 3)
+
+        covered_rec = None
+        if covered_recs:
+            _p, covered_rec = min(covered_recs, key=lambda pr: _severity_at(pr[0], pr[1]))
+            # ⚠ The ROW's verdict must be the worst one that actually applies here. If
+            # the worst covering record is a FAIL that indicts nothing in this scope, the
+            # row is SATISFIED and must not render the FAIL's verdict — otherwise the
+            # narrowing above changes `complete` while the displayed status still says
+            # FAIL, which is the collapse this module exists to prevent.
+            if (covered_rec.get("verdict") == "FAIL"
+                    and _severity_at(_p, covered_rec) == _SEVERITY["PASS"]):
+                covered_rec = dict(covered_rec, verdict="PASS", _narrowed_from="FAIL")
+
+        # ⭐⭐ THE BYTES THIS ROW ACTUALLY CONDEMNS, NAMED — not just the fact that it failed.
+        # Required by the TIP-GREEN bar (Tim, 2026-09-02): a range may publish when the tip is
+        # green **and every intermediate's defects are fixed within the same push**, which is
+        # only answerable if a FAIL says WHICH BYTES it condemns. Without this, a caller asking
+        # "was this fixed?" can only re-run the checker — and re-running is exactly what cannot
+        # clear an honest FAIL about bytes that have since moved on.
+        indicted = []
+        for _p, _r in covered_recs:
+            if (_r.get("verdict") in ("FAIL", "UNDECIDED")
+                    and _severity_at(_p, _r) != _SEVERITY["PASS"]):
+                indicted.append({"path": _p, "git_blob_id": files[_p],
+                                 "record_id": _r.get("id")})
 
         # ⭐⭐ THE PRODUCER MOVING IS A DIFFERENT FACT FROM THE CORPUS MOVING, and
         # ZeroParadox asked the exact right question: does editing `common.py` stale a
@@ -466,7 +533,65 @@ def build(*, config, records, action: str, files: dict,
         # identically — the ambiguity this module exists to remove. The number rides on
         # the row and in the inventory, the way `subjects_unexamined` and
         # `evidence_stale` do.
-        outstanding = list((covered_rec or {}).get("outstanding") or [])             if status == "SATISFIED" else []
+        # ⚠⚠ AND THEY MUST NOT VANISH WHEN THE ROW STOPS BEING SATISFIED. This read
+        # `... if status == "SATISFIED" else []`, so the moment a later commit moved one
+        # subject the row went STALE and its findings rendered as `outstanding: 0` —
+        # measured 2026-08-30: editorial and adversary held 7 and 5 recorded findings and
+        # `inventory` reported zero for both. Raised by ZeroParadox as LED-7.
+        #
+        # ⭐ IT MATTERS MORE UNDER THE ORDINARY CAP THAN IT DID WHEN V18 SHIPPED. With
+        # R-LOOPCAP the gates record PASS-with-`outstanding` rather than FAIL, so
+        # `outstanding` is now the PRIMARY carrier of every finding not being fixed before a
+        # push. Zeroing it on staleness turns "reviewed, not certified clean" into
+        # "reviewed, findings lost" — silently, because 0 and 0 are the same bytes.
+        #
+        # ⚠ SO THE FINDINGS COME FROM THE WINNING RECORD WHETHER IT COVERS OR IS STALE, and
+        # `outstanding_stale` says which. A reader must be able to tell "no findings" from
+        # "findings recorded against bytes that have since moved" — the second is still a
+        # fact about the corpus, and it is the one a stale row was hiding.
+        # ⚠⚠ THE UNION ACROSS EVERY COVERING RECORD, NOT ONE OF THEM. The first version read
+        # `covered_rec`, which is `min(covered_recs, key=severity)` — and `covered_recs` holds
+        # one entry PER COVERED PATH. When every candidate is PASS the severity key ties, so
+        # `min` returns whichever record happens to cover the alphabetically first path.
+        # Measured 2026-08-30: adversary resolved to an older `039aa56f#2` carrying 11 findings
+        # while `adversary@01418e4#0` carrying 7 — the round the caller was actually pushing —
+        # contributed nothing. The count was right and the FINDINGS were the wrong ones.
+        #
+        # ⭐ A STEP CAN HAVE SEVERAL RECORDS COVERING IT AT ONCE, so `outstanding` sourced from
+        # ONE of them means the field's value depends on a selection rule nothing states, and a
+        # reader seeing `11` cannot tell it is not `11 of 27`. That is the same defect as the
+        # zeroing, one layer out: a number that renders identically whether it is complete or
+        # partial. ZeroParadox's observation, reported as a measurement rather than a cause —
+        # which is why it was actionable.
+        #
+        # ⚠ Findings are ADDITIVE facts about the corpus, so the union is the honest answer and
+        # `outstanding_from` names which records contributed. Deduped by note, because the same
+        # finding restated in a later round is one finding, not two — an inflated count is as
+        # misleading as a truncated one.
+        # ⚠ `covered_recs` holds (path, record) PAIRS since the indictment narrowing above —
+        # unwrapped here rather than at the append, because the path is what decides whether a
+        # FAIL applies and it must stay attached until that question is answered.
+        _covering = [_r for _p, _r in covered_recs]
+        if status == "SATISFIED":
+            _out_recs = _covering
+        else:
+            _out_recs = _covering or ([stale_rec] if stale_rec else [])
+        _seen_ids, _seen_notes, outstanding, _out_from = set(), set(), [], []
+        for _rec in _out_recs:
+            _rid = (_rec or {}).get("id")
+            if _rid in _seen_ids:
+                continue
+            _seen_ids.add(_rid)
+            _contributed = False
+            for _o in ((_rec or {}).get("outstanding") or []):
+                _key = _o.get("note") if isinstance(_o, dict) else str(_o)
+                if _key in _seen_notes:
+                    continue
+                _seen_notes.add(_key)
+                outstanding.append(_o)
+                _contributed = True
+            if _contributed:
+                _out_from.append(_rid)
 
         if status == "SATISFIED" and record is not None:
             how = (record.get("decided") or {}).get("how", "?")
@@ -474,6 +599,10 @@ def build(*, config, records, action: str, files: dict,
 
         rows.append({"step": step, "family": family, "status": status,
                      "record_id": (record or {}).get("id"),
+                     # ⚠ THE BYTES CONDEMNED, so "is it fixed?" is answerable without
+                     # re-running a checker that cannot clear an honest FAIL. Empty on every
+                     # non-failing row. See the TIP-GREEN bar in `canpush`.
+                     "indicted": indicted,
                      "dead_patterns": dead,
                      # ⚠ `covered` is measured over scope ∪ switches, so reporting
                      # it against `scope` alone made `covered > scope` — 22/21 for
@@ -483,6 +612,15 @@ def build(*, config, records, action: str, files: dict,
                      # number `covered` is actually out of.
                      "judged": len(judged),
                      "outstanding": len(outstanding),
+                     # ⚠ NEVER REPORT A COUNT WITHOUT ITS CURRENCY. Findings carried by a
+                     # STALE record are about bytes that have moved; they are still findings,
+                     # and a reader who cannot tell will either act on stale ones or ignore
+                     # live ones. Same reason `evidence_stale` sits beside `subjects_stale`.
+                     "outstanding_stale": bool(outstanding) and status != "SATISFIED",
+                     # ⚠ PROVENANCE TRAVELS WITH THE COUNT. Without it a reader cannot tell
+                     # `11` from `11 of 27`, which is the ambiguity this row exists to remove —
+                     # the same argument that put `outstanding_stale` beside the number.
+                     "outstanding_from": _out_from,
                      "outstanding_notes": [o.get("note") for o in outstanding
                                            if isinstance(o, dict)][:5],
                      "subjects_covered": covered, "subjects_stale": stale,
@@ -867,4 +1005,148 @@ def coverage(*, records, paths: list) -> dict:
         "uncovered": len(uncovered), "paths": uncovered[:200],
         "note": ("nothing recorded — every tracked path is uncovered"
                  if not examined else None),
+    }
+
+
+def heal_plan(*, config, records, action: str, files: dict, admission: list) -> dict:
+    """⭐⭐ WHAT TO RE-RUN TO MAKE THIS REF GREEN — split by WHO CAN DO IT, and by whether
+    re-running would help at all.
+
+    Tim, 2026-08-30: *"I absolutely love the term self-healing, anytime that that can be
+    implemented."* This is the witness half of that, and deliberately ONLY the witness half.
+    The ledger says what is stale, why, and what would clear it. It does not run anything.
+
+    ⚠⚠ THE DISTINCTION THIS TOOL EXISTS FOR: **STALE IS HEALABLE, FAILED IS NOT.** A STALE
+    verdict means the content (or the checker that judged it) moved, so the answer is simply
+    unknown again — re-running produces a fresh answer and clears it. A FAILED verdict means
+    the checker looked and found something; re-running finds it again. Conflating them is how
+    you get a self-healing loop that spins forever on a real finding, which is precisely the
+    "loop where you're not actually making progress" this project already built `progress()`
+    to detect. So `auto` never contains a FAIL, and `blocked` says why in those words.
+
+    ⚠ AND THE SECOND SPLIT IS `family`, WHICH THE REGISTRY ALREADY CARRIES. A `mechanical`
+    step is deterministic and cheap — measured 2026-08-30, the six that block an ordinary
+    multi-commit push re-run in **16.1s total**. A `review` step needs an agent, judgment, and
+    minutes-to-dollars. Only the first can honestly be called self-healing; calling an agent
+    round "automatic" is how a review becomes a rubber stamp.
+
+    ⚠ IT NAMES STEPS, NOT COMMANDS, and that is not an omission. The live registry carries no
+    `module` for any of its 24 types (measured), so the ledger cannot name the invocation
+    without inventing a second copy of something the domain repo already knows. The consumer
+    knows how to run its own checkers; it just did not know which ones were owed.
+    """
+    inv = build(config=config, records=records, action=action, files=files,
+                admission=admission)
+    gap = coverage_gap(config=config, records=records, action=action, files=files,
+                       admission=admission, limit=0)
+    owed = {s["step"]: s.get("owes_a_pass") for s in gap["steps"]}
+
+    auto, agent, blocked = [], [], []
+    for row in inv.get("rows", []):
+        if not row.get("gating") or row.get("status") == "SATISFIED":
+            continue
+        entry = {
+            "step": row.get("step"),
+            "family": row.get("family"),
+            "status": row.get("status"),
+            "owes_a_pass": owed.get(row.get("step")),
+            # WHY it is not green, because the two reasons have different remedies
+            "subjects_stale": row.get("subjects_stale"),
+            "evidence_stale": row.get("evidence_stale"),
+            "evidence_moved": row.get("evidence_moved") or [],
+        }
+        status = row.get("status")
+        if status in ("FAIL", "FAILED"):
+            entry["why_not_auto"] = (
+                "FAILED, not stale. The checker looked and found something; re-running finds "
+                "it again. Fix the finding, then re-run.")
+            blocked.append(entry)
+        elif row.get("family") == "review":
+            entry["why_not_auto"] = (
+                "review family — needs an agent round and a judgement. Automating this would "
+                "turn a review into a rubber stamp.")
+            agent.append(entry)
+        else:
+            entry["heals_by"] = (
+                "re-running the checker at this basis and recording the result"
+                + (" (its evidence moved, so the fresh record will cite the current checker)"
+                   if row.get("evidence_stale") else ""))
+            auto.append(entry)
+
+    # ⚠⚠ NAME THE FAILING STEPS THAT DO **NOT** GATE, OR A CALLER CHASES ONE FOREVER.
+    # Measured 2026-08-30: ZeroParadox read `rely` as blocking its push. It is FAIL and it is
+    # REGISTERED, but `admission.v1.json` deliberately removed it from commit and push — its
+    # scope is `tools/verify/*`, so every fix to the tooling stales it while it gates the
+    # commit carrying that fix, and its declared 60-file scope contradicts its own brief's
+    # "do not run it at full". It is documented there as unsatisfiable BY CONSTRUCTION. A heal
+    # plan that stays silent about it lets someone burn rounds on a gate that cannot close and
+    # was never asked to. Listed, and explicitly marked as not gating this action.
+    not_gating_failing = []
+    _named = set()
+    for row in inv.get("rows", []):
+        if row.get("gating") or row.get("status") not in ("FAIL", "FAILED"):
+            continue
+        _named.add(row.get("step"))
+        not_gating_failing.append({
+            "step": row.get("step"),
+            "status": row.get("status"),
+            "note": (f"FAILING but NOT in the admission set for {action!r}, so it does not "
+                     f"block. Do not spend rounds on it unless you are deliberately raising "
+                     f"the bar — check config/admission.v1.json for why it was excluded."),
+        })
+
+    # ⚠⚠ A NARROWED STEP HIDES ITS FAILURES BEHIND `NOT_APPLICABLE`, AND THAT COST THE MOST
+    # SERIOUS FINDING OF 2026-08-30. `prior_art` is narrowed to `actions: []` with `scope: 0`,
+    # so `inventory` evaluates no subjects for it, reports `record_id: null`, and the loop above
+    # never sees a verdict at all — its status is the NARROWING, not the judgement. Meanwhile a
+    # real `prior_art` FAIL sat in the store: *"closest prior art located and uncited"*, naming
+    # a paper that documented the same phenomenon five months earlier at far larger scale. It
+    # appeared in NO bucket, on the surface that decides whether to push.
+    #
+    # ⭐ "NARROWED OUT" AND "NOTHING FOUND" MUST NOT RENDER IDENTICALLY. This bucket was added
+    # hours earlier for exactly that principle and had this hole in it: it scanned ROWS, and a
+    # step with no scope has nothing to put in a row. So scan the RECORDS too — a FAIL whose
+    # subjects still match current content is a live finding whatever the registry says about
+    # whether it gates.
+    _by_content = {(s.get("path"), s.get("git_blob_id"))
+                   for _r in records for s in (_r.get("subjects") or [])}
+    _latest: dict = {}
+    for _r in sorted(records, key=lambda r: ((r.get("run") or {}).get("started") or "")):
+        _latest[_r.get("step")] = _r
+    for _step, _r in sorted(_latest.items()):
+        if _step in _named or _step in {e["step"] for e in blocked}:
+            continue
+        if _r.get("verdict") not in ("FAIL", "FAILED"):
+            continue
+        # does it still describe the tree in front of us?
+        _live = [s for s in (_r.get("subjects") or [])
+                 if files.get(s.get("path")) == s.get("git_blob_id")]
+        if not _live:
+            continue
+        not_gating_failing.append({
+            "step": _step,
+            "status": "FAIL (step not evaluated for this action)",
+            "live_subjects": len(_live),
+            "note": (f"A FAILING record whose subjects STILL MATCH current content, for a step "
+                     f"the registry does not evaluate for {action!r} — narrowed, or out of "
+                     f"scope. It does not block, and it is not nothing: someone ran this and it "
+                     f"found something that is still true of these bytes."),
+        })
+
+    return {
+        "ok": True,
+        "action": action,
+        "ref": inv.get("ref"),
+        "complete": inv.get("complete"),
+        "failing_but_not_gating": sorted(not_gating_failing, key=lambda e: e["step"]),
+        "auto": sorted(auto, key=lambda e: e["step"]),
+        "agent": sorted(agent, key=lambda e: e["step"]),
+        "blocked": sorted(blocked, key=lambda e: e["step"]),
+        "summary": {
+            "auto": len(auto), "agent": len(agent), "blocked": len(blocked),
+            "healable": len(auto),
+            "note": ("`auto` is mechanical and stale — re-run and record, no judgement. "
+                     "`agent` needs a review round. `blocked` is FAILED: re-running will not "
+                     "help, the finding has to be fixed."),
+        },
     }
