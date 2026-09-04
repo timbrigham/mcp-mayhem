@@ -61,3 +61,32 @@ def test_the_receipt_stays_bounded(_unused=None):
     stored = _result("z" * 200000).record()["output"]
     assert len(stored) <= _MAX_OUTPUT + 200, "the marker must not blow the bound"
     assert _HEAD_KEEP < _MAX_OUTPUT
+
+
+def test_the_receipt_detail_is_clipped_not_only_the_gate_record(robot, repo):
+    """⛔⛔ THE CLIP COVERED ONE COPY AND MISSED THE OTHER. Reported by ZeroParadox 2026-09-04:
+    every commit receipt blew the tool-result cap — eight times in one day, each spilling to a
+    file they then had to grep for `ok` and `head`. Measured on the LIVE audit:
+
+        total 79,300 chars   gates 8,364 (CLIPPED, working)   detail 68,954 (RAW)
+
+    ⚠ `gates.output` was bounded by `_clip`; `detail` carried the SAME pipeline output unclipped
+    and was 87% of the receipt. In production it arrives because gitRobot never passes
+    `--no-verify`, so git runs the repo's own pre-commit hook and its whole run lands in
+    `git commit`'s stdout, which the receipt then reports verbatim.
+
+    ⚠⚠ Bounded at `_receipt` rather than per call site — `commit`, `push` and `merge` all hand a
+    subprocess's stdout to `detail`, so a per-caller fix would leave the rest to be found one
+    incident at a time. This asserts the choke point, which is the line that changed."""
+    from core.gates import _MAX_OUTPUT
+
+    robot._receipt("probe", {}, "allowed", detail="pipeline chatter\n" * 20_000)
+
+    detail = robot.audit.read()[-1].get("detail") or ""
+    assert len(detail) <= _MAX_OUTPUT + 500, (
+        f"receipt detail is {len(detail)} chars — the pipeline output is riding unclipped")
+    assert "elided by gitRobot" in detail, "the cut must be visible, never silent"
+    assert detail.startswith("pipeline chatter"), "the head must survive"
+    assert detail.rstrip().endswith("pipeline chatter"), (
+        "the TAIL must survive — a failing gate states its reason at the end, which is why "
+        "_clip keeps both ends rather than truncating")

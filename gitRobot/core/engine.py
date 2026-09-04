@@ -39,7 +39,7 @@ from core import ledger as ledger_client
 from core import tiers
 from core.audit import AuditLog
 from core.errors import GitRobotError, RefusalError, RepoError, UsageError
-from core.gates import Gates
+from core.gates import Gates, _clip as _clip_output
 from core.gitio import Git
 
 # Where `worktree(action='add')` puts throwaway checkouts. Deliberately OUTSIDE
@@ -168,6 +168,24 @@ class GitRobot:
         # The audit must name the tree the operation actually touched. Recording the
         # main repo's HEAD for a `.claude-local` write would be a log that lies.
         git = target or self.git
+        # ⛔⛔ CLIP THE DETAIL, NOT ONLY THE GATE RECORD. Measured 2026-09-04 after ZeroParadox
+        # reported every commit receipt blowing the tool-result cap — eight times in one day,
+        # each spilling to a file they then had to grep for `ok` and `head`:
+        #
+        #     total 79,300 chars   gates 8,364 (CLIPPED, working)   detail 68,954 (RAW)
+        #
+        # ⚠⚠ SO THE CLIP I ADDED EARLIER COVERED ONE COPY AND MISSED THE OTHER. `gates.output`
+        # is bounded by `_clip`; `detail` carries the SAME pipeline output unclipped and is 87%
+        # of the receipt. gitRobot never passes `--no-verify`, so the installed hook runs again
+        # during `git commit` as the backstop and its whole run lands in `result.output`.
+        #
+        # ⚠ Bounded HERE rather than at each call site: `commit`, `push`, `merge` and the gate
+        # paths all pass a subprocess's stdout as `detail`, so a fix at one caller would leave
+        # the others to be discovered one incident at a time. `_clip` keeps head AND tail with a
+        # visible elision marker — the tail is where a failing gate states its reason, which is
+        # exactly what a caller reads a receipt for.
+        if isinstance(detail, str):
+            detail = _clip_output(detail)
         record = self.audit.append(
             actor=self.actor, op=op, args=args, decision=decision, run_id=run_id,
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
