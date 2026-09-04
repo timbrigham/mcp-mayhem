@@ -154,7 +154,11 @@ class Ledger:
              basis: dict, tier: str = "H", run_id: Optional[str] = None) -> dict:
         """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt."""
         if not (who or "").strip():
-            raise UsageError("sign requires who — an anonymous human pass is V5")
+            raise UsageError(
+                "sign requires who — an anonymous human pass is V5",
+                "call sign(who=<the person accepting this>, …). `who` is a person, not an "
+                "agent id: signing is a human ACCEPT of a standing FAIL as carried debt, and V12 "
+                "later checks it is not the party the finding was raised against.")
         return self._decided(step=step, subjects=subjects, basis=basis, tier=tier,
                              how="signature", who=who, reason=reason, run_id=run_id)
 
@@ -166,7 +170,12 @@ class Ledger:
         accept is corpus debt, an override is evidence the STEP is defective.
         """
         if not (who or "").strip():
-            raise UsageError("override requires who")
+            raise UsageError(
+                "override requires who",
+                "call override(who=<the person regrading it>, …). ⚠ An override asserts the GATE "
+                "was wrong, so V12 requires `who` to differ from whoever signed the revision it "
+                "replaces — a finding sudo-ed away by the party it was raised against is the one "
+                "move that could unmake every other rule.")
         return self._decided(step=step, subjects=subjects, basis=basis, tier=tier,
                              how="override", who=who, reason=reason, run_id=run_id)
 
@@ -195,22 +204,33 @@ class Ledger:
         """
         original = self.store.get(record_id)
         if original is None:
-            raise UsageError(f"no record {record_id!r} — narrow corrects a record that exists")
+            raise UsageError(
+                f"no record {record_id!r} — narrow corrects a record that exists",
+                "pass a record_id that is present in the stream: find(step=…, verdict='FAIL') "
+                "lists them with their ids, and `get(record_id)` confirms one before you narrow "
+                "it.")
         if original.get("verdict") != "FAIL":
             raise UsageError(
-                f"narrow applies to a FAIL; {record_id!r} is {original.get('verdict')!r}. "
-                f"`failing` names what a FAIL indicts and is meaningless on anything else.")
+                f"narrow applies to a FAIL; {record_id!r} is {original.get('verdict')!r}",
+                "pass the id of a record whose verdict is FAIL. ⚠ `failing` names what a FAIL "
+                "INDICTS and is meaningless on any other verdict; to regrade a FAIL into a PASS "
+                "use override(who=…), which is a different claim and feeds the opposite signal.")
         if not failing:
             raise UsageError(
                 "narrow requires a non-empty failing list — an empty indictment resolves to a "
-                "PASS at every path. To leave every subject indicted, do nothing: absent "
-                "`failing` already means that.")
+                "PASS at every path",
+                "pass failing=[<at least one path this record examined>]. To leave every subject "
+                "indicted, make no call at all: an ABSENT `failing` already means all-subjects, "
+                "which is why empty and absent must not be spelled the same way.")
         subject_paths = {s.get("path") for s in (original.get("subjects") or [])}
         if not (set(failing) & subject_paths):
             raise UsageError(
-                f"none of {sorted(failing)} is a subject of {record_id!r}. Entries that are not "
-                f"subjects are inert for resolution, so this would exonerate the record rather "
-                f"than narrow it. Pseudo-paths may ride ALONGSIDE a real subject.")
+                f"none of {sorted(failing)} is a subject of {record_id!r}",
+                f"include at least one path from this record's own subjects — "
+                f"`get({record_id!r})['subjects']` lists them. ⚠ Entries that are not subjects "
+                f"are inert for resolution, so a list of only pseudo-paths would EXONERATE the "
+                f"record rather than narrow it; a pseudo-path may ride alongside a real subject, "
+                f"never alone.")
 
         # ⛔⛔ REFUSE TO RESURRECT A FAIL THAT A LATER VERDICT ALREADY SUPERSEDED.
         # Narrowing re-emits at a HIGHER revision, and revision is what decides ownership of a
@@ -237,11 +257,12 @@ class Ledger:
             detail = "; ".join(f"{p} is now held by {oid}" for p, oid in superseded[:4])
             raise UsageError(
                 f"{record_id!r} has already been SUPERSEDED on the bytes it would indict "
-                f"({detail}). Narrowing re-emits at a higher revision, and revision decides "
-                f"which record owns a content key — so this would lift a spent FAIL back above "
-                f"the verdicts that overtook it, condemning content that has since passed. "
-                f"⚠ If the later verdict is the wrong one, the remedy is a NEW verdict about "
-                f"those bytes, not a narrowing of this one.")
+                f"({detail})",
+                "narrow only a record that still OWNS the content keys it would indict — one "
+                "whose bytes no later verdict has overtaken. ⚠ If the later verdict is itself "
+                "wrong, record a NEW verdict about those bytes (or override it); do not narrow "
+                "this one, because narrowing re-emits at a higher revision and revision is what "
+                "decides ownership, so it would lift a spent FAIL back above what overtook it.")
 
         cfg = self._require_config()
         key = (original.get("step"), (original.get("basis") or {}).get("value"))
@@ -300,10 +321,12 @@ class Ledger:
             verdict = str(verdict).strip().upper()
             if verdict not in _VERDICTS:
                 raise UsageError(
-                    f"{verdict!r} is not a verdict. Valid values are "
-                    f"{', '.join(sorted(_VERDICTS))} (case-insensitive). Returning an empty "
-                    f"result for an unrecognised filter would be indistinguishable from "
-                    f"'no records match', which is how this was found.")
+                    f"{verdict!r} is not a verdict",
+                    f"pass one of {', '.join(sorted(_VERDICTS))} (case-insensitive), or omit "
+                    f"`verdict` to match every record. ⚠ These come from `schema.VERDICTS`, the "
+                    f"same constant the validator uses, so this list cannot drift from what is "
+                    f"storable. An unrecognised value REFUSES rather than returning an empty "
+                    f"result, because empty is already spoken for: it means none matched.")
         if tier is not None:
             tier = str(tier).strip().upper()
         out = []

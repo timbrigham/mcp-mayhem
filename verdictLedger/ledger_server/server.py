@@ -455,9 +455,8 @@ def _sync_progress(action, ref, admission, rounds) -> dict:
     if admission is None:
         from core.errors import UsageError
         raise UsageError(
-            "progress requires an admission set — which steps gate this action. "
-            "Omitting it is not an empty set; it means nobody said, and a convergence "
-            "report over nothing would read as convergence.")
+            "progress requires an admission set — which steps gate this action. Omitting it is not an empty set; it means nobody said, and a convergence report over nothing would read as convergence",
+            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='progress') returns it, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.progress(config=cfg, records=led.store.records(),
                                  action=action, files=_files(ref),
                                  admission=admission, rounds=rounds)
@@ -496,9 +495,8 @@ def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
     if admission is None:
         from core.errors import UsageError
         raise UsageError(
-            "coverage_gap requires an admission set — which steps gate this action. "
-            "Omitting it is not an empty set; it means nobody said, and answering "
-            "anyway would report a work order that gates nothing.")
+            "coverage_gap requires an admission set — which steps gate this action. Omitting it is not an empty set; it means nobody said, and answering anyway would report a work order that gates nothing",
+            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='coverage_gap') returns it, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.coverage_gap(config=cfg, records=led.store.records(),
                                      action=action, files=_files(ref),
                                      admission=admission, step=step, limit=limit)
@@ -540,9 +538,8 @@ def _sync_heal_plan(action, ref, admission) -> dict:
     if admission is None:
         from core.errors import UsageError
         raise UsageError(
-            "heal_plan requires an admission set — which steps gate this action. Omitting "
-            "it is not an empty set; it means nobody said, and a heal plan computed against "
-            "nothing would report that everything is already fine.")
+            "heal_plan requires an admission set — which steps gate this action. Omitting it is not an empty set; it means nobody said, and a heal plan computed against nothing would report that everything is already fine",
+            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='push') returns it, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.heal_plan(config=cfg, records=led.store.records(),
                                   action=action, files=_files(ref),
                                   admission=admission)

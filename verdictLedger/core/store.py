@@ -160,7 +160,11 @@ class Store:
         The caller has already validated. This method owns durability only.
         """
         if not record.get("id"):
-            raise UsageError("record must carry its key before append")
+            raise UsageError(
+                "record must carry its key before append",
+                "append() through `Ledger.append`, which stamps `id` via `schema.record_key` "
+                "after validating. ⚠ A record reaching the store without a key has bypassed "
+                "validation, so the fix is the call path, never adding an id by hand.")
         started = time.monotonic()
         acquired = self._lock.acquire(timeout=self.hard)
         waited = time.monotonic() - started

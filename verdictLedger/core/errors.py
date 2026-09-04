@@ -48,6 +48,43 @@ class Unavailable(LedgerError):
 
 
 class UsageError(LedgerError):
-    """Malformed arguments: an unknown action, a bad limit, a missing id."""
+    """Malformed arguments — and it must say what a PASSING next attempt looks like.
+
+    ⭐⭐ `satisfied_when` IS REQUIRED, AND THE REASON IS CONTENT-KEYING APPLIED TO REFUSALS.
+    Tim, 2026-09-04: *"why wouldn't you want to call out exactly what the success conditions
+    are? It's like a teacher grading homework. **The next iteration is already going to be on a
+    different blob.**"*
+
+    A refusal phrased as a fact about the CURRENT bytes is stale the moment the caller acts on
+    it: they return with different content and everything the message said no longer applies.
+    **The success condition is the only part that survives the change** — which is the same
+    reason a verdict binds to `(step, path, blob)` rather than to a basis.
+
+    ⚠⚠ TWO CLAIMS, TWO FIELDS, FOR THE REASON `subjects` AND `failing` HAD TO BE SPLIT:
+
+        what            what went wrong, about THESE bytes      — perishable
+        satisfied_when  what the NEXT attempt must satisfy      — blob-independent
+
+    Sharing one slot lets a description of the failure pass for guidance. Measured 2026-09-03 in
+    the sibling server: a refusal read *"reset it to 0 and commit that"* — an instruction about
+    the current file, which was ALSO the action that erased the record of a walked cap. A field
+    named `satisfied_when` rejects that content by being read; a field named `alternative` does
+    not.
+
+    ⚠ NO DEFAULT, ON PURPOSE. A default would make omission the quiet path, and this exists
+    because the quiet path was taken twelve times here. **What structure cannot do is check that
+    the condition is CORRECT** — no control detects semantics. It forces the author to answer
+    the question separately, and that is the whole of what it buys.
+
+    ⭐ DERIVE IT FROM THE AUTHORITY WHERE ONE EXISTS, never restate. `find` names
+    `schema.VERDICTS`, the same constant the validator uses, so it cannot drift. `can_push`
+    names `requirements(action=…)` rather than listing twenty steps. A restated condition is
+    prose, and prose goes stale exactly like the `reason` field does.
+    """
 
     error_type = "usage"
+
+    def __init__(self, what: str, satisfied_when: str):
+        self.what = what
+        self.satisfied_when = satisfied_when
+        super().__init__(f"{what}\n  SATISFIED WHEN: {satisfied_when}")
