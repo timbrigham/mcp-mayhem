@@ -101,7 +101,13 @@ async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main
 async def status() -> dict:
     """Tree state, branch, unpushed commit count, and what would block a push right now.
 
-    `would_block_push` is the useful field: it tells you before you try. Cheap; call freely."""
+    `would_block_push` is TIP-SCOPED and cheap. It answers "would a push of THIS COMMIT be
+    refused" — it does NOT walk the range, and a push publishes a range. When more than one
+    commit is unpushed, `range_question` carries the exact `can_push` call that does answer it.
+
+    ⚠ Read `would_block_push: []` as "the tip is clear", never as "the push will go". Measured
+    2026-09-05: a caller healed the single item this named, ran a 27-minute preflight, got it
+    green, and was refused on eleven intermediate commits this field had never mentioned."""
     return await _guard(_robot().status)
 
 

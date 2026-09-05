@@ -229,3 +229,32 @@ def test_a_real_directory_named_lake_is_never_deleted(tmp_path):
     removed = robot._unlink_shared_deps(wt)
     assert removed == [], "a real directory was treated as our junction"
     assert (real / "handmade.txt").exists()
+
+
+def test_worktree_add_says_where_to_run_the_checkers(tmp_path):
+    """⚠⚠ THE NON-OBVIOUS STEP, RETURNED AT THE MOMENT THE WORKTREE IS CREATED.
+
+    ZeroParadox 2026-09-05, healing eleven commits by worktree: running the worktree's own
+    checker with cwd still at the MAIN repo produced a V16 refusal whose evidence path read
+    `../../../../../../../Workspace/ZeroParadox/tools/verify/check_claude_md.py`. Setting
+    `ZPLEDGER_CONFIG` did NOT fix it; setting cwd to the worktree did.
+
+    ⭐ Same silent-root defect that would have broken `where.py` on its move — a tool resolving
+    ROOT from its INVOCATION context rather than its TARGET, failing in a way that looks like a
+    different problem. **A traversal path in an evidence field is the tell**, and V16 is a good
+    place for it to surface because it refuses rather than recording a wrong-tree verdict.
+
+    ⚠ `worktree add` handed back a path and said nothing about where to stand. This is a fact
+    returned with the path, not a rule anyone has to remember."""
+    from core.engine import GitRobot
+
+    repo = _shared_dep_repo(tmp_path)
+    robot = GitRobot(repo=str(repo), data_path=str(tmp_path / "ops.jsonl"), actor="t",
+                     scratch=tmp_path / "scratch")
+    out = robot.worktree("add", ref="HEAD")
+
+    assert out["run_tools_from"] == out["path"], (
+        "the receipt must name the directory to stand in, not leave it inferred")
+    assert "cd into this directory" in out["note"]
+    assert "V16" in out["note"], (
+        "the note must name where the mistake SURFACES — it presents as a config problem")

@@ -187,3 +187,58 @@ def test_render_names_every_forgiven_commit(ledger, tmp_path):
     assert "FORGIVEN" in text
     assert broken[:12] in text
     assert STEP in text
+
+
+# -- ⛔ a bar nobody configured is worth saying out loud -----------------------
+
+def _config_without_push_bar(config_dir):
+    """The LIVE shape: a policy that never names the bar. ZeroParadox's `tools/verify` policy
+    has no `push` key, which is exactly why they could not find the mechanism."""
+    import json
+    path = config_dir / "policy.v1.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.pop("push", None)
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def test_the_bar_reports_whether_it_was_configured_or_defaulted(ledger, tmp_path, config_dir):
+    """⛔⛔ THE BAR RAN ON AN INVISIBLE DEFAULT. Found by ZeroParadox 2026-09-05 with a push
+    blocked: `can_push` reported `push_bar: "tip_green"` and they could not find the mechanism
+    anywhere. **They were right — it is not in the policy the server reads.** `push.bar` went
+    into `verdictLedger/config/policy.v1.json`, which the TESTS load; the live server reads
+    `ZPLEDGER_CONFIG` at ZeroParadox's `tools/verify`, whose policy has no `push` key at all.
+
+    ⚠⚠ A rule governing what may be published was a hardcoded fallback, in a project whose first
+    principle is CONFIG, NOT CONSTANTS — undiscoverable precisely BECAUSE it was working. **A
+    default that behaves correctly is the hardest kind to notice.**
+
+    ⭐ Reporting the SOURCE is what makes it findable: a reader asking "where is this set" learns
+    the answer is nowhere, instead of searching a file that will never contain it."""
+    from core.ledger import Ledger
+
+    assert ledger.config.push_bar_source == "policy", "the shipped test config names the bar"
+
+    _config_without_push_bar(config_dir)
+    led = Ledger(tmp_path / "p2.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    assert led.config.push_bar == "tip_green", "behaviour is unchanged by the key being absent"
+    assert led.config.push_bar_source == "default", (
+        "a bar nobody configured must SAY it was not configured — that silence is the defect")
+
+
+def test_a_defaulted_bar_is_named_in_the_rendered_line(ledger, tmp_path, config_dir):
+    """⚠ IN THE HUMAN LINE, NOT ONLY THE PAYLOAD. The caller who hit this was reading rendered
+    output, not JSON — a provenance field nobody sees is the same silence in a new field."""
+    from core.ledger import Ledger
+
+    _config_without_push_bar(config_dir)
+    led = Ledger(tmp_path / "p3.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    base, shas = _repo(tmp_path, n=1)
+    text = canpush_mod.render(canpush_mod.check(
+        records=[], config=led.config, repo=str(tmp_path),
+        rev_range=f"{base}..{shas[-1]}", admission=[STEP], commit_admission=[STEP]))
+
+    assert "built-in DEFAULT" in text, "a defaulted bar must be visible where it is read"
+    assert "policy()" in text, "and must name how to find which file was loaded"

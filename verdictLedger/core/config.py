@@ -285,8 +285,32 @@ class Config:
         ⚠ UNKNOWN VALUES FALL BACK TO THE STRICTER BAR. A typo must not silently widen what may
         be published; `every_commit` is the safe direction to be wrong in.
         """
-        value = str((self.policy.get("push") or {}).get("bar", "tip_green")).strip().lower()
+        raw = (self.policy.get("push") or {}).get("bar")
+        value = str(raw).strip().lower() if raw is not None else "tip_green"
         return value if value in ("tip_green", "every_commit") else "every_commit"
+
+    @property
+    def push_bar_source(self) -> str:
+        """`"policy"` if the bar was configured, `"default"` if nothing named it.
+
+        ⛔⛔ THE BAR RAN ON AN INVISIBLE DEFAULT FOR THREE DAYS. Found by ZeroParadox 2026-09-05
+        while a push was blocked: `can_push` reported `push_bar: "tip_green"` and they could not
+        find the mechanism anywhere. They were right — **it is not in the policy the server
+        reads.** I added `push.bar` to `verdictLedger/config/policy.v1.json`, which the TESTS
+        load; the live server reads `ZPLEDGER_CONFIG` at ZeroParadox's `tools/verify`, and that
+        file has no `push` key at all.
+
+        ⚠⚠ So a rule governing what may be published was a hardcoded fallback, in a project
+        whose first principle is CONFIG, NOT CONSTANTS — and it was undiscoverable precisely
+        because it was working. A default that behaves correctly is the hardest kind to notice.
+
+        ⭐ Reporting the SOURCE rather than only the value is what makes that findable: a reader
+        asking "where is this configured" gets `default` and knows the answer is nowhere, rather
+        than searching a file that will never contain it. Same reason `policy()` reports the
+        PATH it loaded and not just a sha — nobody noticed the registry being served from the
+        wrong repo for three days because nothing said where it came from.
+        """
+        return "policy" if (self.policy.get("push") or {}).get("bar") is not None else "default"
 
     @property
     def v16_required(self) -> bool:

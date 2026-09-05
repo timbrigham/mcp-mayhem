@@ -96,3 +96,48 @@ def test_an_unreadable_registry_is_reported_not_rendered_as_empty(robot, monkeyp
     out = robot.requirements("push")
     assert out["registered_not_admitted"] == []
     assert "ledger down" in out["registry_unreadable"]
+
+
+def test_status_names_its_own_scope_and_the_range_question(robot, repo, ledger_refuses):
+    """⛔⛔ THE MOST EXPENSIVE TOOLING DEFECT EITHER SESSION FOUND. ZeroParadox read
+    `would_block_push` as THE list of what blocks a push — the docstring said *"the useful
+    field: it tells you before you try. Cheap; call freely."* They healed the one item it named,
+    ran a **27-minute preflight**, got it green, called push, and were refused on ELEVEN
+    intermediate commits the field had never mentioned.
+
+    ⚠ It is complete FOR THE TIP and silent about the RANGE, and a push publishes a range.
+
+    ⭐ Their second test, which this failed while passing the first: *"can a caller tell what
+    the ANSWER does not cover?"* A tool that answers a narrower question than its name implies
+    is invisible to "can I construct a correct call from this" — it answers cleanly, about the
+    wrong object.
+
+    ⚠ NOT fixed by walking the range here: that is `can_push`, and doing it in `status` would
+    break the cheap-call-freely contract. The fix is to name the scope and name the question
+    this one does not answer."""
+    out = robot.status()
+
+    assert out["would_block_push_scope"] == "tip", "the scope must be in the DATA, not only prose"
+    for line in out["would_block_push"]:
+        if "admission keys satisfied" in line:
+            assert "TIP ONLY" in line, "a tip-scoped blocker must say so where it is read"
+
+
+def test_the_range_pointer_fires_only_when_the_tip_is_misleading(robot, repo, tmp_path,
+                                                                 ledger_refuses):
+    """⚠ A POINTER THAT FIRES ALWAYS IS ONE PEOPLE SCROLL PAST — this project's own law, and the
+    reason `pdf_coupling` sat truthful and useless for weeks. Tip-scoped is only misleading when
+    there is a range under it, so the pointer appears exactly then and is absent otherwise."""
+    assert robot.status()["range_question"] is None, (
+        "nothing unpushed beyond the tip — the pointer must stay quiet")
+
+    msg = tmp_path / "m.txt"
+    for i in range(2):
+        (repo / f"f{i}.txt").write_text(f"work {i}\n", encoding="utf-8")
+        robot.stage([f"f{i}.txt"])
+        msg.write_text(f"commit {i}\n", encoding="utf-8")
+        robot.commit(str(msg), run_gate=False)
+
+    q = robot.status()["range_question"]
+    assert q and "can_push" in q, "with a range unpushed, status must name the range question"
+    assert "requirements(action='push')" in q, "and how to obtain the sets it needs"

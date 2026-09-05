@@ -292,7 +292,7 @@ class GitRobot:
             elif not inventory.get("complete"):
                 blockers.append(f"verdictLedger: {inventory.get('satisfied')}/"
                                 f"{inventory.get('required')} admission keys satisfied "
-                                f"for {self.git.head()[:12]}")
+                                f"for {self.git.head()[:12]} (TIP ONLY — see scope below)")
         except ledger_client.LedgerUnreachable as exc:
             # Reporting "clear" here would be the fail-open shape this system exists
             # to end — status must say it does not know.
@@ -305,7 +305,34 @@ class GitRobot:
             "tree": tree, "unpushed": unpushed,
             "gates_available": self.gates.available(),
             "inventory": inventory,
+            # ⛔⛔ THIS FIELD IS TIP-SCOPED AND READ AS COMPLETE. Reported by ZeroParadox
+            # 2026-09-05 and it is the most expensive tooling defect either of us found:
+            # they read `would_block_push` as THE list of what blocks a push, healed the one
+            # thing it named, ran a **27-minute preflight**, got it green, called push — and
+            # were refused on ELEVEN intermediate commits this field had never mentioned.
+            #
+            # ⚠⚠ The docstring invited exactly that: *"the useful field: it tells you before
+            # you try. Cheap; call freely."* It is complete FOR THE TIP and silent about the
+            # RANGE, and a push publishes a range.
+            #
+            # ⚠ NOT FIXED BY WALKING THE RANGE HERE. That is `can_push`, which visits every
+            # commit; doing it in `status` would break the cheap-call-freely contract that
+            # makes this field worth having. **The honest fix is to name the scope and name
+            # the question this one does not answer.**
+            #
+            # ⭐ ZeroParadox's second test, which this failed while passing the first:
+            # *"can a caller tell what the ANSWER does not cover?"* A tool answering a
+            # narrower question than its name implies is invisible to "can I construct a
+            # correct call from this" — it answers cleanly, and about the wrong object.
             "would_block_push": blockers,
+            "would_block_push_scope": "tip",
+            "range_question": (
+                None if unpushed <= 1 else
+                f"⚠ {unpushed} commits are unpushed and this field examined ONLY the tip. "
+                f"A push publishes the whole range and every commit in it is gated. For the "
+                f"range answer call verdictLedger can_push(rev_range='origin/{branch}..{branch}', "
+                f"admission=requirements(action='push'), "
+                f"commit_admission=requirements(action='commit'))."),
         }
 
     # =========================================================================
@@ -1796,7 +1823,32 @@ class GitRobot:
                                  detail=result.output,
                                  extra={"path": str(path), "output": result.output,
                                         "ok": result.ok, "linked": linked,
-                                        "arc_state": arc})
+                                        "arc_state": arc,
+                                        # ⚠⚠ WHERE TO STAND, RETURNED WHEN IT MATTERS.
+                                        # ZeroParadox 2026-09-05, healing by worktree: running
+                                        # the worktree's checker with cwd still at the MAIN repo
+                                        # produced a V16 refusal whose evidence path read
+                                        # `../../../../../../../Workspace/ZeroParadox/tools/…`.
+                                        # Setting ZPLEDGER_CONFIG did NOT fix it; setting cwd to
+                                        # the worktree did.
+                                        #
+                                        # ⭐ Same silent-root defect that would have broken
+                                        # `where.py` on its move: a tool resolving ROOT from its
+                                        # INVOCATION context rather than its TARGET, failing in
+                                        # a way that looks like a different problem. A traversal
+                                        # path in an evidence field is the tell.
+                                        #
+                                        # ⚠ A fact returned when the worktree is created, not a
+                                        # rule to remember — `add` handed back a path and said
+                                        # nothing about where to stand.
+                                        "run_tools_from": str(path),
+                                        "note": (
+                                            "cd into this directory before running any checker. "
+                                            "A checker invoked with cwd elsewhere resolves ROOT "
+                                            "to the wrong tree and records evidence paths full "
+                                            "of '../..'; V16 is where that surfaces, and it "
+                                            "reads as a config problem rather than a cwd one."
+                                        )})
         if action == "prune":
             result = self.git.run(["worktree", "prune", "-v"], timeout=120)
             return self._receipt("worktree.prune", {}, "allowed" if result.ok else "failed",

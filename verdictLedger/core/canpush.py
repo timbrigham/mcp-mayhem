@@ -239,6 +239,10 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
         "push_bar": bar,
+        # ⚠ WHERE THE BAR CAME FROM, not just what it is. ZeroParadox could not find the
+        # mechanism that produced their refusal because it was a hardcoded default, not a
+        # policy value — and a default that behaves correctly is the hardest kind to notice.
+        "push_bar_source": getattr(config, "push_bar_source", "default"),
         # ⚠ NEVER FORGIVE SILENTLY. A commit excused by the bar must be named, with the paths
         # whose defect the tip fixed — otherwise "allowed" renders identically whether the range
         # was clean or merely forgiven, which is the collapse this whole gate exists to prevent.
@@ -348,6 +352,13 @@ def render(result: dict) -> str:
     # an honest FAIL and still publish, provided the tip fixed it. That is a real weakening of
     # what "ALLOWED" used to mean, and an ALLOWED line that renders identically whether the
     # range was clean or merely forgiven is the exact collapse this gate exists to prevent.
+    # ⚠ A BAR NOBODY CONFIGURED IS WORTH SAYING OUT LOUD. It is not wrong — the default is
+    # deliberate — but a reader asking "where is this set" deserves to learn the answer is
+    # nowhere, rather than searching a policy file that does not contain it.
+    if result.get("push_bar_source") == "default":
+        lines.append(f"  ⚠ push bar '{result.get('push_bar')}' is the built-in DEFAULT — no "
+                     f"`push.bar` in the loaded policy. `policy()` reports which file that is.")
+
     if result.get("forgiven"):
         lines.append(f"  ⚠ {result['forgiven_count']} commit(s) FORGIVEN under the "
                      f"{result.get('push_bar')} bar — each carries a real FAIL whose indicted "
