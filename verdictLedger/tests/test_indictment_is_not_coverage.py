@@ -213,17 +213,29 @@ def test_a_record_carrying_failing_is_accepted(ledger):
         "the field round-tripped through the store unchanged")
 
 
-def test_failing_on_a_non_fail_is_rejected_not_ignored(ledger):
+def test_failing_on_a_non_blocking_verdict_is_rejected_not_ignored(ledger):
     """⚠⚠ THE WORST SHAPE AVAILABLE, IF IT WERE ALLOWED. The resolver consults `failing` only
-    on a FAIL, so a `failing` list on a PASS would be accepted, stored, and silently ignored —
-    a record that LOOKS like it narrows an indictment and narrows nothing. Same reasoning as
-    V7: an unreadable claim is rejected, never quietly dropped."""
+    where the verdict BLOCKS, so a `failing` list on a PASS would be accepted, stored, and
+    silently ignored — a record that LOOKS like it narrows an indictment and narrows nothing.
+    Same reasoning as V7: an unreadable claim is rejected, never quietly dropped.
+
+    ⭐ THE RULE NARROWED ON 2026-09-05 AND THIS TEST NARROWED WITH IT. It used to read "only
+    meaningful on a FAIL", which also caught UNDECIDED — and that was a hole, not a guard: a
+    2–1 copy-editor panel could then only record a dispute that blocked every file it read.
+    See `test_undecided_narrows_too.py`. The property being defended never changed; the set
+    of verdicts it applies to was drawn one member too wide.
+
+    ⛔ PASS IS THE MEMBER THAT MATTERS AND IT STILL REFUSES. A PASS blocks nothing, so there
+    is no indictment for `failing` to narrow — the field could only be inert there, which is
+    precisely what this test exists to prevent."""
     from conftest import good
     from core.errors import ValidationFailure
 
     with pytest.raises(ValidationFailure) as exc:
         ledger.append(good(verdict="PASS", failing=["docs/x.md"]))
-    assert "only meaningful on a FAIL" in str(exc.value)
+    assert "FAIL or UNDECIDED" in str(exc.value), (
+        "the refusal must name which verdicts DO admit the field, or a caller learns only "
+        "that they were wrong and not what to write instead")
 
 
 def test_an_empty_failing_is_rejected(ledger):

@@ -419,9 +419,21 @@ def build(*, config, records, action: str, files: dict,
         # The remedy for a record like the one above is to re-emit it at a HIGHER
         # REVISION with `failing` naming the real subset; that is what revisions are
         # for, and it supersedes per-content without editing the past.
+        # ⭐⭐ BOTH BLOCKING VERDICTS NARROW, and UNDECIDED was missing here for as long as
+        # the validator refused to let it carry `failing` at all — the two halves of one
+        # hole, which is why they land together. A panel that splits 2–1 over forty files
+        # (Tim, 2026-09-05: *"the undecided is a perfect use case here when the three copy
+        # editors disagreeing"*) is undecided about the disputed line and DECIDED about the
+        # other thirty-nine. Narrowing on FAIL only would have left it condemning all forty.
+        #
+        # ⚠ THE ORDER OF THESE TWO CHANGES IS NOT OPTIONAL. Teaching the validator to ACCEPT
+        # `failing` on an UNDECIDED without teaching the resolver to READ it produces exactly
+        # the shape that guard's own comment calls the worst available: a field stored,
+        # accepted, and silently ignored — a record that LOOKS like it narrows and does not.
+        # Refused-but-honest beats accepted-but-inert.
         def _severity_at(path, rec):
             v = rec.get("verdict")
-            if v == "FAIL":
+            if v in ("FAIL", "UNDECIDED"):
                 failing = rec.get("failing")
                 if failing is not None and path not in set(failing):
                     return _SEVERITY["PASS"]
@@ -431,13 +443,20 @@ def build(*, config, records, action: str, files: dict,
         if covered_recs:
             _p, covered_rec = min(covered_recs, key=lambda pr: _severity_at(pr[0], pr[1]))
             # ⚠ The ROW's verdict must be the worst one that actually applies here. If
-            # the worst covering record is a FAIL that indicts nothing in this scope, the
-            # row is SATISFIED and must not render the FAIL's verdict — otherwise the
-            # narrowing above changes `complete` while the displayed status still says
-            # FAIL, which is the collapse this module exists to prevent.
-            if (covered_rec.get("verdict") == "FAIL"
+            # the worst covering record blocks but indicts nothing in this scope, the row is
+            # SATISFIED and must not render that record's verdict — otherwise the narrowing
+            # above changes `complete` while the displayed status still says FAIL (or
+            # UNDECIDED), which is the collapse this module exists to prevent.
+            #
+            # ⚠ `_narrowed_from` carries the ORIGINAL verdict rather than a flag, so a reader
+            # can tell a narrowed FAIL from a narrowed UNDECIDED. They are different claims:
+            # one says "judged and condemned elsewhere", the other "judged and DISPUTED
+            # elsewhere", and collapsing them would lose the distinction Tim added UNDECIDED
+            # to make.
+            _v = covered_rec.get("verdict")
+            if (_v in ("FAIL", "UNDECIDED")
                     and _severity_at(_p, covered_rec) == _SEVERITY["PASS"]):
-                covered_rec = dict(covered_rec, verdict="PASS", _narrowed_from="FAIL")
+                covered_rec = dict(covered_rec, verdict="PASS", _narrowed_from=_v)
 
         # ⭐⭐ THE BYTES THIS ROW ACTUALLY CONDEMNS, NAMED — not just the fact that it failed.
         # Required by the TIP-GREEN bar (Tim, 2026-09-02): a range may publish when the tip is
@@ -603,6 +622,22 @@ def build(*, config, records, action: str, files: dict,
                      # re-running a checker that cannot clear an honest FAIL. Empty on every
                      # non-failing row. See the TIP-GREEN bar in `canpush`.
                      "indicted": indicted,
+                     # ⭐⭐ NARROWED-CLEAN IS NOT THE SAME FACT AS CLEAN, and until this line
+                     # existed a reader could not tell them apart. A row that says SATISFIED
+                     # because the covering record indicted OTHER paths has been judged by a
+                     # verdict that BLOCKS somewhere; a row that says SATISFIED because the
+                     # verdict was a PASS has not. Both rendered identically.
+                     #
+                     # ⚠ `canpush` already refuses that collapse one level up — "whether the
+                     # range was clean or merely forgiven is the exact collapse this gate
+                     # exists to prevent" — and forgiveness is narrowing applied to a commit.
+                     # The provenance was surfaced for the outer case and dropped for the
+                     # inner one, so the same argument reached only half its subject.
+                     #
+                     # ⚠ Carries the ORIGINAL verdict, not a boolean: narrowed from FAIL means
+                     # "condemned elsewhere", narrowed from UNDECIDED means "DISPUTED
+                     # elsewhere", and those are different things to go read.
+                     "narrowed_from": (record or {}).get("_narrowed_from"),
                      "dead_patterns": dead,
                      # ⚠ `covered` is measured over scope ∪ switches, so reporting
                      # it against `scope` alone made `covered > scope` — 22/21 for

@@ -151,6 +151,15 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                              if r["gating"] and r["status"] == "LEGACY_IDENTITY"),
             "admission_state": inv.get("admission_state"),
             "not_gating": inv.get("registered_not_admitting") or [],
+            # ⭐⭐ THE STEPS THAT PASS ONLY BECAUSE THE COVERING RECORD INDICTS ELSEWHERE.
+            # Found by asking ZeroParadox's `SH-3` question of my own fix, 2026-09-05: a fix
+            # applied at one level and not its sibling. `render_inventory` had just learned to
+            # print NARROWED INDICTMENT; the PUSH path — the one that matters — was still
+            # silent, exactly as it was for NARROWED COVERAGE until 2026-08-23 taught it the
+            # same lesson. Two arguments, the same asymmetry, three weeks apart.
+            "narrowed": sorted({f"{r['step']} (from {r['narrowed_from']})"
+                                for r in inv["rows"]
+                                if r.get("gating") and r.get("narrowed_from")}),
             # the thinnest gating step at this commit, so a green key over a narrow
             # scope is visible on THE PUSH PATH and not only in `inventory`
             "thinnest": min(
@@ -348,6 +357,23 @@ def render(result: dict) -> str:
         lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
                      f"{seen}/{scope} in-scope paths (reported, not blocking)")
 
+    # ⚠⭐ NARROWED INDICTMENT, ON THE PUSH PATH — the sibling of the block above, and it was
+    # missing for the same reason that one was until 2026-08-23: the argument got made where
+    # it was noticed and not where it is read. A commit whose keys are green ONLY because the
+    # covering records condemn paths outside its scope is a materially different fact from one
+    # a checker examined and was happy with, and `ALLOWED` renders them identically.
+    #
+    # ⚠ REPORTED, NOT BLOCKING. The narrowing is correct behaviour — a verdict may not travel
+    # to bytes nobody judged, in either direction. What must not happen is a reader being
+    # unable to tell that it happened, which is the same standard `forgiven` is held to four
+    # lines below.
+    narrowed = sorted({n for r in result.get("commits") or [] for n in (r.get("narrowed") or [])})
+    if narrowed:
+        lines.append(f"  ⚠ NARROWED INDICTMENT — {len(narrowed)} gating step(s) pass because "
+                     f"the covering record indicts OTHER paths, not because it was clean: "
+                     + ", ".join(narrowed[:4])
+                     + (f" (+{len(narrowed) - 4} more)" if len(narrowed) > 4 else ""))
+
     # ⚠⚠ A FORGIVEN COMMIT IS NAMED, ALWAYS. Under the TIP-GREEN bar an intermediate may carry
     # an honest FAIL and still publish, provided the tip fixed it. That is a real weakening of
     # what "ALLOWED" used to mean, and an ALLOWED line that renders identically whether the
@@ -360,9 +386,15 @@ def render(result: dict) -> str:
                      f"`push.bar` in the loaded policy. `policy()` reports which file that is.")
 
     if result.get("forgiven"):
+        # ⚠ "a real FAIL" WAS WRONG THE MOMENT `failing` LANDED ON UNDECIDED. `failed` is
+        # populated from status in ("FAIL", "UNDECIDED"), so a forgiven commit may carry a
+        # DISPUTED verdict rather than a condemning one. Both are forgivable on the same
+        # evidence — the bytes are gone from what the world will fetch — but a reader told
+        # "FAIL" about an UNDECIDED is being handed the wrong claim, which is the defect
+        # class this file exists to render honestly.
         lines.append(f"  ⚠ {result['forgiven_count']} commit(s) FORGIVEN under the "
-                     f"{result.get('push_bar')} bar — each carries a real FAIL whose indicted "
-                     f"bytes are ABSENT at the tip:")
+                     f"{result.get('push_bar')} bar — each carries a real blocking verdict "
+                     f"(FAIL or UNDECIDED) whose indicted bytes are ABSENT at the tip:")
         for f in result["forgiven"][:SHOWN]:
             lines.append(f"    {f['commit'][:12]}  {', '.join(f['steps'])}"
                          f"  fixed by tip: {', '.join(f['indicted_and_fixed_by_tip'][:3])}")

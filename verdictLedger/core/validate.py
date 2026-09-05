@@ -47,21 +47,42 @@ def structural(record: dict) -> list[str]:
         if not basis.get("value"):
             out.append("basis.value must be set")
 
-    # ⚠⚠ `failing` IS ONLY MEANINGFUL ON A FAIL, AND A MISPLACED ONE IS THE WORST SHAPE
-    # AVAILABLE: the resolver reads it only on a FAIL, so a `failing` list on a PASS would be
-    # accepted, stored, and silently ignored — a record that LOOKS like it narrows an
-    # indictment while narrowing nothing. Rejected rather than ignored, for the same reason
-    # V7 rejects unknown keys.
+    # ⚠⚠ `failing` IS ONLY MEANINGFUL ON A BLOCKING VERDICT, AND A MISPLACED ONE IS THE
+    # WORST SHAPE AVAILABLE: the resolver reads it only where it blocks, so a `failing` list
+    # on a PASS would be accepted, stored, and silently ignored — a record that LOOKS like it
+    # narrows an indictment while narrowing nothing. Rejected rather than ignored, for the
+    # same reason V7 rejects unknown keys.
+    #
+    # ⭐⭐ UNDECIDED ADMITS IT TOO, AND REFUSING IT WAS A REAL HOLE — mine, found by reading
+    # my own guard against the copy-editor panel it was about to block. Tim, 2026-09-05:
+    # three copy editors, two must agree, and *"the undecided is a perfect use case here when
+    # the three copy editors disagreeing"*. A 2–1 split over forty files is UNDECIDED about
+    # the ONE line they disagree on and perfectly decided about the other thirty-nine. With
+    # `failing` refused on UNDECIDED, the panel's only legal move was a record that blocks all
+    # forty — so the vocabulary Tim added to express a NARROW disagreement could only be
+    # spelled as a WIDE one.
+    #
+    # ⚠ That is the 2026-09-02 `check_checkers` defect exactly, arriving through the door
+    # built to stop it: one real dispute condemning every file examined beside it. The
+    # difference is that this time the wide record would have been the only representable
+    # one, which makes it worse than a malformed record — it would have been a CORRECT one.
+    #
+    # ⛔ PASS STILL REFUSES, and that asymmetry is the whole safety of the field. FAIL and
+    # UNDECIDED both BLOCK, so narrowing one moves paths from blocked to clear and the reader
+    # can see which. A PASS blocks nothing; `failing` there could only ever mean something the
+    # resolver does not implement, and V18 already governs what a PASS may carry.
     if "failing" in record:
         failing = record.get("failing")
         if not isinstance(failing, list) or not all(
                 isinstance(p, str) and p.strip() for p in failing):
             out.append("failing must be an array of non-empty path strings")
-        elif record.get("verdict") != "FAIL":
+        elif record.get("verdict") not in ("FAIL", "UNDECIDED"):
             out.append(
-                f"failing is only meaningful on a FAIL verdict, got "
-                f"{record.get('verdict')!r} — it names what a FAIL INDICTS, and on any other "
-                f"verdict it would be stored and silently ignored")
+                f"failing is only meaningful on a verdict that BLOCKS — FAIL or UNDECIDED — "
+                f"got {record.get('verdict')!r}. It names the subset a blocking verdict "
+                f"actually indicts, so on a non-blocking verdict it would be stored and "
+                f"silently ignored. A PASS that wants to carry findings uses `outstanding`, "
+                f"which V18 grades.")
         elif failing and not (set(failing) & {s.get("path") for s in (record.get("subjects") or [])
                                               if isinstance(s, dict)}):
             # ⚠⚠ A DISGUISED EXONERATION, AND IT IS THE EMPTY-`failing` HOLE WEARING A HAT.
@@ -72,16 +93,19 @@ def structural(record: dict) -> list[str]:
             # ⚠ Naming pseudo-paths ALONGSIDE real ones stays legal and is encouraged: the
             # roster-level finding is a true indictment that happens not to be a file.
             out.append(
-                "failing names no subject of this record — every entry is inert for "
-                "resolution, so the FAIL would resolve to a PASS everywhere it covers. "
-                "At least one entry must be a path this record actually examined.")
+                f"failing names no subject of this record — every entry is inert for "
+                f"resolution, so the {record.get('verdict')} would resolve to a PASS "
+                f"everywhere it covers. At least one entry must be a path this record "
+                f"actually examined.")
         elif not failing:
             # ⚠ An EMPTY list would read as "this FAIL indicts nothing", which resolves to a
             # PASS everywhere — a FAIL that cannot fail. Absent means all-subjects; empty must
             # not be a quiet way to spell exoneration.
             out.append(
-                "failing must not be empty on a FAIL — an empty indictment resolves to a PASS "
-                "at every path. Omit the field to indict every subject.")
+                f"failing must not be empty on a {record.get('verdict')} — an empty "
+                f"indictment resolves to a PASS at every path, which is a verdict that "
+                f"blocks nothing while claiming to block. Omit the field to indict every "
+                f"subject.")
 
     subjects = record.get("subjects")
     if not isinstance(subjects, list):

@@ -113,6 +113,29 @@ def render_inventory(inv: dict) -> str:
                      + ", ".join(unscoped[:4])
                      + (f" (+{len(unscoped) - 4} more)" if len(unscoped) > 4 else ""))
 
+    # ⚠⭐ THE THIRD MEMBER OF THAT FAMILY, and it lands here for the identical reason: a
+    # narrowed row is SATISFIED by definition, so it can ONLY ever appear on an inventory
+    # that is otherwise green. Printing it after the early return would print it never.
+    #
+    # ⭐⭐ NARROWED-CLEAN IS NOT CLEAN. The covering record BLOCKS — it indicted other paths
+    # at this step — and the reason this scope passes is that none of those paths are in it.
+    # That is a correct result and a materially different one from "a checker looked at this
+    # and was happy", which is what a bare SATISFIED says. `canpush` already refuses the same
+    # collapse one level up ("whether the range was clean or merely forgiven is the exact
+    # collapse this gate exists to prevent"); forgiveness is this operation applied to a
+    # commit, and the argument was only ever surfaced for the outer half.
+    #
+    # ⚠ REPORTED, NOT BLOCKING — same call as NARROWED COVERAGE above. The narrowing is the
+    # designed behaviour; a reader being unable to SEE it was the defect.
+    narrowed = [row for row in inv.get("rows") or []
+                if row.get("gating") and row.get("narrowed_from")]
+    if narrowed:
+        shown = ", ".join(f"{r['step']} (from {r['narrowed_from']})" for r in narrowed[:4])
+        lines.append(f"  ⚠ NARROWED INDICTMENT — {len(narrowed)} row(s) pass because the "
+                     f"covering record indicts OTHER paths, not because it was clean: "
+                     + shown
+                     + (f" (+{len(narrowed) - 4} more)" if len(narrowed) > 4 else ""))
+
     if inv.get("complete"):
         return "\n".join(lines)
 
