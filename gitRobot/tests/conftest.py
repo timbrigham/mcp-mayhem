@@ -262,3 +262,26 @@ def _no_leak_into_the_shared_scratch():
         f"this test left {len(leaked)} directory(ies) in the SHARED scratch "
         f"{DEFAULT_SCRATCH}: {leaked[:5]}. Pass scratch=tmp_path/'scratch' to GitRobot(...) — "
         f"a leftover there can hold a .lake junction into a deleted fixture.")
+
+
+@pytest.fixture
+def committed_gate(repo, fake_gate):
+    """A PASSING gate pipeline, COMMITTED — the minimum for `merge` to be reachable at all.
+
+    ⭐ NEEDED SINCE 2026-09-05, WHEN `merge` BECAME GATED. A merge creates a commit, and it
+    used to create one without running anything — the one commit-producing path in this
+    server that skipped the check every other commit-producing path enforces. Tests whose
+    subject is something ELSE (the arc handshake, the audit row, branch deletion) merge only
+    incidentally, and now need a pipeline present to get past the gate.
+
+    ⚠⚠ COMMITTED, NOT MERELY INSTALLED, AND THAT IS THE WHOLE POINT OF THE FIXTURE.
+    `fake_gate` leaves `tools/verify/hooks.py` UNTRACKED, and `merge` calls `_require_clean`
+    first — so an untracked gate script is dirt and the merge refuses before the gate is ever
+    consulted. A test written that way still goes red-to-green and still asserts a refusal,
+    while measuring a completely different guard. Same shape as every other defect this week:
+    the check and the claim about different objects.
+    """
+    fake_gate(0)
+    _git(repo, "add", "tools")
+    _git(repo, "commit", "-q", "-m", "install gate pipeline")
+    return repo

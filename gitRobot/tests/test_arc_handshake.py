@@ -212,7 +212,7 @@ def test_read_refuses_an_unregistered_worktree(robot, repo, tmp_path):
 
 # -- ⛔ the arc's own bookkeeping must not block the arc ------------------------
 
-def test_a_bumped_round_does_not_block_a_merge(robot, repo, tmp_path):
+def test_a_bumped_round_does_not_block_a_merge(robot, repo, tmp_path, committed_gate):
     """⛔⛔ THE ARC FLOW WOULD HAVE BLOCKED ITSELF ON ITS OWN BOOKKEEPING. Measured 2026-09-03 on
     the live repo: `gate_round.json` sat at round 1 in the MAIN checkout, so the tree read dirty,
     and `_require_clean` guards `merge` — which is exactly what an arc does at the end.

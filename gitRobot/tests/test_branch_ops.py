@@ -68,7 +68,7 @@ def test_switch_can_create(robot, repo):
     assert robot.git.branch() == "brand-new"
 
 
-def test_merge_works_on_a_clean_tree_and_is_audited(robot, repo):
+def test_merge_works_on_a_clean_tree_and_is_audited(robot, repo, committed_gate):
     _branch(repo, "feature")
     result = robot.merge("feature", reason="folding the feature in")
     assert result["decision"] == "allowed" and result["ok"]
@@ -126,7 +126,7 @@ def test_rebase_allows_rewriting_only_unpushed_commits(robot, repo):
 
 # -- branch deletion: safe only -----------------------------------------------
 
-def test_branch_delete_removes_a_merged_branch(robot, repo):
+def test_branch_delete_removes_a_merged_branch(robot, repo, committed_gate):
     _branch(repo, "feature")
     robot.merge("feature", reason="merged")
     assert robot.branch_delete("feature", reason="merged, no longer needed"

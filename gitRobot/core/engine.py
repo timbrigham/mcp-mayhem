@@ -1267,10 +1267,32 @@ class GitRobot:
                              extra={"output": result.output, "ok": result.ok})
 
     def merge(self, branch: str, *, reason: str) -> dict:
-        """Merge another branch into HEAD. Refused while the tree is dirty.
+        """Merge another branch into HEAD. Refused while dirty, and GATED like any
+        other commit.
 
         No `--no-verify`, no `--squash`, no strategy overrides: a merge that needs
         those is a decision, not a mechanical step.
+
+        ⛔⛔ A MERGE IS A COMMIT, AND THIS ONE USED TO SKIP THE COMMIT GATE ENTIRELY.
+        `commit` runs `pre-commit` and refuses on failure; `merge --no-ff` created a
+        commit — with a tree no checker had ever seen — and ran nothing. Tim's whole
+        premise for this server, 2026-09-03: *"if we do this right, the only way that
+        you're ever going to have a commit done is inside of this dedicated MCP server
+        right?"* It was, and the gate still had a door in it.
+
+        ⚠ THE PUSH GATE IS NOT A SUBSTITUTE, and reasoning that it is was the trap. A
+        merge commit missing coverage does block at push time — but that is the arc
+        already polluted, and under the `tip_green` bar a green tip can carry forgiven
+        intermediates. Catching it at push means catching it after the thing the gate
+        exists to prevent has happened.
+
+        ⭐ `--no-commit` IS WHAT MAKES THIS CHECKABLE. Gating the tree BEFORE the merge
+        would verify content the merge is about to replace — the check and the act about
+        different objects, which is the defect class this project has spent a week
+        removing and which the `commit` worktree fix already had to correct once. So the
+        merge is performed into the index WITHOUT a commit, the gate runs on the RESULT,
+        and the commit happens only if it passes. `git merge --abort` restores the clean
+        tree `_require_clean` just guaranteed.
         """
         if not branch or branch.startswith("-"):
             raise UsageError(f"{branch!r} is not a branch name")
@@ -1278,10 +1300,71 @@ class GitRobot:
             raise UsageError("merge requires a non-empty reason")
         args = {"branch": branch}
         self._require_clean("merge", args, f"merging {branch!r}", reason=reason)
-        result = self.git.run(["merge", "--no-ff", branch], timeout=600)
+
+        merged = self.git.run(["merge", "--no-ff", "--no-commit", branch], timeout=600)
+
+        # ⚠ MERGE_HEAD IS THE HONEST TEST FOR "A MERGE IS IN PROGRESS", not the output
+        # text. `--no-commit` on an up-to-date branch exits 0, prints "Already up to
+        # date.", and stages nothing — matching that string would break under any locale,
+        # and a `commit` on an empty index would then fail for a reason that has nothing
+        # to do with the merge.
+        in_progress = self.git.run(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok
+
+        if not merged.ok:
+            if in_progress:
+                # ⚠ LEAVING THE CONFLICT IN PLACE WOULD BRICK THE SERVER. Every
+                # branch-moving op here requires a clean tree, so a conflicted checkout
+                # refuses commit, switch, merge, rebase and squash alike — each with a
+                # "tree is dirty" message that names the symptom and not the cause. And
+                # gitRobot has no conflict-resolution path to offer, so it cannot be the
+                # thing that left one behind.
+                self.git.run(["merge", "--abort"], timeout=300)
+            raise self._refuse(
+                "merge", args,
+                f"merging {branch!r} did not apply cleanly, so nothing was merged and the "
+                f"tree was restored:\n\n{merged.output[-2000:]}",
+                "Resolve this outside the mechanical path: a conflict is a decision about "
+                "which content is correct, and gitRobot has no way to make that safely. "
+                "Take a private checkout — worktree(action='add', ref=<ref>) — resolve "
+                "there, commit through commit(...) so the gate still runs, and merge the "
+                "result.",
+                reason=reason,
+            )
+
+        if not in_progress:
+            # Nothing was merged, so there is nothing to gate and nothing to commit.
+            return self._receipt("merge", args, "allowed", reason=reason,
+                                 detail=merged.output,
+                                 extra={"output": merged.output, "ok": True,
+                                        "merged": False})
+
+        gate = self.gates.run("pre-commit")
+        gate_records = [gate.record()]
+        if not gate.passed:
+            self.git.run(["merge", "--abort"], timeout=300)
+            self.audit.append(
+                actor=self.actor, op="merge", args=args, decision="refused",
+                head=self.git.head(), branch=self.git.branch(),
+                tree=self.git.tree_state(), gates=gate_records, reason=reason,
+                detail="pre-commit gate did not pass on the merge result",
+            )
+            raise RefusalError(
+                f"the pre-commit gate did not pass on the RESULT of merging {branch!r}, "
+                f"so the merge was ABORTED and nothing was committed.\n\n"
+                f"{gate.note or ''}\n{gate.output[-4000:]}",
+                alternative=(
+                    f"The findings are in the merged content, not necessarily in either "
+                    f"branch alone — a merge can produce a tree neither side ever had. Fix "
+                    f"them on {branch!r} (or on this branch) and commit through commit(...) "
+                    f"so they are recorded, then merge again. There is no skip: a merge "
+                    f"commit is a commit, and it is gated like one."),
+            )
+
+        result = self.git.run(["commit", "--no-edit"], timeout=600)
         return self._receipt("merge", args, "allowed" if result.ok else "failed",
-                             reason=reason, detail=result.output,
-                             extra={"output": result.output, "ok": result.ok})
+                             gates=gate_records, reason=reason, detail=result.output,
+                             extra={"output": merged.output + result.output,
+                                    "ok": result.ok, "merged": True})
 
     def rebase(self, onto: str, *, reason: str) -> dict:
         """Rebase HEAD onto another ref. Refused while dirty, AND refused when it
