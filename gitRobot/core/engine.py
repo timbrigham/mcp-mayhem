@@ -1907,29 +1907,33 @@ class GitRobot:
                                  extra={"path": str(path), "output": result.output,
                                         "ok": result.ok, "linked": linked,
                                         "arc_state": arc,
-                                        # ⛔⛔ RETURNED AT THE MOMENT OF USE, BECAUSE THE
-                                        # DOCSTRING VERSION OF THIS FAILED. The tool said
-                                        # "nothing done there can reach the caller's files"
-                                        # and an agent read it as containment of everything —
-                                        # then recorded a live FAIL against the MAIN repo's
-                                        # tree from inside a worktree (2026-09-06,
-                                        # rely@def0143…#0, still blocking a tag).
+                                        # ⭐⭐ RETURNED AT THE MOMENT OF USE, and it points at
+                                        # `validate` rather than warning about the worktree.
                                         #
-                                        # ⚠ Not a leak: a basis is a git TREE id, and a
-                                        # worktree holding identical content resolves to the
-                                        # identical tree. Isolating paths cannot isolate
-                                        # content identity. Nothing in the plumbing can catch
-                                        # it, so the caller has to be told — and told HERE,
-                                        # in the reply to the call that creates the illusion,
-                                        # rather than in prose it may never read. Same reason
-                                        # `satisfied_when` travels with a refusal.
-                                        "ledger_writes_are_not_isolated":
-                                            "This worktree isolates FILES, not the LEDGER. A "
-                                            "verdict recorded from in here binds to the same "
-                                            "git tree as the main checkout when the content "
-                                            "matches, and survives the worktree being "
-                                            "removed. Record probes nowhere, or expect a real "
-                                            "verdict about real content.",
+                                        # ⚠ AN EARLIER VERSION OF THIS FIELD WAS WRONG AND
+                                        # WAS CALLED "ledger_writes_are_not_isolated". Tim,
+                                        # 2026-09-06: "ledger changes from subtrees *should*
+                                        # be supported — they have blob identifiers that make
+                                        # them unique. The content is what matters, not its
+                                        # location on disk." He is right, and the wrong
+                                        # framing was worse than saying nothing: it presented
+                                        # content-addressing — the property the whole ledger
+                                        # rests on — as a hazard, which invites the next
+                                        # reader to want location to matter.
+                                        #
+                                        # The real gap the probe record exposed is that the
+                                        # server has a no-write dry run (`validate`) and the
+                                        # only client cannot reach it, so a test of the
+                                        # recording path had no choice but to append.
+                                        "recording_here_is_real":
+                                            "Verdicts are content-keyed on (step, path, "
+                                            "git_blob_id), so recording from a worktree is "
+                                            "SUPPORTED and binds to the content you looked "
+                                            "at, not to where you stood. That also means "
+                                            "there is no scratch ledger: to test whether a "
+                                            "record is well-formed, call `validate` on the "
+                                            "verdictLedger server — pure, no write, returns "
+                                            "every V-rule violation at once.",
                                         # ⚠⚠ WHERE TO STAND, RETURNED WHEN IT MATTERS.
                                         # ZeroParadox 2026-09-05, healing by worktree: running
                                         # the worktree's checker with cwd still at the MAIN repo

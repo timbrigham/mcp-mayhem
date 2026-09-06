@@ -492,30 +492,28 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
     add tears one down. This is the answer whenever you want a clean slate — it is why
     reset --hard, checkout -- ., clean and stash are refused rather than merely discouraged.
 
-    ⛔⛔ THE ISOLATION IS OF FILES. IT IS NOT ISOLATION OF THE LEDGER, AND A VERDICT RECORDED
-    FROM INSIDE A WORKTREE LANDS AGAINST THE MAIN REPO'S TREE. This sentence used to read
-    "nothing done there can reach the caller's files" with no such qualifier, and an agent
-    reasonably read it as containment of everything it might do.
+    ⭐⭐ A VERDICT RECORDED FROM IN HERE IS A REAL VERDICT, AND THAT IS THE DESIGN WORKING —
+    NOT A LEAK AND NOT A GAP. A verdict binds to `(step, path, git_blob_id)`: the CONTENT is
+    what it is about, and where the agent stood when it looked is not part of the claim. A
+    worktree holding the same bytes resolves to the same tree because that is what a content
+    hash means. **Recording from a worktree is SUPPORTED and correct** — an earlier draft of
+    this note called it a hazard, which would have made a virtue read as a defect and pushed
+    the next reader toward wanting location to matter. It must not.
 
-    ⚠ IT IS NOT A LEAK — IT IS CONTENT-ADDRESSING WORKING CORRECTLY, which is why no guard
-    catches it. A verdict's basis is a git TREE id. A detached worktree holding the same
-    content as the main checkout resolves to the SAME tree, because that is what a content
-    hash means. Isolation of paths cannot produce isolation of content identity, and nothing
-    that compares trees can tell the two checkouts apart. There is nothing here to fix in the
-    plumbing; the defect was the word "isolated" spanning two claims.
+    ⚠ WHAT THE WORKTREE ISOLATES IS FILES. It gives you somewhere to change bytes without
+    touching the caller's checkout. It does not, and should not, give you a scratch LEDGER —
+    there is exactly one stream and every verdict in it is about real content.
 
-    ⚠⚠ MEASURED 2026-09-06, and it left a live record. A `/rely` round probing `--failing-file`
-    inside a worktree wrote `rely@def0143fcd1ab84264234ebcbbc3c320737edf6e#0` — FAIL, tier A,
-    reason "probe reason - do not use". That basis is byte-identical to the main repo's
-    `HEAD^{tree}`, and both indicted blobs are still live at HEAD. `rely` is registered but
-    NOT admitted for push, so it blocks no push — it IS admitted for `tag`, so a probe record
-    currently blocks a tag. Disposition is Tim's: the stream is append-only and a revision is
-    a restatement, not an erasure.
+    ⚠⚠ SO THE THING TO KNOW IS ABOUT PROBES, NOT ABOUT WORKTREES. Measured 2026-09-06: a
+    `/rely` round testing whether `--failing-file` worked emitted
+    `rely@def0143fcd1ab84264234ebcbbc3c320737edf6e#0` — FAIL, tier A, reason "probe reason -
+    do not use". Correctly keyed, correctly stored, and still blocking a `tag`, because `rely`
+    is admitted there. The record is not wrong. **It is a test that had nowhere else to go.**
 
-    ⭐ SO: IF YOU ARE RECORDING A VERDICT, THE WORKTREE BUYS YOU NOTHING. Use it for a clean
-    slate to WORK in. Anything you `record.py` from inside it is a real verdict about real
-    content, with the same force as one written from the main checkout, and it will still be
-    there when the worktree is gone.
+    ⭐ THERE IS A DRY RUN AND IT IS `validate`. verdictLedger exposes `validate(record)` —
+    "Pure, no write — use it to check a record BEFORE appending", returning every V-rule
+    violation at once. Exercising the recording path costs nothing and appends nothing. Use
+    it for anything whose purpose is to find out whether a command works.
 
     action='remove' also accepts any path git itself lists as a worktree of this repo (never
     the main checkout), so leftovers from other sessions can be cleaned up. action='prune'
