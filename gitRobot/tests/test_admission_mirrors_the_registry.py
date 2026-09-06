@@ -33,6 +33,19 @@ line that fires.**
 read off a differently-named field. Asked whether we had an equivalent blind spot; we did,
 one repo over, in a mirror that documents itself as a mirror.
 
+⛔⛔ WHAT THIS TEST CANNOT SEE, stated so nobody reads its green as wider than it is. It compares
+EFFECTIVE actions, so **an absent `actions` key and a key naming every action are identical to
+it** — both resolve to all three. That is correct for its purpose (finding where the two surfaces
+disagree about what gates what) and blind to the difference the consumer named: one claims
+"nobody narrowed this", the other claims "all three were considered". `rely` is the measured
+instance of the first reading as staleness a month on.
+
+Measured 2026-09-06: `check_briefs` was registered with no `actions` key, the consumer added
+`["commit","push","tag"]` explicitly with a stated reason, and **this test passed identically
+before and after.** So a future entry silently LOSING its key would not fail here either.
+Verifying that fix required reading the registry entry directly. **A behaviour checker cannot
+police a documentation claim, and should not be cited as though it does.**
+
 ⚠ THIS TEST DETECTS AND DOES NOT DECIDE. Which way each mismatch should be resolved is GATE
 POLICY -- it changes what blocks a push -- and two of the three are live migrations on the
 consumer's side. The known set is pinned below so it cannot grow silently, and cannot be
