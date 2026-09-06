@@ -17,6 +17,7 @@ forces the number down to be green.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -128,3 +129,59 @@ def test_the_debt_is_shrinking_not_load_bearing(tools):
         "unconstrained parameters must not grow past the 2026-09-06 baseline of 4. "
         "SATISFIED WHEN: `record` and `basis` take Pydantic models, at which point this "
         "set is empty and both this test and the ratchet above can be deleted.")
+
+
+def _call(name, arguments):
+    """Drive the LOW-LEVEL handler, which is the only layer where `isError` exists."""
+    from mcp.types import CallToolRequest, CallToolRequestParams
+    handler = mcp._mcp_server.request_handlers[CallToolRequest]
+    result = asyncio.run(handler(CallToolRequest(
+        method="tools/call",
+        params=CallToolRequestParams(name=name, arguments=arguments)))).root
+    return result, result.content[0].text
+
+
+def test_a_refusal_is_not_protocol_identical_to_a_success():
+    """⭐⭐ ABSENCE RENDERING AS SUCCESS, AT THE TRANSPORT.
+
+    Measured 2026-09-05: a usage refusal, a clean success and a four-violation validation
+    rejection ALL returned `isError: false`. Three outcomes, one protocol result. The
+    distinction lived only inside `content[0].text`, which every caller had to parse.
+    """
+    ok_result, _ = _call("find", {"verdict": "UNDECIDED"})
+    assert ok_result.isError is False
+
+    for name, args in (("find", {"verdict": "NONSENSE"}),
+                       ("append", {"record": {"totally": "malformed"}})):
+        result, _ = _call(name, args)
+        assert result.isError is True, f"{name} refused but did not set isError"
+
+
+def test_the_refusal_body_stays_pure_json():
+    """⚠⚠ THE HALF THAT PROTECTS THE CONSUMER, AND THE REASON WE DID NOT JUST RAISE.
+
+    `raise ToolError(json.dumps(...))` sets `isError` but the low-level server REWRITES the
+    content to `Error executing tool <name>: {...}`, which is not valid JSON. The consumer
+    does `json.loads(content[0].text)`, so every structured refusal would collapse to
+    `None` — they would still block, but `error_type` and the whole `errors` list would be
+    gone, which is exactly what tells a validation refusal from an outage.
+
+    Returning a `CallToolResult` from the low-level handler keeps both. This test fails if
+    anyone "simplifies" it back to raising.
+    """
+    result, text = _call("find", {"verdict": "NONSENSE"})
+    assert result.isError is True
+    payload = json.loads(text)          # must not need a brace-slice fallback
+    assert payload["ok"] is False
+    assert payload["error_type"] == "usage"
+    assert not text.lstrip().startswith("Error executing tool"), \
+        "content was rewritten by the raise path; error_type is lost to the consumer"
+
+
+def test_a_validation_refusal_keeps_every_violation(tools):
+    """A caller fixing one rule per round trip gives up and works around the server."""
+    result, text = _call("append", {"record": {"totally": "malformed"}})
+    payload = json.loads(text)
+    assert result.isError is True
+    assert payload["error_type"] == "validation"
+    assert len(payload["errors"]) > 1, "V-rules must all be reported at once"

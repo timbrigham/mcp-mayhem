@@ -43,6 +43,7 @@ from mcp.types import ToolAnnotations
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
+from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError
@@ -56,6 +57,10 @@ mcp = FastMCP(
     host=os.environ.get("GITROBOT_HOST", "127.0.0.1"),
     port=int(os.environ.get("GITROBOT_PORT", "8010")),
 )
+
+# ⚠ AFTER the constructor: FastMCP registers its own call_tool handler there, and this
+# replaces it so a refusal sets `isError` while the body stays pure JSON.
+_install_is_error(mcp)
 
 
 def _robot() -> GitRobot:

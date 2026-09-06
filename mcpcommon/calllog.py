@@ -55,12 +55,28 @@ from typing import Any, Optional
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_BACKUPS = 5
 
-# ⚠ The STORED body cap, which is NOT the rotation cap. gitRobot's `status()` returns
-# 60,929 bytes (measured 2026-09-05); storing every one whole would fill a 5 MB file in
-# 86 calls and rotate the history away in minutes. 16 KB keeps the shape of a large
-# response — enough to see which tool, which args, which error — while leaving the
-# window long enough to be worth reading.
-DEFAULT_MAX_BODY = 16 * 1024
+# ⚠⚠ THE STORED BODY CAP, WHICH IS NOT THE ROTATION CAP — AND 16 KB WAS WRONG. Raised to
+# 64 KB on 2026-09-06 after the first real consumer traffic arrived and was MEASURED
+# rather than guessed:
+#
+#     append request bodies, n=56:  min 4,810  median 35,216  max 50,886
+#     over the old 16 KB cap:       54 of 56
+#
+# So the instrument was discarding 96% of the bodies it exists to capture, and the whole
+# session retained 46% of the bytes on the wire. The 16 KB figure had been reasoned from
+# gitRobot's 60,929-byte `status()` RESPONSE — a true measurement of the wrong object: the
+# thing worth keeping is the consumer's REQUEST, and a coverage record naming 500 subjects
+# is 35 KB of the payload the log was built to show.
+#
+# ⭐ 64 KB is chosen to sit ABOVE the observed maximum, not near it. A cap tuned to today's
+# median silently starts truncating the moment the corpus grows, and a truncated body
+# cannot show what differed between attempt one and attempt two of a retry — which is the
+# single failure this log exists to catch.
+#
+# ⚠ THE COST IS WINDOW LENGTH AND IT IS REAL. Full bodies for this sample were 2.1 MB, so
+# a 5 MB x 5 window holds roughly a dozen sessions. That is a rotation-size decision, not a
+# cap decision — raise ZPLOG_MAX_BYTES if the history matters more than the disk.
+DEFAULT_MAX_BODY = 64 * 1024
 
 # ⚠ Accumulation ceiling, separate from the stored cap and the reason this middleware
 # cannot be turned into a memory leak by a large stream. A streamable-HTTP response
