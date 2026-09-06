@@ -185,3 +185,33 @@ def test_a_validation_refusal_keeps_every_violation(tools):
     assert result.isError is True
     assert payload["error_type"] == "validation"
     assert len(payload["errors"]) > 1, "V-rules must all be reported at once"
+
+
+def test_a_raising_tool_still_returns_parseable_json():
+    """⚠⚠ TWO SERVERS VERIFIED CLEAN IS NOT THE FLEET VERIFIED CLEAN.
+
+    verdictLedger and gitRobot route every tool through a `_guard` that RETURNS
+    `{ok: false, ...}`, so nothing raises. sjv's read tools call the store directly and
+    RAISE — and on the first live check after this landed, `get(collection='nope')` came
+    back as `"Error executing tool get: Unknown collection…"`: the prefixed, unparseable
+    shape this module exists to prevent, still arriving on a third of the fleet.
+
+    The handler now catches, so a raising tool produces JSON like any other refusal. This
+    test drives a tool into an exception to prove it, rather than asserting it.
+    """
+    from mcp.types import CallToolRequest, CallToolRequestParams
+    handler = mcp._mcp_server.request_handlers[CallToolRequest]
+
+    # `narrow` on a record id that does not exist raises inside the ledger.
+    result = asyncio.run(handler(CallToolRequest(
+        method="tools/call",
+        params=CallToolRequestParams(name="narrow", arguments={
+            "record_id": "no-such@nothing#0", "failing": ["a"]})))).root
+    text = result.content[0].text
+
+    assert result.isError is True
+    assert not text.lstrip().startswith("Error executing tool"), \
+        "a raising tool escaped to the prefixing path"
+    payload = json.loads(text)
+    assert payload["ok"] is False
+    assert payload["error_type"], "a refusal must carry some error_type"

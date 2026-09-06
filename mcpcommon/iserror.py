@@ -65,8 +65,34 @@ def install(mcp) -> None:
 
     @mcp._mcp_server.call_tool(validate_input=False)
     async def _call_tool(name: str, arguments: dict) -> types.CallToolResult:
-        result = await mcp._tool_manager.call_tool(
-            name, arguments, context=mcp.get_context(), convert_result=False)
+        try:
+            result = await mcp._tool_manager.call_tool(
+                name, arguments, context=mcp.get_context(), convert_result=False)
+        except Exception as exc:                        # noqa: BLE001
+            # ⚠⚠ A RAISING TOOL MUST NOT ESCAPE TO THE PREFIXING PATH, AND ON THIS FLEET
+            # SOME DO. Measured 2026-09-06 against the LIVE servers immediately after
+            # this landed: verdictLedger and gitRobot were clean because every tool goes
+            # through a `_guard` that RETURNS `{ok: false, ...}` — but sjv's read tools
+            # (`get`, `find`, `view`) call the store directly and RAISE. So
+            # `get(collection='nope')` came back
+            #
+            #     isError: true, text: "Error executing tool get: Unknown collection…"
+            #
+            # — the exact prefixed, unparseable shape this module exists to avoid, still
+            # arriving on a third of the fleet. Two servers verified clean is not the
+            # fleet verified clean; the third is the one that had a different internal
+            # convention, and only calling all three found it.
+            #
+            # ⚠ `unhandled` is deliberately NOT one of the typed `error_type` values. The
+            # tool did not classify this failure, and inventing a class for it here would
+            # be a guess wearing a taxonomy — the same move as reconstructing `failing`
+            # from a reason string.
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=_text(
+                    {"ok": False, "error_type": "unhandled",
+                     "error": f"{type(exc).__name__}: {exc}", "tool": name}))],
+                isError=True,
+            )
 
         # ⚠ A tool that does not return a dict cannot be judged, so it is reported as a
         # success rather than guessed at. Every tool here returns `_guard`'s dict; if one
