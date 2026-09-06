@@ -45,6 +45,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
+from gitrobot_server.results import (  # noqa: E402
+    ExplainResult, HistoryResult, PreflightStatusResult, PushStatusResult,
+    ReadResult, ReceiptResult, RequirementsResult, StatusResult)
+
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError
 
@@ -95,7 +99,7 @@ async def _guard(fn, *args, **kwargs) -> dict:
 @mcp.tool(title='Read a file at a ref',
           annotations=ToolAnnotations(title='Read a file at a ref', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main",
-               worktree: Optional[str] = None) -> dict:
+               worktree: Optional[str] = None) -> ReadResult:
     """Run an allow-listed READ-ONLY git command. No gate, no audit, always available.
 
     Pass the subcommand and its arguments separately: read(op='log', args=['-5','--oneline']).
@@ -116,7 +120,7 @@ async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main
 
 @mcp.tool(title='Repository and gate status',
           annotations=ToolAnnotations(title='Repository and gate status', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def status() -> dict:
+async def status() -> StatusResult:
     """Tree state, branch, unpushed commit count, and what would block a push right now.
 
     `would_block_push` is TIP-SCOPED and cheap. It answers "would a push of THIS COMMIT be
@@ -134,7 +138,7 @@ async def status() -> dict:
 @mcp.tool(title='Stage paths',
           annotations=ToolAnnotations(title='Stage paths', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def stage(paths: list[str], repo_mode: str = "main",
-                worktree: Optional[str] = None) -> dict:
+                worktree: Optional[str] = None) -> ReceiptResult:
     """Stage NAMED paths. There is no bulk form on the main repository.
 
     `-A`/`.`/`-u` are refused there because background agents write to this checkout
@@ -148,7 +152,7 @@ async def stage(paths: list[str], repo_mode: str = "main",
 @mcp.tool(title='Unstage paths',
           annotations=ToolAnnotations(title='Unstage paths', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def unstage(paths: list[str], reason: Optional[str] = None,
-                  repo_mode: str = "main", worktree: Optional[str] = None) -> dict:
+                  repo_mode: str = "main", worktree: Optional[str] = None) -> ReceiptResult:
     """Remove NAMED paths from the index. The WORKING TREE IS UNTOUCHED.
 
     The inverse of , and it exists because on this pipeline staging is a
@@ -172,7 +176,7 @@ async def unstage(paths: list[str], reason: Optional[str] = None,
 @mcp.tool(title='Commit staged work',
           annotations=ToolAnnotations(title='Commit staged work', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def commit(message_file: str, reason: Optional[str] = None,
-           repo_mode: str = "main", worktree: Optional[str] = None) -> dict:
+           repo_mode: str = "main", worktree: Optional[str] = None) -> ReceiptResult:
     """Commit the staged index. The message is read from a FILE, never passed as an argument.
 
     Prose contains newlines, quotes and non-ASCII; every one of those is a quoting hazard on
@@ -199,7 +203,7 @@ async def commit(message_file: str, reason: Optional[str] = None,
 
 @mcp.tool(title='Run the push preflight',
           annotations=ToolAnnotations(title='Run the push preflight', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def preflight(reason: Optional[str] = None) -> dict:
+async def preflight(reason: Optional[str] = None) -> ReceiptResult:
     """START the full pre-push pipeline WITHOUT pushing. Returns IMMEDIATELY.
 
     ⚠ Run this BEFORE push — push refuses without it. A gate that runs inside the push has a
@@ -216,7 +220,7 @@ async def preflight(reason: Optional[str] = None) -> dict:
 
 @mcp.tool(title='Preflight state',
           annotations=ToolAnnotations(title='Preflight state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def preflight_status() -> dict:
+async def preflight_status() -> PreflightStatusResult:
     """The state of the latest preflight for the current HEAD.
 
     'running' / 'passed' / 'failed' / 'died' / 'none'. 'died' means a run was interrupted
@@ -228,7 +232,7 @@ async def preflight_status() -> dict:
 
 @mcp.tool(title='Push to the remote',
           annotations=ToolAnnotations(title='Push to the remote', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
-async def push(branch: str, reason: str, repo_mode: str = "main") -> dict:
+async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResult:
     """Push a branch. On the main repo: requires a passing preflight() for the CURRENT HEAD.
 
     repo_mode='.claude-local' pushes that nested repository to its OWN remote instead. It is a
@@ -255,7 +259,7 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> dict:
 
 @mcp.tool(title='Required gates for an action',
           annotations=ToolAnnotations(title='Required gates for an action', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def requirements(action: str = "push") -> dict:
+async def requirements(action: str = "push") -> RequirementsResult:
     """⭐⭐ THE SUCCESS CONDITIONS FOR AN ACTION — what must be green, what must NOT block you,
     the preconditions, the order to do them in, and which tool answers which question.
 
@@ -277,7 +281,7 @@ async def requirements(action: str = "push") -> dict:
 
 @mcp.tool(title='Push state',
           annotations=ToolAnnotations(title='Push state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def push_status() -> dict:
+async def push_status() -> PushStatusResult:
     """Where the last started push got to: none / running / allowed / failed / died.
 
     ⚠ `died` DOES NOT MEAN NOTHING WAS PUSHED. The worker is gone and no receipt was written —
@@ -291,7 +295,7 @@ async def push_status() -> dict:
 @mcp.tool(title='Fetch from the remote',
           annotations=ToolAnnotations(title='Fetch from the remote', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def fetch(prune: bool = False, reason: Optional[str] = None,
-                repo_mode: str = "main") -> dict:
+                repo_mode: str = "main") -> ReceiptResult:
     """Update remote-tracking refs from origin. Touches no working file, no local branch.
 
     Run it before pushing so you know whether the remote moved. It cannot destroy anything
@@ -302,7 +306,7 @@ async def fetch(prune: bool = False, reason: Optional[str] = None,
 
 @mcp.tool(title='Switch branch',
           annotations=ToolAnnotations(title='Switch branch', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def switch(branch: str, create: bool = False, reason: Optional[str] = None) -> dict:
+async def switch(branch: str, create: bool = False, reason: Optional[str] = None) -> ReceiptResult:
     """Move HEAD to another branch (create=True makes it). REFUSED while the tree is dirty.
 
     Git already blocks a switch that would overwrite a file. What this catches is the
@@ -314,7 +318,7 @@ async def switch(branch: str, create: bool = False, reason: Optional[str] = None
 
 @mcp.tool(title='Merge a branch',
           annotations=ToolAnnotations(title='Merge a branch', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
-async def merge(branch: str, reason: str) -> dict:
+async def merge(branch: str, reason: str) -> ReceiptResult:
     """Merge a branch into HEAD (--no-ff). REFUSED while the tree is dirty; reason required.
 
     No squash, no strategy overrides, no --no-verify: a merge needing those is a decision,
@@ -324,7 +328,7 @@ async def merge(branch: str, reason: str) -> dict:
 
 @mcp.tool(title='Rebase — REWRITES HISTORY',
           annotations=ToolAnnotations(title='Rebase — REWRITES HISTORY', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def rebase(onto: str, reason: str) -> dict:
+async def rebase(onto: str, reason: str) -> ReceiptResult:
     """Rebase HEAD onto a ref. REFUSED while dirty, and refused if it would rewrite commits
     that are ALREADY on the remote.
 
@@ -336,7 +340,7 @@ async def rebase(onto: str, reason: str) -> dict:
 
 @mcp.tool(title='Squash — REWRITES HISTORY',
           annotations=ToolAnnotations(title='Squash — REWRITES HISTORY', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def squash(onto: str, message_file: str, reason: str) -> dict:
+async def squash(onto: str, message_file: str, reason: str) -> ReceiptResult:
     """Replace onto..HEAD with ONE commit carrying HEAD's EXISTING tree.
 
     ⛔ REMEDIATION ONLY — NOT A STANDARD STEP BEFORE A PUSH, and that holds regardless of
@@ -420,7 +424,7 @@ async def squash(onto: str, message_file: str, reason: str) -> dict:
 
 @mcp.tool(title='Delete a branch',
           annotations=ToolAnnotations(title='Delete a branch', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def branch_delete(name: str, reason: str) -> dict:
+async def branch_delete(name: str, reason: str) -> ReceiptResult:
     """Delete a branch — SAFE delete only. Reason required.
 
     A branch whose commits are not merged anywhere is REFUSED rather than force-deleted:
@@ -431,7 +435,7 @@ async def branch_delete(name: str, reason: str) -> dict:
 
 @mcp.tool(title='Create a tag',
           annotations=ToolAnnotations(title='Create a tag', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
-async def tag_create(name: str, reason: str, message_file: Optional[str] = None) -> dict:
+async def tag_create(name: str, reason: str, message_file: Optional[str] = None) -> ReceiptResult:
     """Create an annotated tag. There is deliberately NO tag deletion.
 
     A pushed tag is a public marker other things reference — here, releases mint permanent
@@ -443,7 +447,7 @@ async def tag_create(name: str, reason: str, message_file: Optional[str] = None)
 @mcp.tool(title='Remove files',
           annotations=ToolAnnotations(title='Remove files', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def remove_files(paths: list[str], reason: str, cached: bool = False,
-                       repo_mode: str = "main") -> dict:
+                       repo_mode: str = "main") -> ReceiptResult:
     """`git rm` on NAMED paths. No bulk form, reason required.
 
     cached=True untracks the file but leaves it on disk. Without it the file is deleted, so
@@ -455,7 +459,7 @@ async def remove_files(paths: list[str], reason: str, cached: bool = False,
 
 @mcp.tool(title='Subjects for a ledger record',
           annotations=ToolAnnotations(title='Subjects for a ledger record', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def ledger_subjects(observed: dict, ref: str = "INDEX") -> dict:
+async def ledger_subjects(observed: dict, ref: str = "INDEX") -> ReceiptResult:
     """{basis, subjects, skipped} — the identity of what a gate is about to certify.
 
     `observed` is REQUIRED: {path: the git blob id YOU ACTUALLY READ}. This tool
@@ -483,7 +487,7 @@ async def ledger_subjects(observed: dict, ref: str = "INDEX") -> dict:
 
 @mcp.tool(title='Add or remove a worktree',
           annotations=ToolAnnotations(title='Add or remove a worktree', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] = None) -> dict:
+async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] = None) -> ReceiptResult:
     """Private throwaway checkouts — the sanctioned alternative to every refused operation.
 
     action='add' (ref defaults to HEAD) creates a detached worktree under a scratch area
@@ -525,7 +529,7 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
 
 @mcp.tool(title='Explain a past decision',
           annotations=ToolAnnotations(title='Explain a past decision', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def explain(refusal_id: str) -> dict:
+async def explain(refusal_id: str) -> ExplainResult:
     """Why an operation was refused, and exactly what discharges it.
 
     Every refusal returns a `refusal_id`; pass it here for the long form."""
@@ -535,7 +539,7 @@ async def explain(refusal_id: str) -> dict:
 @mcp.tool(title='Audit history',
           annotations=ToolAnnotations(title='Audit history', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def history(limit: int = 20, full: bool = False, op: Optional[str] = None,
-                  decision: Optional[str] = None) -> dict:
+                  decision: Optional[str] = None) -> HistoryResult:
     """The append-only operation log: every mutating call, ALLOWED OR REFUSED.
 
     The refused half matters as much as the allowed half - a log that only records successes
