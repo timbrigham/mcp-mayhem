@@ -177,3 +177,33 @@ def test_logging_never_breaks_serving(tmp_path, monkeypatch):
     assert [m["type"] for m in sent][0] == "http.response.start"
     assert any(m["type"] == "http.response.body" for m in sent), \
         "a failed log write must not cost the caller its response"
+
+
+def test_the_join_key_is_captured(tmp_path, monkeypatch):
+    """⭐⭐ THE TWO-SIDED COMPARISON NEEDS A ROW-TO-ROW JOIN, NOT TWO PILES.
+
+    Logging on both sides is the disagreement check applied to the transport: our record
+    of what ARRIVED against the consumer's of what they SENT. That only works if the rows
+    line up. `(tool, timestamp, byte count)` is not enough — same host means one clock,
+    but a retry loop emits identical tool and size inside one second, which is precisely
+    the traffic worth inspecting.
+
+    ⚠ `rpc_id` needs no new protocol surface: JSON-RPC already requires an `id` the caller
+    chooses. It is logged whatever they send, because a REPEATED id is itself a finding
+    about the caller — the stock client sends a constant 1 and 2.
+    """
+    monkeypatch.setenv("ZPLOG_DIR", str(tmp_path))
+    logger, path = build_logger("t")
+    body = json.dumps({"jsonrpc": "2.0", "id": "7f3c1e2a-uuid", "method": "tools/call",
+                       "params": {"name": "append"}}).encode()
+    # ⚠ Header name deliberately mixed-case: ASGI does not normalise, so the lookup must.
+    scope = {"type": "http", "path": "/mcp", "method": "POST", "client": ("127.0.0.1", 1),
+             "headers": [(b"Mcp-Session-Id", b"sess-abc123")]}
+    _drive(CallLogMiddleware(_echo_app, logger, max_body=9999, server_name="t"), body, scope)
+    for handler in logger.handlers:
+        handler.flush()
+
+    row = _rows(path)[-1]
+    assert row["rpc_id"] == "7f3c1e2a-uuid", "caller's JSON-RPC id is the join key"
+    assert row["session"] == "sess-abc123", "session header lookup must be case-insensitive"
+    assert row["tool"] == "append"

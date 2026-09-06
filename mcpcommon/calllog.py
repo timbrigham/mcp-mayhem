@@ -228,16 +228,38 @@ class CallLogMiddleware:
         # cap: a well-formed `tools/call` for `append` recorded no tool at all. Same
         # defect this repo exists to remove — a true value read off the wrong object,
         # here the truncated COPY rather than the bytes that arrived.
-        method = tool = None
+        method = tool = rpc_id = None
         try:
             body = json.loads(req_raw.decode("utf-8", "replace")) if req_raw.strip() else None
             if isinstance(body, dict):
                 method = body.get("method")
+                # ⭐⭐ THE JOIN KEY FOR THE TWO-SIDED COMPARISON, AND IT IS A FIELD THAT
+                # ALREADY EXISTS. The whole point of logging on both sides is that our
+                # record of what ARRIVED and the consumer's record of what they SENT can
+                # disagree — and a disagreement you cannot line up row-to-row is two piles,
+                # not a check. Joining on (tool, timestamp, byte count) is not good enough:
+                # same host means one clock, but a retry loop emits identical tool + size
+                # within the same second, which is exactly the traffic worth inspecting.
+                #
+                # ⚠ NO NEW PROTOCOL SURFACE IS NEEDED. JSON-RPC already requires an `id`
+                # on every request and the caller chooses it. A UUID there is unique by
+                # construction, survives the MCP layer untouched, and needs no header
+                # negotiation. Requested of the consumer 2026-09-06.
+                rpc_id = body.get("id")
                 params = body.get("params")
                 if isinstance(params, dict):
                     tool = params.get("name")
         except Exception:                      # noqa: BLE001
             pass
+
+        # ⚠ Second half of the key, and it disambiguates two clients calling concurrently.
+        # A notification carries no `id` at all (`notifications/initialized`), so those rows
+        # join on session alone — correct, since there is no response to compare either.
+        session = None
+        for raw_name, raw_value in (scope.get("headers") or []):
+            if raw_name.lower() == b"mcp-session-id":
+                session = raw_value.decode("latin-1", "replace")
+                break
 
         row = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(started)),
@@ -249,6 +271,11 @@ class CallLogMiddleware:
             "status": status.get("code"),
             "rpc_method": method,
             "tool": tool,
+            # ⚠ The join key. `rpc_id` is the caller's own JSON-RPC id — useless if they
+            # reuse a constant (the stock client sends 1 and 2), unique if they send a
+            # UUID. Logged either way: a repeated id is itself a finding about the caller.
+            "rpc_id": rpc_id,
+            "session": session,
             # ⚠ `_bytes` is the length ON THE WIRE, always — not the length of what is
             # stored above it. Two fields, two claims, which is why a truncated row is
             # still an honest measurement of size.
