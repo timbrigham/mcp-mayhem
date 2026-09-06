@@ -81,10 +81,22 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 #
 # ⛔ DO NOT ADD A LINE HERE TO MAKE THIS PASS. Adding one declares a new place where the two
 # surfaces disagree about what gates a push.
+#   copy_editor  registry ['push']  admission []                              LOOSER, and
+#              ⛔ DELIBERATE AND TEMPORARY — the only entry here with a stated expiry.
+#              Registered 2026-09-06 on Tim's call, deliberately NOT admitted. The D9 panel
+#              (three copy editors, 2-of-3) is what `UNDECIDED` and `failing`-narrowing were
+#              built for, and it has 0 records in 2,170 because its brief has never run.
+#              ADMISSION IS WHAT MAKES AN `UNDECIDED` BLOCK, so admitting on registration
+#              would let the first exercise of a gate nobody has watched work refuse a push.
+#              ⭐ SATISFIED WHEN: one real panel has run and been inspected — then
+#              `copy_editor` joins `admission.v1.json` (this side's file) and this line goes.
+#              Registry entry carries `_why_not_admitted_yet` naming the same condition, so
+#              both halves state their own removal test rather than either owning it alone.
 KNOWN_MISMATCHES = {
     ("build", ("tag",), ("commit", "push", "tag")),
     ("rely", ("commit", "push", "tag"), ("tag",)),
     ("prior_art", ("push",), ()),
+    ("copy_editor", ("push",), ()),
 }
 
 
