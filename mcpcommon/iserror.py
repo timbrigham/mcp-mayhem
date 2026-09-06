@@ -99,7 +99,22 @@ def install(mcp) -> None:
         # ever does not, silence is the honest answer and `isError` stays false.
         refused = isinstance(result, dict) and result.get("ok") is False
 
+        # ⚠⚠ `structuredContent` ON SUCCESS ONLY, AND THE ASYMMETRY IS THE POINT. A declared
+        # `outputSchema` describes what a SUCCESSFUL call returns; a refusal has a different
+        # shape entirely (`ok: false` plus `error_type`, `error`, `errors`). Attaching a refusal
+        # to a success schema would publish a contract the response violates — a client that
+        # actually validates would then break on exactly the calls it most needs to read.
+        #
+        # ⭐ So a refusal travels as `isError` plus JSON in `content`, which is what the consumer
+        # already parses, and carries no structuredContent to be checked against the wrong shape.
+        # Absence here is a fact about the result, not an omission.
+        #
+        # ⚠ Returning a CallToolResult BYPASSES the low-level server's own structuredContent
+        # validation (measured 2026-09-06: declaring an outputSchema against this handler raised
+        # nothing either way). That is why this had to be done deliberately rather than inherited
+        # — the safety net that would have caught a mismatch is not in this path.
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=_text(result))],
+            structuredContent=(result if (not refused and isinstance(result, dict)) else None),
             isError=refused,
         )

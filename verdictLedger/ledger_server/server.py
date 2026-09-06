@@ -46,6 +46,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
+from ledger_server.results import (  # noqa: E402
+    AppendResult, CanPushResult, CoverageGapResult, CoverageResult, CrossrefResult,
+    FindResult, GenesisResult, GetResult, HealPlanResult, InventoryResult,
+    PolicyResult, ProgressResult, RenderResult, RequirementsResult, SignalsResult,
+    StatusResult, ValidateResult)
+
 from core import canpush as canpush_mod
 from core import crossref as crossref_mod
 from core import inventory as inventory_mod
@@ -160,7 +166,7 @@ def _files(ref: str) -> dict:
 
 @mcp.tool(title='Append a verdict',
           annotations=ToolAnnotations(title='Append a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def append(record: dict) -> dict:
+async def append(record: dict) -> AppendResult:
     """Append one verdict. Validated against V1-V18; REFUSES anything short.
 
     ⚠ THIS DOCSTRING IS THE WRITING GUIDE. `client/record.py` carries the same advice
@@ -215,7 +221,7 @@ async def append(record: dict) -> dict:
 @mcp.tool(title='Sign off a verdict',
           annotations=ToolAnnotations(title='Sign off a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def sign(step: str, subjects: list[dict], who: str, reason: str,
-               basis: dict, tier: str = "H") -> dict:
+               basis: dict, tier: str = "H") -> AppendResult:
     """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt.
 
     `who` is REQUIRED and is NEVER verified. A signature is an ATTRIBUTION, not an
@@ -228,7 +234,7 @@ async def sign(step: str, subjects: list[dict], who: str, reason: str,
 @mcp.tool(title='Regrade a verdict',
           annotations=ToolAnnotations(title='Regrade a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def override(step: str, subjects: list[dict], who: str, reason: str,
-                   basis: dict, tier: str = "H") -> dict:
+                   basis: dict, tier: str = "H") -> AppendResult:
     """REGRADE — "you are wrong, the gate erred".
 
     Feeds the OPPOSITE signal to `sign` and shares no code path with it: an accept
@@ -244,7 +250,7 @@ async def override(step: str, subjects: list[dict], who: str, reason: str,
 @mcp.tool(title='Narrow an indictment',
           annotations=ToolAnnotations(title='Narrow an indictment', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def narrow(record_id: str, failing: list[str],
-                 reason: Optional[str] = None) -> dict:
+                 reason: Optional[str] = None) -> AppendResult:
     """⭐⭐ NARROW A WIDE FAIL'S INDICTMENT — the sanctioned correction, no retyping.
 
     A FAIL's `subjects` say what it EXAMINED; `failing` says what it INDICTS. A step that
@@ -269,7 +275,7 @@ async def narrow(record_id: str, failing: list[str],
 
 @mcp.tool(title='Seed the genesis floor',
           annotations=ToolAnnotations(title='Seed the genesis floor', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
-async def genesis(commit: str, note: Optional[str] = None) -> dict:
+async def genesis(commit: str, note: Optional[str] = None) -> GenesisResult:
     """Seed the recording floor: the commit from which crossref claims anything.
 
     ⚠ A fact about when RECORDING began — never a claim that earlier work was
@@ -282,7 +288,7 @@ async def genesis(commit: str, note: Optional[str] = None) -> dict:
 
 @mcp.tool(title='Preview validation',
           annotations=ToolAnnotations(title='Preview validation', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def validate(record: dict) -> dict:
+async def validate(record: dict) -> ValidateResult:
     """Schema plus V1-V18. Pure, no write — use it to check a record BEFORE
     appending. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
@@ -292,7 +298,7 @@ async def validate(record: dict) -> dict:
 
 @mcp.tool(title='Get one record',
           annotations=ToolAnnotations(title='Get one record', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def get(id: str) -> dict:
+async def get(id: str) -> GetResult:
     """One record by id."""
     return await _guard(lambda: {"record": _ledger().get(id),
                                  "found": _ledger().get(id) is not None})
@@ -302,7 +308,7 @@ async def get(id: str) -> dict:
           annotations=ToolAnnotations(title='Search records', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def find(step: Optional[str] = None, verdict: Optional[str] = None,
                tier: Optional[str] = None, since: Optional[str] = None,
-               subject_sha: Optional[str] = None, limit: int = 50) -> dict:
+               subject_sha: Optional[str] = None, limit: int = 50) -> FindResult:
     """Query the stream. `count` is the full match total, `returned` is how many came back."""
     return await _guard(_ledger().find, step=step, verdict=verdict, tier=tier,
                         since=since, subject_sha=subject_sha, limit=limit)
@@ -310,7 +316,7 @@ async def find(step: Optional[str] = None, verdict: Optional[str] = None,
 
 @mcp.tool(title='Render the inventory',
           annotations=ToolAnnotations(title='Render the inventory', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def render(id: str) -> dict:
+async def render(id: str) -> RenderResult:
     """THE single renderer for a human verdict line.
 
     Everything that prints a verdict calls this — the pre-push echo, the manifest
@@ -328,7 +334,7 @@ def _sync_render(record_id: str) -> dict:
 
 @mcp.tool(title='Required steps for an action',
           annotations=ToolAnnotations(title='Required steps for an action', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def requirements(action: Optional[str] = None) -> dict:
+async def requirements(action: Optional[str] = None) -> RequirementsResult:
     """THE SINGLE COPY OF THE TYPE REGISTRY — what may be RECORDED. **NOT the admission set.**
 
     ⚠⚠ THIS DOCSTRING USED TO SAY "gitRobot reads it from here", FULL STOP, AND THAT WAS FALSE
@@ -365,7 +371,7 @@ async def requirements(action: Optional[str] = None) -> dict:
 
 @mcp.tool(title='Show live policy',
           annotations=ToolAnnotations(title='Show live policy', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def policy() -> dict:
+async def policy() -> PolicyResult:
     """Thresholds, actions, min_passes, the genesis floor, and the policy sha.
 
     Every value the process compares against is here rather than in code. Change a
@@ -409,7 +415,7 @@ def _sync_policy() -> dict:
 @mcp.tool(title='Coverage inventory',
           annotations=ToolAnnotations(title='Coverage inventory', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def inventory(action: str, ref: str = "staged",
-                    admission: Optional[list[str]] = None) -> dict:
+                    admission: Optional[list[str]] = None) -> InventoryResult:
     """Required vs satisfied vs MISSING for a ref — the complete key set for an action.
 
     ⚠ The requirement set is declared IN ADVANCE. An inventory assembled from "the
@@ -464,7 +470,7 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
 @mcp.tool(title='Progress summary',
           annotations=ToolAnnotations(title='Progress summary', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def progress(action: str = "push", ref: str = "staged",
-                   admission: Optional[list[str]] = None, rounds: int = 8) -> dict:
+                   admission: Optional[list[str]] = None, rounds: int = 8) -> ProgressResult:
     """ONE VIEW: what blocks the action, and is it CONVERGING?
 
     `inventory` answers "is it green now". `coverage_gap` answers "which paths owe a
@@ -508,7 +514,7 @@ def _sync_progress(action, ref, admission, rounds) -> dict:
           annotations=ToolAnnotations(title='Unexamined in-scope paths', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def coverage_gap(action: str = "push", ref: str = "staged",
                        admission: Optional[list[str]] = None,
-                       step: Optional[str] = None, limit: int = 200) -> dict:
+                       step: Optional[str] = None, limit: int = 200) -> CoverageGapResult:
     """THE WORK ORDER: which paths does each admitted step still owe a PASS at THIS
     content? Ask it again rather than caching the answer — it changes as work lands.
 
@@ -548,7 +554,7 @@ def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
 @mcp.tool(title='Plan to clear blockers',
           annotations=ToolAnnotations(title='Plan to clear blockers', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def heal_plan(action: str = "push", ref: str = "staged",
-                    admission: Optional[list[str]] = None) -> dict:
+                    admission: Optional[list[str]] = None) -> HealPlanResult:
     """⭐⭐ WHAT TO RE-RUN TO MAKE THIS REF GREEN, split by WHO CAN DO IT and by whether
     re-running would help at all. The witness half of self-healing: the ledger says what is
     owed; it never runs anything.
@@ -591,7 +597,7 @@ def _sync_heal_plan(action, ref, admission) -> dict:
 
 @mcp.tool(title='Coverage by step',
           annotations=ToolAnnotations(title='Coverage by step', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def coverage(ref: str = "HEAD") -> dict:
+async def coverage(ref: str = "HEAD") -> CoverageResult:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 
     ⚠ On an empty stream this reports EVERYTHING uncovered, never a clean bill of
@@ -604,7 +610,7 @@ async def coverage(ref: str = "HEAD") -> dict:
           annotations=ToolAnnotations(title='May this push proceed', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def can_push(rev_range: str, admission: Optional[list[str]] = None,
                    commit_admission: Optional[list[str]] = None,
-                   action: str = "push", limit: int = 500) -> dict:
+                   action: str = "push", limit: int = 500) -> CanPushResult:
     """⭐⭐ THE ADMISSION QUESTION: does every commit in this RANGE carry the admission set?
 
     §12-0-alpha: "these are the keys needed, does commit xyz have them so we can push
@@ -664,7 +670,7 @@ def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dic
 
 @mcp.tool(title='Cross-reference the stream',
           annotations=ToolAnnotations(title='Cross-reference the stream', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def crossref(since: Optional[str] = None, limit: int = 500) -> dict:
+async def crossref(since: Optional[str] = None, limit: int = 500) -> CrossrefResult:
     """Audit GIT HISTORY against the ledger: did anything land without the gate?
 
     Walks `rev-list <genesis>..HEAD`, resolves each commit's tree, and asks whether that
@@ -696,7 +702,7 @@ def _sync_crossref(since, limit) -> dict:
 
 @mcp.tool(title='Stream signals',
           annotations=ToolAnnotations(title='Stream signals', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def signals(family: Optional[str] = None, step: Optional[str] = None) -> dict:
+async def signals(family: Optional[str] = None, step: Optional[str] = None) -> SignalsResult:
     """The signal families, computed from the record fields alone.
 
     ⚠ Counts print on every call, clean or not — a signal nobody reads manufactures
@@ -709,7 +715,7 @@ async def signals(family: Optional[str] = None, step: Optional[str] = None) -> d
 
 @mcp.tool(title='Server and stream health',
           annotations=ToolAnnotations(title='Server and stream health', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def status() -> dict:
+async def status() -> StatusResult:
     """Stream health, config state, invalid-append count, edge conditions, the
     genesis floor, and the steps whose latest verdict is UNDECIDED.
 
