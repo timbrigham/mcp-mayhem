@@ -73,10 +73,37 @@ DEFAULT_BACKUPS = 5
 # cannot show what differed between attempt one and attempt two of a retry — which is the
 # single failure this log exists to catch.
 #
-# ⚠ THE COST IS WINDOW LENGTH AND IT IS REAL. Full bodies for this sample were 2.1 MB, so
-# a 5 MB x 5 window holds roughly a dozen sessions. That is a rotation-size decision, not a
-# cap decision — raise ZPLOG_MAX_BYTES if the history matters more than the disk.
-DEFAULT_MAX_BODY = 64 * 1024
+# ⚠⚠ AND 64 KB WAS *ALSO* WRONG, FOR THE SAME REASON ONE OBJECT OVER. Raised to 128 KB on
+# 2026-09-06 after the consumer pointed at the rows the log could not audit.
+#
+# The 64 KB figure was sized above the consumer's REQUEST maximum (50,886). Requests were
+# the right object for the 16 KB fix and the WRONG one here: the cap governs BOTH bodies,
+# and gitRobot's RESPONSES are systematically larger than anything the consumer sends.
+# Measured across the whole fleet:
+#
+#     gitRobot commit      max 72,995   OVER the 64 KB cap
+#     gitRobot status      max 65,891   OVER the 64 KB cap
+#     verdictLedger inventory  62,431   just under
+#
+# So the object flipped and the error flipped with it — third instance of that class in
+# two days, and this one was found by a peer joining their oversized-result sizes against
+# my truncated rows.
+#
+# ⚠ THEIR SPECIFIC GUESS WAS WRONG AND THE JOIN IS WHAT SHOWED IT. They predicted my two
+# unjudgeable rows were the two 71.5 KB `commit` results; the join on timestamp says both
+# post-flip truncations are `status` (65,891 and 65,854), and the `commit` rows were
+# clipped by the OLD 16 KB cap while still pre-flip. The conclusion survived the
+# refutation of its evidence: `commit` DOES exceed 64 KB, so the next one would have
+# truncated — the highest-value row on the gate path, unauditable after an incident.
+#
+# ⭐ 128 KB, not 96 KB. 96 clears today's 72,995 by a hair; a cap sized to the current
+# maximum is a cap that starts truncating on the next commit with a longer diff. Still far
+# under `_ACCUM_CEILING` (256 KB), which is the memory bound and a separate concern.
+#
+# ⚠ THE COST IS WINDOW LENGTH AND IT IS REAL. Full bodies for the first sample were 2.1 MB,
+# so a 5 MB x 5 window holds roughly a dozen sessions. That is a rotation-size decision,
+# not a cap decision — raise ZPLOG_MAX_BYTES if the history matters more than the disk.
+DEFAULT_MAX_BODY = 128 * 1024
 
 # ⚠ Accumulation ceiling, separate from the stored cap and the reason this middleware
 # cannot be turned into a memory leak by a large stream. A streamable-HTTP response
