@@ -313,6 +313,55 @@ class Config:
         return "policy" if (self.policy.get("push") or {}).get("bar") is not None else "default"
 
     @property
+    def defaulted(self) -> list:
+        """Every policy setting whose key is ABSENT, so a built-in constant is in force.
+
+        ⚠⚠ A DEFAULT THAT BEHAVES CORRECTLY IS THE HARDEST KIND TO NOTICE, and this file's own
+        header forbids exactly this: *"it must NEVER fall back to a built-in default, because a
+        built-in default is a second copy of the policy and the weaker of the two is the copy
+        nobody notices."* That rule is enforced for the WHOLE FILE — an unloadable config serves
+        UNDECIDED — and was never enforced for an INDIVIDUAL KEY. A missing key defaults in
+        silence.
+
+        ⭐ Measured 2026-09-06: `push.bar` had been an invisible default for THREE DAYS, found by
+        the consumer while a push was blocked, "fixed" by adding the key to the file the TESTS
+        load, and found AGAIN a day later because the LIVE server reads a different file. Two
+        discoveries of one defect, because nothing enumerated what was running on a built-in.
+
+        ⛔ `direction` IS THE FIELD THAT MATTERS AND IT IS NOT COSMETIC. `push.bar` documents
+        "UNKNOWN VALUES FALL BACK TO THE STRICTER BAR… every_commit is the safe direction to be
+        wrong in" — and implements that for a TYPO while a MISSING key falls back to the LOOSER
+        `tip_green`. So the more likely mistake gets the more permissive treatment. Reporting the
+        direction is what makes that visible without changing what anything enforces.
+
+        ⚠ `agreement.min_passes` and `supersede.max_depth` are deliberately ABSENT from this list:
+        they have no built-in at all and raise if unset, which is the behaviour every entry here
+        should eventually have. They are the model, not an oversight.
+        """
+        out = []
+
+        def note(path: str, present: bool, in_force, direction: str, why: str):
+            if not present:
+                out.append({"key": path, "in_force": in_force,
+                            "direction": direction, "governs": why})
+
+        note("push.bar", (self.policy.get("push") or {}).get("bar") is not None,
+             "tip_green", "LOOSER than the typo fallback (every_commit)",
+             "what may be published: whether every commit in a range is judged or only the tip")
+        note("coverage.require_complete",
+             "require_complete" in (self.policy.get("coverage") or {}),
+             False, "PERMISSIVE — coverage is not enforced",
+             "whether a step may report SATISFIED having examined almost none of its scope")
+        note("migration.v16_evidence_required",
+             "v16_evidence_required" in (self.policy.get("migration") or {}),
+             True, "strict — the safe direction",
+             "whether a mechanical PASS is refused without evidence naming its checker")
+        for k, v in (("soft_seconds", 5), ("hard_seconds", 30)):
+            note(f"lock.{k}", k in (self.policy.get("lock") or {}), v,
+                 "operational, not policy", "store lock timing")
+        return out
+
+    @property
     def v16_required(self) -> bool:
         """Whether V16 REFUSES a mechanical PASS with no evidence.
 

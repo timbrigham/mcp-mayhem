@@ -1235,3 +1235,42 @@ def test_no_tracked_json_config_carries_CRLF():
     assert not bad, (
         "CRLF in tracked JSON config — pathlib.write_text does this on Windows; "
         "write bytes, or newline='' :\n  " + "\n  ".join(bad))
+
+
+def test_defaulted_reports_every_setting_running_on_a_builtin(tmp_path):
+    """⭐⭐ A DEFAULT THAT BEHAVES CORRECTLY IS THE HARDEST KIND TO NOTICE.
+
+    `config.py`'s header forbids built-in defaults outright — "a built-in default is a second
+    copy of the policy and the weaker of the two is the copy nobody notices" — and that rule was
+    enforced for the WHOLE FILE (an unloadable config serves UNDECIDED) and never for an
+    INDIVIDUAL KEY. A missing key defaulted in silence.
+
+    Measured 2026-09-06 against the live policy: `push.bar` and `coverage.require_complete` are
+    BOTH running on built-ins, and both defaults are the permissive direction. `push.bar` had
+    been invisible for three days, was "fixed" in the file only the tests load, and was found
+    again a day later because the live server reads a different file. Nothing enumerated what was
+    running on a constant, so the same defect was discovered twice.
+
+    ⚠ Both directions matter: a setting that is ABSENT must appear, and a setting that is
+    CONFIGURED must not — otherwise the list becomes noise and stops being read.
+    """
+    from core import config as config_mod
+
+    absent = config_mod.Config.__new__(config_mod.Config)
+    absent.policy = {"agreement": {"min_passes": 3}, "supersede": {"max_depth": 5}}
+    keys = {d["key"] for d in absent.defaulted}
+    assert "push.bar" in keys, "a missing push bar must be disclosed"
+    assert "coverage.require_complete" in keys
+    assert all("governs" in d and "direction" in d for d in absent.defaulted), (
+        "each entry must say WHAT it governs and WHICH DIRECTION the default errs — a bare "
+        "key name tells a reader nothing about whether to care")
+
+    configured = config_mod.Config.__new__(config_mod.Config)
+    configured.policy = {"push": {"bar": "every_commit"},
+                         "coverage": {"require_complete": True},
+                         "migration": {"v16_evidence_required": True},
+                         "lock": {"soft_seconds": 5, "hard_seconds": 30}}
+    assert configured.defaulted == [], (
+        "a fully configured policy must report NOTHING defaulted; a list that always has "
+        "entries says nothing, which is what test_status_is_silent_when_nothing_is_relaxed "
+        "exists to hold for `relaxations`")

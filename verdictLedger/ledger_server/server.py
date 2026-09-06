@@ -392,6 +392,17 @@ def _sync_policy() -> dict:
             # ⚠ A `config_sha` proves two readers see the same BYTES. It cannot tell
             # either of them which FILE those bytes came from, which is the question
             # that was unanswerable.
+            #
+            # ⚠⚠ AND `defaulted` IS THE SAME QUESTION FOR A KEY RATHER THAN A FILE. Knowing
+            # WHICH file was loaded still does not tell you which settings were not IN it. A
+            # reader asking "where is the push bar configured" got a path, went to that file,
+            # found no `push` key, and had to work out from source that a built-in was in
+            # force — twice, on two different days, by two different sessions.
+            #
+            # ⭐ ON EVERY CALL, EMPTY LIST INCLUDED, for the reason `relaxations` is: a
+            # disclosure that only appears when someone asks the right question is a
+            # disclosure nobody will remember to ask for.
+            "defaulted": cfg.defaulted,
             **cfg.paths()}
 
 
