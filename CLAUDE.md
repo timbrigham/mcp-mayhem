@@ -81,6 +81,66 @@ detected.
 **Guards and their claims land together.** A control whose surviving enforcement is *asserted*
 rather than *run* is an unpriced exemption. Verify by making it fail.
 
+## The MCP surface is a contract, not a docstring
+
+Measured 2026-09-05 across all four live servers: **84 tools, zero annotations, zero
+`outputSchema`, zero titles**, and twelve parameters declared
+`{"type": "object", "additionalProperties": true}` — the shape that constrains nothing.
+None of that was decided. FastMCP builds a working server from type hints and docstrings,
+so everything optional stays unset and the contract quietly migrates into prose. `append`
+carried a fifty-line writing guide in its docstring while publishing `record: any object`.
+
+**A shape you FETCH cannot go stale the way a shape you INSTALL does.** That is the whole
+argument: `verdictLedger/client/record.py` told callers to copy it into the consumer repo,
+and the two copies diverged in `emit()` with nothing comparing them. A published
+`inputSchema` is discovered through `tools/list` and cannot be copied out of date.
+
+Every tool on every server here:
+
+- **declares a real `inputSchema`** — a Pydantic model, never a bare `dict`. Structural
+  facts only. Registered step names and thresholds stay in config, because baking policy
+  into a static schema is the second-copy-of-the-policy that `config.py` forbids.
+- **declares `outputSchema` and returns `structuredContent`.** A caller must never have to
+  parse a text blob to learn whether the call worked.
+- **carries `ToolAnnotations`** — `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  `openWorldHint`. On servers whose value is *capability removal*, this is the field that
+  expresses it. Classify from the CODE, never the name: `ledger_subjects` reads like a
+  read and is Tier 2, because `write-tree` materialises objects.
+- **sets `isError` on a refusal.** A failed call must never be protocol-identical to a
+  successful one. ⚠ FastMCP has no seam for this — `call_tool` returns content or a dict,
+  never a `CallToolResult` — so the only route is raising, and the low-level server
+  REWRITES the text to `Error executing tool <name>: <msg>`, which is no longer JSON.
+  Flipping it unilaterally silently collapses every structured refusal the consumer
+  receives into `None`. It is a coordinated change, client first.
+- **conformance is a test, not a habit.** `verdictLedger/tests/test_mcp_conformance.py`
+  fails when a tool ships without annotations or a title, and RATCHETS the unconstrained
+  parameters: it fails when new debt appears *and* when listed debt is fixed without
+  updating the list. A one-directional check lets debt sit forever.
+
+## HTTP call logging — an instrument, never evidence
+
+`mcpcommon/calllog.py`, imported by every server. **One implementation at the repo root —
+never copied into each server**, which is the defect the client above exists to warn about.
+5 MB × 5 files per server, both bodies, into the gitignored `.mcp-local/`.
+
+It exists because the servers had no record of being called. gitRobot audits mutations and
+skips reads by design; verdictLedger's `records.jsonl` is the PRODUCT, the verdicts that
+PASSED. **A refused append left no trace anywhere**, so `errors.py`'s stated fear — a caller
+retrying its way past a validation rule — was unfalsifiable.
+
+⭐ It is also the second measurement pointed at the consumer. Asked 2026-09-05 whether their
+client emits `failing`, the only available answer was their word for it; the log answers
+that from this side without believing a reply.
+
+⛔ **It is NOT evidence and may never be cited as proof a control ran.** It rotates and
+deletes its own oldest file. A rotating buffer cannot carry a claim about the past.
+
+⚠ Bodies carry consumer content — `reason` prose, findings, paths — and **this repo is
+public**. `ZPLOG_DIR` is a ROOT and the server name is always appended; letting it be the
+final path aimed four servers at one file, and multi-process rollover renames the open
+file, which fails on Windows and silently stops rotation. Truncation is always recorded:
+`req_bytes`/`resp_bytes` price the WIRE, never the stored excerpt.
+
 ## Comment style
 
 Heavy, and deliberately so. A non-obvious guard carries the measurement that produced it — the

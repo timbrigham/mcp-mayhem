@@ -27,11 +27,22 @@ from __future__ import annotations
 
 import os
 import functools
+import sys
+from pathlib import Path
 from typing import Any, Optional
 
 import anyio.to_thread
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+# ⚠ The repo root, so `mcpcommon` resolves. The supervisor starts this server with the
+# SERVER directory on sys.path (that is what makes `from core import ...` work), and the
+# repo root is not on it. Derived from __file__ rather than the cwd, because the cwd is
+# the supervisor's choice and has changed before.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError
@@ -76,7 +87,8 @@ async def _guard(fn, *args, **kwargs) -> dict:
 
 # -- Tier 3: reads ------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Read a file at a ref',
+          annotations=ToolAnnotations(title='Read a file at a ref', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main",
                worktree: Optional[str] = None) -> dict:
     """Run an allow-listed READ-ONLY git command. No gate, no audit, always available.
@@ -97,7 +109,8 @@ async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main
     return await _guard(_robot().read, op, args, repo_mode=repo_mode, worktree=worktree)
 
 
-@mcp.tool()
+@mcp.tool(title='Repository and gate status',
+          annotations=ToolAnnotations(title='Repository and gate status', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def status() -> dict:
     """Tree state, branch, unpushed commit count, and what would block a push right now.
 
@@ -113,7 +126,8 @@ async def status() -> dict:
 
 # -- Tier 2: mediated mutations -----------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Stage paths',
+          annotations=ToolAnnotations(title='Stage paths', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def stage(paths: list[str], repo_mode: str = "main",
                 worktree: Optional[str] = None) -> dict:
     """Stage NAMED paths. There is no bulk form on the main repository.
@@ -126,7 +140,8 @@ async def stage(paths: list[str], repo_mode: str = "main",
     return await _guard(_robot().stage, paths, repo_mode=repo_mode, worktree=worktree)
 
 
-@mcp.tool()
+@mcp.tool(title='Unstage paths',
+          annotations=ToolAnnotations(title='Unstage paths', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def unstage(paths: list[str], reason: Optional[str] = None,
                   repo_mode: str = "main", worktree: Optional[str] = None) -> dict:
     """Remove NAMED paths from the index. The WORKING TREE IS UNTOUCHED.
@@ -149,7 +164,8 @@ async def unstage(paths: list[str], reason: Optional[str] = None,
                         worktree=worktree)
 
 
-@mcp.tool()
+@mcp.tool(title='Commit staged work',
+          annotations=ToolAnnotations(title='Commit staged work', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def commit(message_file: str, reason: Optional[str] = None,
            repo_mode: str = "main", worktree: Optional[str] = None) -> dict:
     """Commit the staged index. The message is read from a FILE, never passed as an argument.
@@ -176,7 +192,8 @@ async def commit(message_file: str, reason: Optional[str] = None,
                         worktree=worktree)
 
 
-@mcp.tool()
+@mcp.tool(title='Run the push preflight',
+          annotations=ToolAnnotations(title='Run the push preflight', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def preflight(reason: Optional[str] = None) -> dict:
     """START the full pre-push pipeline WITHOUT pushing. Returns IMMEDIATELY.
 
@@ -192,7 +209,8 @@ async def preflight(reason: Optional[str] = None) -> dict:
     return await _guard(_robot().preflight, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Preflight state',
+          annotations=ToolAnnotations(title='Preflight state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def preflight_status() -> dict:
     """The state of the latest preflight for the current HEAD.
 
@@ -203,7 +221,8 @@ async def preflight_status() -> dict:
     return await _guard(_robot().preflight_status)
 
 
-@mcp.tool()
+@mcp.tool(title='Push to the remote',
+          annotations=ToolAnnotations(title='Push to the remote', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def push(branch: str, reason: str, repo_mode: str = "main") -> dict:
     """Push a branch. On the main repo: requires a passing preflight() for the CURRENT HEAD.
 
@@ -229,7 +248,8 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> dict:
                         wait=False)
 
 
-@mcp.tool()
+@mcp.tool(title='Required gates for an action',
+          annotations=ToolAnnotations(title='Required gates for an action', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def requirements(action: str = "push") -> dict:
     """⭐⭐ THE SUCCESS CONDITIONS FOR AN ACTION — what must be green, what must NOT block you,
     the preconditions, the order to do them in, and which tool answers which question.
@@ -250,7 +270,8 @@ async def requirements(action: str = "push") -> dict:
     return await _guard(_robot().requirements, action)
 
 
-@mcp.tool()
+@mcp.tool(title='Push state',
+          annotations=ToolAnnotations(title='Push state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def push_status() -> dict:
     """Where the last started push got to: none / running / allowed / failed / died.
 
@@ -262,7 +283,8 @@ async def push_status() -> dict:
     return await _guard(_robot().push_status)
 
 
-@mcp.tool()
+@mcp.tool(title='Fetch from the remote',
+          annotations=ToolAnnotations(title='Fetch from the remote', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 async def fetch(prune: bool = False, reason: Optional[str] = None,
                 repo_mode: str = "main") -> dict:
     """Update remote-tracking refs from origin. Touches no working file, no local branch.
@@ -273,7 +295,8 @@ async def fetch(prune: bool = False, reason: Optional[str] = None,
     return await _guard(_robot().fetch, prune=prune, reason=reason, repo_mode=repo_mode)
 
 
-@mcp.tool()
+@mcp.tool(title='Switch branch',
+          annotations=ToolAnnotations(title='Switch branch', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def switch(branch: str, create: bool = False, reason: Optional[str] = None) -> dict:
     """Move HEAD to another branch (create=True makes it). REFUSED while the tree is dirty.
 
@@ -284,7 +307,8 @@ async def switch(branch: str, create: bool = False, reason: Optional[str] = None
     return await _guard(_robot().switch, branch, create=create, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Merge a branch',
+          annotations=ToolAnnotations(title='Merge a branch', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def merge(branch: str, reason: str) -> dict:
     """Merge a branch into HEAD (--no-ff). REFUSED while the tree is dirty; reason required.
 
@@ -293,7 +317,8 @@ async def merge(branch: str, reason: str) -> dict:
     return await _guard(_robot().merge, branch, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Rebase — REWRITES HISTORY',
+          annotations=ToolAnnotations(title='Rebase — REWRITES HISTORY', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def rebase(onto: str, reason: str) -> dict:
     """Rebase HEAD onto a ref. REFUSED while dirty, and refused if it would rewrite commits
     that are ALREADY on the remote.
@@ -304,7 +329,8 @@ async def rebase(onto: str, reason: str) -> dict:
     return await _guard(_robot().rebase, onto, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Squash — REWRITES HISTORY',
+          annotations=ToolAnnotations(title='Squash — REWRITES HISTORY', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def squash(onto: str, message_file: str, reason: str) -> dict:
     """Replace onto..HEAD with ONE commit carrying HEAD's EXISTING tree.
 
@@ -387,7 +413,8 @@ async def squash(onto: str, message_file: str, reason: str) -> dict:
     return await _guard(_robot().squash, onto, message_file, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Delete a branch',
+          annotations=ToolAnnotations(title='Delete a branch', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def branch_delete(name: str, reason: str) -> dict:
     """Delete a branch — SAFE delete only. Reason required.
 
@@ -397,7 +424,8 @@ async def branch_delete(name: str, reason: str) -> dict:
     return await _guard(_robot().branch_delete, name, reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Create a tag',
+          annotations=ToolAnnotations(title='Create a tag', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def tag_create(name: str, reason: str, message_file: Optional[str] = None) -> dict:
     """Create an annotated tag. There is deliberately NO tag deletion.
 
@@ -407,7 +435,8 @@ async def tag_create(name: str, reason: str, message_file: Optional[str] = None)
     return await _guard(_robot().tag_create, name, reason=reason, message_file=message_file)
 
 
-@mcp.tool()
+@mcp.tool(title='Remove files',
+          annotations=ToolAnnotations(title='Remove files', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def remove_files(paths: list[str], reason: str, cached: bool = False,
                        repo_mode: str = "main") -> dict:
     """`git rm` on NAMED paths. No bulk form, reason required.
@@ -419,7 +448,8 @@ async def remove_files(paths: list[str], reason: str, cached: bool = False,
                         repo_mode=repo_mode)
 
 
-@mcp.tool()
+@mcp.tool(title='Subjects for a ledger record',
+          annotations=ToolAnnotations(title='Subjects for a ledger record', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def ledger_subjects(observed: dict, ref: str = "INDEX") -> dict:
     """{basis, subjects, skipped} — the identity of what a gate is about to certify.
 
@@ -446,7 +476,8 @@ async def ledger_subjects(observed: dict, ref: str = "INDEX") -> dict:
     return await _guard(_robot().ledger_subjects, observed, ref=ref)
 
 
-@mcp.tool()
+@mcp.tool(title='Add or remove a worktree',
+          annotations=ToolAnnotations(title='Add or remove a worktree', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] = None) -> dict:
     """Private throwaway checkouts — the sanctioned alternative to every refused operation.
 
@@ -464,7 +495,8 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
 
 # -- Explanation + the log ----------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Explain a past decision',
+          annotations=ToolAnnotations(title='Explain a past decision', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def explain(refusal_id: str) -> dict:
     """Why an operation was refused, and exactly what discharges it.
 
@@ -472,7 +504,8 @@ async def explain(refusal_id: str) -> dict:
     return await _guard(_robot().explain, refusal_id)
 
 
-@mcp.tool()
+@mcp.tool(title='Audit history',
+          annotations=ToolAnnotations(title='Audit history', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def history(limit: int = 20, full: bool = False, op: Optional[str] = None,
                   decision: Optional[str] = None) -> dict:
     """The append-only operation log: every mutating call, ALLOWED OR REFUSED.
@@ -497,7 +530,11 @@ def main() -> None:
     # Fail loudly at startup if the configured repository is not there, rather
     # than mysteriously on the first call.
     GitRobot(REPO, data_path=DATA, actor=ACTOR).git.require_repo()
-    mcp.run(transport="streamable-http")
+    # ⚠ NOT `mcp.run(transport="streamable-http")`. That builds the Starlette app and
+    # starts uvicorn in one call with no seam to install middleware; `serve` does the
+    # same two steps with the HTTP call log wrapped around the app. Behaviour with
+    # ZPLOG_ENABLED=0 is identical to the old line.
+    _serve_with_call_log(mcp, "gitRobot")
 
 
 if __name__ == "__main__":

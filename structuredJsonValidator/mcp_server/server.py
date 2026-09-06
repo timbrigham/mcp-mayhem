@@ -27,9 +27,20 @@ cross-collection witness invariant, drift, bad params) come back as
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+# ⚠ The repo root, so `mcpcommon` resolves. The supervisor starts this server with the
+# SERVER directory on sys.path (that is what makes `from consumers import ...` work), and
+# the repo root is not on it. Derived from __file__ rather than the cwd, because the cwd
+# is the supervisor's choice and has changed before.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 
 from consumers.store import build_store, head_correspondence
 from core.errors import IntegrityError, OperationError, ValidationError
@@ -98,7 +109,8 @@ def _write_store(op: str, params: dict[str, Any]) -> dict:
 
 # -- read tools ---------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Get one entry',
+          annotations=ToolAnnotations(title='Get one entry', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def get(id: str, collection: str = "declarations") -> dict:
     """Fetch one entry by its surrogate id from a collection (default
     'declarations'). Returns {found, entry}. For a claim, the greppable key is
@@ -117,7 +129,8 @@ def _project(entry: dict, fields: list[str]) -> dict:
     return out
 
 
-@mcp.tool()
+@mcp.tool(title='Search entries',
+          annotations=ToolAnnotations(title='Search entries', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def find(filters: dict[str, Any], collection: str = "declarations",
          count_only: bool = False, limit: Optional[int] = None, offset: int = 0,
          fields: Optional[list[str]] = None) -> dict:
@@ -143,14 +156,16 @@ def find(filters: dict[str, Any], collection: str = "declarations",
     return {"count": total, "returned": len(results), "entries": results}
 
 
-@mcp.tool()
+@mcp.tool(title='Entry history',
+          annotations=ToolAnnotations(title='Entry history', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def history(id: Optional[str] = None) -> dict:
     """Read the append-only whole-store audit log, optionally filtered to one
     entry id (spans all collections; each record is tagged with its collection)."""
     return {"records": _store().history(id)}
 
 
-@mcp.tool()
+@mcp.tool(title='View the store',
+          annotations=ToolAnnotations(title='View the store', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def view(kind: str, collection: str = "declarations", count_only: bool = False,
          limit: Optional[int] = None, offset: int = 0, root: Optional[str] = None) -> dict:
     """Render a projection view from a collection.
@@ -171,7 +186,8 @@ def view(kind: str, collection: str = "declarations", count_only: bool = False,
         return {"ok": False, "error": str(exc)}
 
 
-@mcp.tool()
+@mcp.tool(title='Validate without writing',
+          annotations=ToolAnnotations(title='Validate without writing', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def validate() -> dict:
     """Full whole-store conformance: each collection (structural + business) plus
     the cross-collection witness invariant. Returns {valid, violations}."""
@@ -179,7 +195,8 @@ def validate() -> dict:
     return {"valid": not violations, "violations": violations}
 
 
-@mcp.tool()
+@mcp.tool(title='Check head correspondence',
+          annotations=ToolAnnotations(title='Check head correspondence', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def check_head(root: str = ".", tier: str = "paths", limit: int = 25) -> dict:
     """HEAD-correspondence check: does the registry still describe the SOURCE TREE?
     (interop #16b/#17.)
@@ -205,7 +222,8 @@ def check_head(root: str = ".", tier: str = "paths", limit: int = 25) -> dict:
         return {"ok": False, "error_type": "operation", "error": str(exc)}
 
 
-@mcp.tool()
+@mcp.tool(title='Verify store integrity',
+          annotations=ToolAnnotations(title='Verify store integrity', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def verify_integrity() -> dict:
     """Check the file hash against the last audit hash (whole-store). {ok, hash|error}."""
     try:
@@ -216,7 +234,8 @@ def verify_integrity() -> dict:
 
 # -- declaration write tools --------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Seal an entry',
+          annotations=ToolAnnotations(title='Seal an entry', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def seal() -> dict:
     """Adopt the current store file as the managed baseline (validate whole store
     + record the whole-store hash)."""
@@ -227,7 +246,8 @@ def seal() -> dict:
         return _validation_result(exc)
 
 
-@mcp.tool()
+@mcp.tool(title='Rename an entry',
+          annotations=ToolAnnotations(title='Rename an entry', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def rename(id: str, new_qualified: str, new_file: str, namespace: str, reason: str,
            force: bool = False) -> dict:
     """Rename a declaration into a new qualified name/file/namespace. A terminal
@@ -237,7 +257,8 @@ def rename(id: str, new_qualified: str, new_file: str, namespace: str, reason: s
                   "reason": reason, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Move an entry',
+          annotations=ToolAnnotations(title='Move an entry', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def move(id: str, new_file: str, reason: Optional[str] = None, force: bool = False) -> dict:
     """Move a declaration to a new file (qualified name unchanged by default). A
     terminal (dropped/merged) entry is refused unless force=True."""
@@ -247,14 +268,16 @@ def move(id: str, new_file: str, reason: Optional[str] = None, force: bool = Fal
     return _write("declarations", "move", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Mark present',
+          annotations=ToolAnnotations(title='Mark present', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def mark_present(id: str, force: bool = False) -> dict:
     """Mark a pending declaration as present (new mirrors old identity). A
     terminal (dropped/merged) entry is refused unless force=True."""
     return _write("declarations", "mark_present", {"id": id, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Drop an entry',
+          annotations=ToolAnnotations(title='Drop an entry', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 def drop(id: str, reason: str, force: bool = False) -> dict:
     """Record that a declaration that EXISTED at the anchor is gone at HEAD (new.*
     cleared; reason required). Requires a REAL anchored old identity — an entry
@@ -264,7 +287,8 @@ def drop(id: str, reason: str, force: bool = False) -> dict:
     return _write("declarations", "drop", {"id": id, "reason": reason, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Withdraw an entry',
+          annotations=ToolAnnotations(title='Withdraw an entry', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 def withdraw(id: str, reason: str, force: bool = False) -> dict:
     """Terminal state for an entry ADDED IN ERROR — the mirror image of `drop`.
 
@@ -281,7 +305,8 @@ def withdraw(id: str, reason: str, force: bool = False) -> dict:
     return _write("declarations", "withdraw", {"id": id, "reason": reason, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Remove an entry',
+          annotations=ToolAnnotations(title='Remove an entry', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 def remove(ids, reason: str) -> dict:
     """HARD-DELETE born-at-HEAD declaration entries — the missing inverse of
     `add_new` (interop #15a/#16a/#17).
@@ -301,14 +326,16 @@ def remove(ids, reason: str) -> dict:
     return _write("declarations", "remove", {"ids": ids, "reason": reason})
 
 
-@mcp.tool()
+@mcp.tool(title='Reopen an entry',
+          annotations=ToolAnnotations(title='Reopen an entry', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def reopen(id: str, reason: str) -> dict:
     """Return a terminal (dropped/merged) entry to pending so it can be
     re-dispositioned. The sanctioned undo for a deliberate drop/merge."""
     return _write("declarations", "reopen", {"id": id, "reason": reason})
 
 
-@mcp.tool()
+@mcp.tool(title='Merge entries',
+          annotations=ToolAnnotations(title='Merge entries', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def merge(ids: list[str], target: dict, reason: str, force: bool = False) -> dict:
     """Merge several declarations into one target {qualified, file, namespace?}.
     Needs >= 2 source ids. Any terminal source is refused unless force=True."""
@@ -316,7 +343,8 @@ def merge(ids: list[str], target: dict, reason: str, force: bool = False) -> dic
                   {"ids": ids, "target": target, "reason": reason, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Split an entry',
+          annotations=ToolAnnotations(title='Split an entry', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def split(id: str, targets: list[dict], reason: str, force: bool = False) -> dict:
     """Split a declaration; new.* records the primary (first) target. Needs >= 2
     targets. A terminal (dropped/merged) entry is refused unless force=True."""
@@ -324,13 +352,15 @@ def split(id: str, targets: list[dict], reason: str, force: bool = False) -> dic
                   {"id": id, "targets": targets, "reason": reason, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Add a new entry',
+          annotations=ToolAnnotations(title='Add a new entry', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def add_new(new: dict, reason: str) -> dict:
     """Add a genuinely-new declaration (old.* null). new={qualified, file, namespace?}."""
     return _write("declarations", "add_new", {"new": new, "reason": reason})
 
 
-@mcp.tool()
+@mcp.tool(title='Annotate an entry',
+          annotations=ToolAnnotations(title='Annotate an entry', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def annotate(id: str, object=None, domain=None, role=None) -> dict:
     """Set curated ontology axes (only the provided ones). Each axis is stored as
     a LIST; a scalar is coerced (`"core"` -> `["core"]`), a list is kept, and
@@ -345,7 +375,8 @@ def annotate(id: str, object=None, domain=None, role=None) -> dict:
     return _write("declarations", "annotate", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Annotate many entries',
+          annotations=ToolAnnotations(title='Annotate many entries', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def annotate_many(items: list[dict], force: bool = False) -> dict:
     """Batch-annotate declaration ontology axes by explicit id — the write-side
     scale tool. `items` is a list of `{id, object?, domain?, role?, …}`. Per item:
@@ -354,7 +385,8 @@ def annotate_many(items: list[dict], force: bool = False) -> dict:
     return _write("declarations", "annotate_many", {"items": items, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Annotate by filter',
+          annotations=ToolAnnotations(title='Annotate by filter', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def annotate_by_filter(filter: dict, tags: dict, dry_run: bool = False,
                        force: bool = False) -> dict:
     """Annotate every declaration matching a `find`-style filter with uniform
@@ -378,7 +410,8 @@ def annotate_by_filter(filter: dict, tags: dict, dry_run: bool = False,
                   {"filter": filter, "tags": tags, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Set vocabulary',
+          annotations=ToolAnnotations(title='Set vocabulary', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def set_vocab(vocab=None) -> dict:
     """Adopt the DECLARATION controlled ontology vocab from a caller-owned config.
     `vocab` may be an inline object or a path; omit it to load the default
@@ -389,7 +422,8 @@ def set_vocab(vocab=None) -> dict:
     return _write("declarations", "set_vocab", {"vocab": source})
 
 
-@mcp.tool()
+@mcp.tool(title='Link a claim',
+          annotations=ToolAnnotations(title='Link a claim', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def link_claim(id: str, claim: str) -> dict:
     """Link a declaration to a claim it witnesses (declarations.claims.witness_of).
     The claim must already exist (a dangling link is refused). If the claim is
@@ -397,7 +431,8 @@ def link_claim(id: str, claim: str) -> dict:
     return _write("declarations", "link_claim", {"id": id, "claim": claim})
 
 
-@mcp.tool()
+@mcp.tool(title='Unlink a claim',
+          annotations=ToolAnnotations(title='Unlink a claim', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 def unlink_claim(id: str, claim: str) -> dict:
     """Remove a claim from a declaration's witness_of. If this was the last live
     witness of a proved/deep claim, the write is refused (the store invariant
@@ -405,13 +440,15 @@ def unlink_claim(id: str, claim: str) -> dict:
     return _write("declarations", "unlink_claim", {"id": id, "claim": claim})
 
 
-@mcp.tool()
+@mcp.tool(title='Add a citation',
+          annotations=ToolAnnotations(title='Add a citation', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def add_citation(id: str, target: str) -> dict:
     """Add a citation to a declaration (claims.citations)."""
     return _write("declarations", "add_citation", {"id": id, "target": target})
 
 
-@mcp.tool()
+@mcp.tool(title='Set verification state',
+          annotations=ToolAnnotations(title='Set verification state', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def set_verify(id: str, sorry_free: Optional[bool] = None, axioms=None) -> dict:
     """Record the build-derived verification state on a declaration. Flipping
     sorry_free to false on the sole live witness of a proved/deep claim is refused
@@ -424,7 +461,8 @@ def set_verify(id: str, sorry_free: Optional[bool] = None, axioms=None) -> dict:
     return _write("declarations", "set_verify", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Reconcile the store',
+          annotations=ToolAnnotations(title='Reconcile the store', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def reconcile(scanner_output, anchor: Optional[dict] = None) -> dict:
     """Fold a fresh scan into the declarations collection, preserving curation.
     Matches scan decls to entries by fully-qualified name, updates locations, ADDS
@@ -438,7 +476,8 @@ def reconcile(scanner_output, anchor: Optional[dict] = None) -> dict:
 
 # -- claim write tools --------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Add a claim',
+          annotations=ToolAnnotations(title='Add a claim', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def claim_add(claim_id: str, statement: str, status: Optional[str] = None,
               object=None, domain=None, date: Optional[str] = None,
               reason: Optional[str] = None, from_claim: Optional[str] = None,
@@ -467,7 +506,8 @@ def claim_add(claim_id: str, statement: str, status: Optional[str] = None,
     return _write("claims", "add_claim", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Seed claims',
+          annotations=ToolAnnotations(title='Seed claims', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def claim_seed(items: list[dict], force: bool = False) -> dict:
     """Bulk-add claims atomically. `items` is a list of claim_add-shaped dicts.
     Edges may reference sibling claims added in the SAME batch (the whole batch is
@@ -476,7 +516,8 @@ def claim_seed(items: list[dict], force: bool = False) -> dict:
     return _write("claims", "seed_claims", {"items": items, "force": force})
 
 
-@mcp.tool()
+@mcp.tool(title='Set claim status',
+          annotations=ToolAnnotations(title='Set claim status', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def claim_set_status(claim_id: str, status: str, date: Optional[str] = None,
                      reason: Optional[str] = None) -> dict:
     """Change a claim's status and APPEND {status, date} to its history (append-
@@ -490,7 +531,8 @@ def claim_set_status(claim_id: str, status: str, date: Optional[str] = None,
     return _write("claims", "set_status", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Set a claim edge',
+          annotations=ToolAnnotations(title='Set a claim edge', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def claim_set_edge(claim_id: str, from_claim: Optional[str] = None,
                    to_claim: Optional[str] = None) -> dict:
     """Set the from/to endpoints on an existing claim, turning a node into an edge.
@@ -505,7 +547,8 @@ def claim_set_edge(claim_id: str, from_claim: Optional[str] = None,
     return _write("claims", "set_edge", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Drop a claim',
+          annotations=ToolAnnotations(title='Drop a claim', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 def claim_drop(claim_id: str, reason: str) -> dict:
     """Remove a claim seeded in error (hard delete of the node/edge). For RETIRING
     a claim while keeping its history, use claim_set_status (e.g. a 'retracted'
@@ -515,7 +558,8 @@ def claim_drop(claim_id: str, reason: str) -> dict:
     return _write("claims", "drop_claim", {"claim_id": claim_id, "reason": reason})
 
 
-@mcp.tool()
+@mcp.tool(title='Annotate a claim',
+          annotations=ToolAnnotations(title='Annotate a claim', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def claim_annotate(claim_id: str, object=None, domain=None) -> dict:
     """Set the curated object/domain axes on a claim (reuses the declaration
     object/domain vocab; element-aware). Only provided axes change; [] clears."""
@@ -527,7 +571,8 @@ def claim_annotate(claim_id: str, object=None, domain=None) -> dict:
     return _write("claims", "annotate_claim", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Set claim vocabulary',
+          annotations=ToolAnnotations(title='Set claim vocabulary', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def claim_set_vocab(vocab=None) -> dict:
     """Adopt the CLAIMS controlled vocab (object/domain/status) from a caller-owned
     config. `vocab` may be inline or a path; omit it to load the default
@@ -539,7 +584,8 @@ def claim_set_vocab(vocab=None) -> dict:
 
 # -- deps write tools ---------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Import dependencies',
+          annotations=ToolAnnotations(title='Import dependencies', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 def import_deps(edges) -> dict:
     """Bulk-import the declaration dependency graph (interop #13) — a whole-
     collection REPLACE from a freshly extracted edge set. `edges` is an inline list
@@ -554,7 +600,8 @@ def import_deps(edges) -> dict:
 
 # -- publication + generic escape hatch ---------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Export the whole store',
+          annotations=ToolAnnotations(title='Export the whole store', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def export_full(dest: str, head_root: Optional[str] = None) -> dict:
     """Publish the COMPLETE validated store (all collections) as a deterministic
     artifact to `dest`, for the caller to commit with git. Refuses to export an
@@ -579,7 +626,8 @@ def export_full(dest: str, head_root: Optional[str] = None) -> dict:
         return {"ok": False, "error_type": "integrity", "error": str(exc)}
 
 
-@mcp.tool()
+@mcp.tool(title='Migrate the store in batch',
+          annotations=ToolAnnotations(title='Migrate the store in batch', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def migrate_batch(source: Optional[str] = None, reconcile: Optional[list[dict]] = None,
                   add_new: Optional[list[dict]] = None, deps=None,
                   remap_deps: bool = False, anchor: Optional[dict] = None,
@@ -616,14 +664,16 @@ def migrate_batch(source: Optional[str] = None, reconcile: Optional[list[dict]] 
     return _write_store("migrate_batch", params)
 
 
-@mcp.tool()
+@mcp.tool(title='Apply a collection op',
+          annotations=ToolAnnotations(title='Apply a collection op', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def apply(op: str, params: dict, collection: str = "declarations") -> dict:
     """Generic escape hatch: run any registered operation on a collection
     (default 'declarations') with a params dict."""
     return _write(collection, op, params)
 
 
-@mcp.tool()
+@mcp.tool(title='Apply a store-level op',
+          annotations=ToolAnnotations(title='Apply a store-level op', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def apply_store(op: str, params: dict) -> dict:
     """Generic escape hatch for a STORE-LEVEL (cross-collection) op — e.g.
     op='migrate_batch'. The op receives the whole store and is validated across
@@ -632,7 +682,11 @@ def apply_store(op: str, params: dict) -> dict:
 
 
 def main() -> None:
-    mcp.run(transport="streamable-http")
+    # ⚠ NOT `mcp.run(transport="streamable-http")`. That builds the Starlette app and
+    # starts uvicorn in one call with no seam to install middleware; `serve` does the
+    # same two steps with the HTTP call log wrapped around the app. Behaviour with
+    # ZPLOG_ENABLED=0 is identical to the old line.
+    _serve_with_call_log(mcp, "sjv")
 
 
 if __name__ == "__main__":

@@ -28,11 +28,22 @@ from __future__ import annotations
 
 import functools
 import os
+import sys
+from pathlib import Path
 from typing import Any, Optional
 
 import anyio.to_thread
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+# ⚠ The repo root, so `mcpcommon` resolves. The supervisor starts this server with the
+# SERVER directory on sys.path (that is what makes `from core import ...` work), and the
+# repo root is not on it. Derived from __file__ rather than the cwd, because the cwd is
+# the supervisor's choice and has changed before.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 
 from core import canpush as canpush_mod
 from core import crossref as crossref_mod
@@ -142,7 +153,8 @@ def _files(ref: str) -> dict:
 
 # -- writes -------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Append a verdict',
+          annotations=ToolAnnotations(title='Append a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def append(record: dict) -> dict:
     """Append one verdict. Validated against V1-V18; REFUSES anything short.
 
@@ -195,7 +207,8 @@ async def append(record: dict) -> dict:
     return await _guard(_ledger().append, record)
 
 
-@mcp.tool()
+@mcp.tool(title='Sign off a verdict',
+          annotations=ToolAnnotations(title='Sign off a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def sign(step: str, subjects: list[dict], who: str, reason: str,
                basis: dict, tier: str = "H") -> dict:
     """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt.
@@ -207,7 +220,8 @@ async def sign(step: str, subjects: list[dict], who: str, reason: str,
                         reason=reason, basis=basis, tier=tier)
 
 
-@mcp.tool()
+@mcp.tool(title='Regrade a verdict',
+          annotations=ToolAnnotations(title='Regrade a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def override(step: str, subjects: list[dict], who: str, reason: str,
                    basis: dict, tier: str = "H") -> dict:
     """REGRADE — "you are wrong, the gate erred".
@@ -222,7 +236,8 @@ async def override(step: str, subjects: list[dict], who: str, reason: str,
                         reason=reason, basis=basis, tier=tier)
 
 
-@mcp.tool()
+@mcp.tool(title='Narrow an indictment',
+          annotations=ToolAnnotations(title='Narrow an indictment', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def narrow(record_id: str, failing: list[str],
                  reason: Optional[str] = None) -> dict:
     """⭐⭐ NARROW A WIDE FAIL'S INDICTMENT — the sanctioned correction, no retyping.
@@ -247,7 +262,8 @@ async def narrow(record_id: str, failing: list[str],
                         reason=reason)
 
 
-@mcp.tool()
+@mcp.tool(title='Seed the genesis floor',
+          annotations=ToolAnnotations(title='Seed the genesis floor', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def genesis(commit: str, note: Optional[str] = None) -> dict:
     """Seed the recording floor: the commit from which crossref claims anything.
 
@@ -259,7 +275,8 @@ async def genesis(commit: str, note: Optional[str] = None) -> dict:
 
 # -- reads --------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(title='Preview validation',
+          annotations=ToolAnnotations(title='Preview validation', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def validate(record: dict) -> dict:
     """Schema plus V1-V18. Pure, no write — use it to check a record BEFORE
     appending. Returns {ok, errors[]} with EVERY
@@ -268,14 +285,16 @@ async def validate(record: dict) -> dict:
     return await _guard(_ledger().validate, record)
 
 
-@mcp.tool()
+@mcp.tool(title='Get one record',
+          annotations=ToolAnnotations(title='Get one record', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def get(id: str) -> dict:
     """One record by id."""
     return await _guard(lambda: {"record": _ledger().get(id),
                                  "found": _ledger().get(id) is not None})
 
 
-@mcp.tool()
+@mcp.tool(title='Search records',
+          annotations=ToolAnnotations(title='Search records', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def find(step: Optional[str] = None, verdict: Optional[str] = None,
                tier: Optional[str] = None, since: Optional[str] = None,
                subject_sha: Optional[str] = None, limit: int = 50) -> dict:
@@ -284,7 +303,8 @@ async def find(step: Optional[str] = None, verdict: Optional[str] = None,
                         since=since, subject_sha=subject_sha, limit=limit)
 
 
-@mcp.tool()
+@mcp.tool(title='Render the inventory',
+          annotations=ToolAnnotations(title='Render the inventory', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def render(id: str) -> dict:
     """THE single renderer for a human verdict line.
 
@@ -301,7 +321,8 @@ def _sync_render(record_id: str) -> dict:
     return {"line": render_mod.render(rec), "found": True}
 
 
-@mcp.tool()
+@mcp.tool(title='Required steps for an action',
+          annotations=ToolAnnotations(title='Required steps for an action', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def requirements(action: Optional[str] = None) -> dict:
     """THE SINGLE COPY OF THE TYPE REGISTRY — what may be RECORDED. **NOT the admission set.**
 
@@ -337,7 +358,8 @@ async def requirements(action: Optional[str] = None) -> dict:
     })
 
 
-@mcp.tool()
+@mcp.tool(title='Show live policy',
+          annotations=ToolAnnotations(title='Show live policy', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def policy() -> dict:
     """Thresholds, actions, min_passes, the genesis floor, and the policy sha.
 
@@ -368,7 +390,8 @@ def _sync_policy() -> dict:
             **cfg.paths()}
 
 
-@mcp.tool()
+@mcp.tool(title='Coverage inventory',
+          annotations=ToolAnnotations(title='Coverage inventory', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def inventory(action: str, ref: str = "staged",
                     admission: Optional[list[str]] = None) -> dict:
     """Required vs satisfied vs MISSING for a ref — the complete key set for an action.
@@ -422,7 +445,8 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
     return inv
 
 
-@mcp.tool()
+@mcp.tool(title='Progress summary',
+          annotations=ToolAnnotations(title='Progress summary', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def progress(action: str = "push", ref: str = "staged",
                    admission: Optional[list[str]] = None, rounds: int = 8) -> dict:
     """ONE VIEW: what blocks the action, and is it CONVERGING?
@@ -464,7 +488,8 @@ def _sync_progress(action, ref, admission, rounds) -> dict:
     return out
 
 
-@mcp.tool()
+@mcp.tool(title='Unexamined in-scope paths',
+          annotations=ToolAnnotations(title='Unexamined in-scope paths', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def coverage_gap(action: str = "push", ref: str = "staged",
                        admission: Optional[list[str]] = None,
                        step: Optional[str] = None, limit: int = 200) -> dict:
@@ -504,7 +529,8 @@ def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
     return out
 
 
-@mcp.tool()
+@mcp.tool(title='Plan to clear blockers',
+          annotations=ToolAnnotations(title='Plan to clear blockers', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def heal_plan(action: str = "push", ref: str = "staged",
                     admission: Optional[list[str]] = None) -> dict:
     """⭐⭐ WHAT TO RE-RUN TO MAKE THIS REF GREEN, split by WHO CAN DO IT and by whether
@@ -547,7 +573,8 @@ def _sync_heal_plan(action, ref, admission) -> dict:
     return out
 
 
-@mcp.tool()
+@mcp.tool(title='Coverage by step',
+          annotations=ToolAnnotations(title='Coverage by step', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def coverage(ref: str = "HEAD") -> dict:
     """Tracked paths MINUS the union of every `subjects` entry ever recorded.
 
@@ -557,7 +584,8 @@ async def coverage(ref: str = "HEAD") -> dict:
         records=_ledger().store.records(), paths=list(_files(ref))))
 
 
-@mcp.tool()
+@mcp.tool(title='May this push proceed',
+          annotations=ToolAnnotations(title='May this push proceed', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def can_push(rev_range: str, admission: Optional[list[str]] = None,
                    commit_admission: Optional[list[str]] = None,
                    action: str = "push", limit: int = 500) -> dict:
@@ -618,7 +646,8 @@ def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dic
     return result
 
 
-@mcp.tool()
+@mcp.tool(title='Cross-reference the stream',
+          annotations=ToolAnnotations(title='Cross-reference the stream', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def crossref(since: Optional[str] = None, limit: int = 500) -> dict:
     """Audit GIT HISTORY against the ledger: did anything land without the gate?
 
@@ -649,7 +678,8 @@ def _sync_crossref(since, limit) -> dict:
                               since=since, limit=limit)
 
 
-@mcp.tool()
+@mcp.tool(title='Stream signals',
+          annotations=ToolAnnotations(title='Stream signals', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def signals(family: Optional[str] = None, step: Optional[str] = None) -> dict:
     """The signal families, computed from the record fields alone.
 
@@ -661,7 +691,8 @@ async def signals(family: Optional[str] = None, step: Optional[str] = None) -> d
         family=family, step=step))
 
 
-@mcp.tool()
+@mcp.tool(title='Server and stream health',
+          annotations=ToolAnnotations(title='Server and stream health', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def status() -> dict:
     """Stream health, config state, invalid-append count, edge conditions, the
     genesis floor, and the steps whose latest verdict is UNDECIDED.
@@ -672,7 +703,11 @@ async def status() -> dict:
 
 
 def main() -> None:
-    mcp.run(transport="streamable-http")
+    # ⚠ NOT `mcp.run(transport="streamable-http")`. That builds the Starlette app and
+    # starts uvicorn in one call with no seam to install middleware; `serve` does the
+    # same two steps with the HTTP call log wrapped around the app. Behaviour with
+    # ZPLOG_ENABLED=0 is identical to the old line.
+    _serve_with_call_log(mcp, "verdictLedger")
 
 
 if __name__ == "__main__":

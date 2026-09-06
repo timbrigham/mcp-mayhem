@@ -1,0 +1,130 @@
+"""The MCP surface conformance controls — the convention, made enforceable.
+
+⚠⚠ A CONVENTION WITH NO TEST IS A COMMENT. Measured 2026-09-05 across all four live
+servers: 84 tools, ZERO tool annotations, zero `outputSchema`, zero titles, and twelve
+parameters declared `{"type": "object", "additionalProperties": true}` — the shape that
+constrains nothing. None of that was a decision; it is what FastMCP leaves unset when you
+build a server from type hints and docstrings alone, so the contract migrated into prose.
+Prose that used to be true is the thing that keeps costing us.
+
+⭐ THE RATCHET IS THE POINT. `test_unconstrained_parameters_are_exactly_the_known_debt`
+fails in BOTH directions — when a new unconstrained parameter appears AND when a listed
+one is fixed without updating the list. That is deliberate. A one-directional check lets
+debt sit forever as long as it does not grow; a ratchet makes every movement visible and
+forces the number down to be green.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+os.environ.setdefault("ZPLEDGER_CONFIG", r"C:\Workspace\ZeroParadox\tools\verify")
+
+from ledger_server.server import mcp  # noqa: E402
+
+# ⚠ Everything that WRITES to the stream. Kept as a literal rather than derived from the
+# annotations under test — a control that reads its expectation from the thing it is
+# checking asserts only that the code equals itself.
+WRITERS = {"append", "sign", "override", "narrow", "genesis"}
+
+# ⚠⚠ THE KNOWN DEBT, NAMED. These four parameters publish `{"type":"object",
+# "additionalProperties": true}` — "any object at all" — so `step`, `verdict`, `subjects`,
+# `basis`, `run.id` and `failing` are invisible to the protocol and the real contract lives
+# in a 50-line docstring on `append`. Replacing them with a Pydantic model is agreed work,
+# blocked as of 2026-09-06 on the consumer's client landing `--failing-file` first: 118 of
+# 118 tier-A blocking records carry no `failing`, so requiring it before that CLI exists
+# would refuse every review gate on its next FAIL.
+#
+# ⛔ DO NOT ADD TO THIS SET TO MAKE A TEST PASS. Adding a line here is declaring new debt.
+UNCONSTRAINED_DEBT = {
+    ("append", "record"),
+    ("validate", "record"),
+    ("sign", "basis"),
+    ("override", "basis"),
+}
+
+
+@pytest.fixture(scope="module")
+def tools():
+    return asyncio.run(mcp.list_tools())
+
+
+def test_every_tool_declares_annotations(tools):
+    """Without these a client cannot tell `append` from `find` at the protocol layer.
+
+    For a server whose whole value is capability removal, the field that says "this one
+    writes" is not decoration. The consumer session confirmed the cost of its absence on
+    2026-09-05: it inferred which calls were safe to probe with from DOCSTRINGS.
+    """
+    missing = [t.name for t in tools if t.annotations is None]
+    assert not missing, f"tools with no annotations: {missing}"
+
+
+def test_every_tool_declares_a_title(tools):
+    missing = [t.name for t in tools if not t.title]
+    assert not missing, f"tools with no title: {missing}"
+
+
+def test_writers_and_readers_are_correctly_marked(tools):
+    """⚠ The dangerous error is one-directional.
+
+    Marking a reader as a writer costs a needless confirmation prompt. Marking a WRITER as
+    read-only invites a client to call it unattended. Both directions are checked, but that
+    asymmetry is why this test exists at all.
+    """
+    marked_write = {t.name for t in tools if t.annotations.readOnlyHint is False}
+    assert marked_write == WRITERS, (
+        f"write set drifted — extra: {sorted(marked_write - WRITERS)}, "
+        f"missing: {sorted(WRITERS - marked_write)}")
+
+
+def test_nothing_here_is_destructive(tools):
+    """⭐ AN APPEND-ONLY STREAM CANNOT DESTROY, AND THE ANNOTATION SAYS SO ON EVERY TOOL.
+
+    This is a real claim about the design, not a default: a verdict is never removed or
+    overwritten, and a wide FAIL is corrected by re-emitting at a higher revision rather
+    than by withdrawing anything. If a tool ever needs `destructiveHint=True`, that is a
+    change to what this server IS, and it should fail here first.
+    """
+    destructive = [t.name for t in tools if t.annotations.destructiveHint]
+    assert not destructive, f"append-only stream cannot have destructive tools: {destructive}"
+
+
+def test_unconstrained_parameters_are_exactly_the_known_debt(tools):
+    """⭐⭐ A RATCHET, FAILING IN BOTH DIRECTIONS — see the module docstring.
+
+    A new `dict` parameter fails this. Fixing a listed one ALSO fails it, which is the
+    half that matters: it forces the set to shrink visibly rather than letting a stale
+    allowlist quietly over-report the debt.
+    """
+    found = set()
+    for tool in tools:
+        for name, prop in ((tool.inputSchema or {}).get("properties") or {}).items():
+            if prop.get("type") == "object" and prop.get("additionalProperties") is True:
+                found.add((tool.name, name))
+
+    assert found == UNCONSTRAINED_DEBT, (
+        f"unconstrained-parameter debt moved.\n"
+        f"  NEW (declare a real schema, do not add to the set): "
+        f"{sorted(found - UNCONSTRAINED_DEBT)}\n"
+        f"  FIXED (remove from UNCONSTRAINED_DEBT): "
+        f"{sorted(UNCONSTRAINED_DEBT - found)}")
+
+
+def test_the_debt_is_shrinking_not_load_bearing(tools):
+    """⚠ A NUMBER NOBODY LOOKS AT STOPS BEING A DEBT AND BECOMES A FLOOR.
+
+    Pins the count so it appears in the failure message of any change, and states the
+    exit condition in the assertion rather than only in a comment.
+    """
+    assert len(UNCONSTRAINED_DEBT) <= 4, (
+        "unconstrained parameters must not grow past the 2026-09-06 baseline of 4. "
+        "SATISFIED WHEN: `record` and `basis` take Pydantic models, at which point this "
+        "set is empty and both this test and the ratchet above can be deleted.")
