@@ -102,6 +102,12 @@ Every tool on every server here:
   into a static schema is the second-copy-of-the-policy that `config.py` forbids.
 - **declares `outputSchema` and returns `structuredContent`.** A caller must never have to
   parse a text blob to learn whether the call worked.
+  ⛔ **NOT TRUE YET — 0 of 81 tools declare one, measured 2026-09-06.** This line is the
+  STANDARD, not a description of the code, and it is marked because an unmarked aspiration
+  in this file is indistinguishable from a rule that holds. That confusion is the defect
+  the whole section is about. It is tracked as declared debt by
+  `test_mcp_conformance.py`, which fails if the count moves in either direction, so it
+  cannot sit here unnoticed. Every tool returns `-> dict`; real return models are the work.
 - **carries `ToolAnnotations`** — `readOnlyHint`, `destructiveHint`, `idempotentHint`,
   `openWorldHint`. On servers whose value is *capability removal*, this is the field that
   expresses it. Classify from the CODE, never the name: `ledger_subjects` reads like a

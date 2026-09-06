@@ -215,3 +215,25 @@ def test_a_raising_tool_still_returns_parseable_json():
     payload = json.loads(text)
     assert payload["ok"] is False
     assert payload["error_type"], "a refusal must carry some error_type"
+
+
+# ⚠⚠ DECLARED DEBT, RATCHETED — see UNCONSTRAINED_DEBT for the same pattern and why.
+# CLAUDE.md states as a STANDARD that every tool declares `outputSchema` and returns
+# `structuredContent`. As of 2026-09-06 not one does: every tool is annotated `-> dict`,
+# which FastMCP cannot turn into a schema. The rule was written into CLAUDE.md before the
+# code satisfied it, which is the exact confusion that section exists to prevent — an
+# unmarked aspiration in a conventions file is indistinguishable from a rule that holds.
+TOOLS_WITHOUT_OUTPUT_SCHEMA = 20
+
+
+def test_output_schema_debt_is_exactly_the_declared_count(tools):
+    """⭐ FAILS IN BOTH DIRECTIONS, so the gap cannot quietly persist OR quietly close.
+
+    A tool gaining a real return model must move this number down. A new tool arriving
+    without one must move it up. Either way somebody looks at CLAUDE.md's claim again.
+    """
+    missing = [t.name for t in tools if not t.outputSchema]
+    assert len(missing) == TOOLS_WITHOUT_OUTPUT_SCHEMA, (
+        f"outputSchema debt moved: {len(missing)} tools lack one, expected "
+        f"{TOOLS_WITHOUT_OUTPUT_SCHEMA}. Missing: {sorted(missing)}. "
+        f"SATISFIED WHEN: this reaches 0 and both this test and CLAUDE.md's ⛔ marker go.")
