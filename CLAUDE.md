@@ -102,15 +102,18 @@ Every tool on every server here:
   into a static schema is the second-copy-of-the-policy that `config.py` forbids.
 - **declares `outputSchema` and returns `structuredContent`.** A caller must never have to
   parse a text blob to learn whether the call worked.
-  ⚠ **PARTLY TRUE — verdictLedger's 20 declare one as of 2026-09-06; gitRobot (22) and sjv
-  (39) do not.** Still marked, because an unmarked aspiration in this file is
-  indistinguishable from a rule that holds, and that confusion is the defect this whole
-  section is about. The verdictLedger half is `ledger_server/results.py`, whose shapes were
-  **measured off live responses** rather than written from the code's intent — a wrong schema
-  is worse than none, because it publishes a contract the response violates and the client
-  that suffers is the one that actually validates. `test_mcp_conformance.py` ratchets the
-  remainder in both directions, so a new tool shipped without a schema fails rather than
-  quietly restoring the debt.
+  ⭐ **TRUE AS OF 2026-09-06 — 81 of 81** (verdictLedger 20, gitRobot 22, sjv 39), each in a
+  `results.py` beside its server, and `mcpcommon/iserror.py` returns `structuredContent` on
+  success. ⚠ **Every shape was MEASURED** — reads off live responses, writes off `_receipt` /
+  `apply` — because a wrong schema is worse than none: it publishes a contract the response
+  violates, and the client that suffers is the one that actually validates.
+  ⛔ **`ok` IS NOT UNIVERSAL AND MUST NOT BE ASSUMED.** verdictLedger and gitRobot stamp it in
+  `_guard`, so it is required there; **sjv's reads do not have it at all** — `find(count_only)`
+  returns `{count}`, `validate` returns `{valid, violations}`. Copying the sibling's base class
+  would have published a contract three read tools break on every successful call. A schema
+  copied from a sibling is a claim about THIS server measured on a DIFFERENT one.
+  ⚠ A refusal carries NO `structuredContent` on any server: it does not match a success schema
+  and must never be validated against one.
 - **carries `ToolAnnotations`** — `readOnlyHint`, `destructiveHint`, `idempotentHint`,
   `openWorldHint`. On servers whose value is *capability removal*, this is the field that
   expresses it. Classify from the CODE, never the name: `ledger_subjects` reads like a

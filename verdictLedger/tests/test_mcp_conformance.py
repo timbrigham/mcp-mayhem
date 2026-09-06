@@ -217,19 +217,16 @@ def test_a_raising_tool_still_returns_parseable_json():
     assert payload["error_type"], "a refusal must carry some error_type"
 
 
-# ⭐⭐ PAID OFF 2026-09-06. This was 20 — every tool annotated `-> dict`, which FastMCP cannot
-# turn into a schema — and CLAUDE.md asserted the standard anyway, marked ⛔ as a rule the code
-# did not satisfy. All 20 now declare one via TypedDicts in `ledger_server/results.py`, and
-# `mcpcommon/iserror.py` returns `structuredContent` on success.
+# ⭐⭐ PAID OFF 2026-09-06, FLEET-WIDE: 81 of 81 (verdictLedger 20, gitRobot 22, sjv 39). Was 20
+# here and 81 across the fleet — every tool annotated `-> dict`, which FastMCP cannot turn into a
+# schema, while CLAUDE.md asserted the standard anyway.
 #
-# ⚠ THE SHAPES WERE MEASURED, NOT INVENTED: read off live responses from the running server, or
-# off `core/ledger.py`'s return statements for the five writers that cannot be safely called.
-# `ok` is the only required key; everything else is optional, because many fields are
-# conditional and a schema that over-promises fails on correct behaviour.
+# ⚠ THE SHAPES WERE MEASURED, NOT INVENTED: reads off live responses from the running servers,
+# writes off `_receipt` / `apply`, because calling a write to discover its shape is what put a
+# probe verdict in the stream and blocked a tag.
 #
-# ⛔ THE RATCHET STAYS AT 0 rather than being deleted. gitRobot (22) and sjv (39) still declare
-# none, so the fleet-wide claim in CLAUDE.md is still not met — and a new verdictLedger tool
-# shipped without a schema must fail here rather than quietly restoring the debt.
+# ⛔ THE RATCHET STAYS rather than being deleted, and stays at 0 rather than being loosened. It is
+# now a REGRESSION guard, not a debt counter: a new tool shipped without a schema must fail here.
 TOOLS_WITHOUT_OUTPUT_SCHEMA = 0
 
 
