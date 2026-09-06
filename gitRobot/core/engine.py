@@ -850,10 +850,30 @@ class GitRobot:
                 reason=reason, target=target,
             )
 
-        run_id = _refusal_id("push", f"{self.git.head()}|{branch}|{len(self.audit.read())}")
+        # ⚠⚠ `target`, NEVER `self.git` — THE RECEIPT MUST NAME THE REPO THAT MOVED.
+        # `self.git` is always the MAIN repository; `target = self._target(repo_mode)` is the
+        # one being pushed. These five reads used `self.git` regardless of `repo_mode`, so a
+        # `.claude-local` push reported the MAIN repo's head, branch and tree state — in the
+        # receipt, in the run_id, and in the audit row that `push_status` later reads back.
+        #
+        # ⛔ MEASURED 2026-09-06, and the direction is why it mattered. The consumer pushed
+        # the nested private repo (its HEAD `ec35f16`, correctly moved and confirmed at the
+        # remote) and got back `head: ac6aee11` — `illustrated`'s tip in the MAIN repo, which
+        # was gated and had NOT moved. **A reader trusting the receipt would conclude the main
+        # repo had been pushed when it had not**, which is the false-SUCCESS direction: a false
+        # failure gets re-run and discovers itself, a false success is never revisited. Their
+        # user's first constraint that session was "do not push the main repo".
+        #
+        # ⚠ The operation was always correct — only the reporting lied. This file already
+        # states the rule for the commit path: "The audit must name the tree the operation
+        # actually touched… An audit row naming the wrong tree is a log that lies about where."
+        # The push path did not honour it, and `push` is the only method that took a
+        # `repo_mode` and then read `self.git` anyway (checked: every other repo_mode-aware
+        # method uses its target).
+        run_id = _refusal_id("push", f"{target.head()}|{branch}|{len(self.audit.read())}")
         self.audit.append(
             actor=self.actor, op="push", args=args, decision="started",
-            head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
+            head=target.head(), branch=target.branch(), tree=target.tree_state(),
             reason=reason, detail="push started", run_id=run_id,
         )
 
@@ -894,7 +914,10 @@ class GitRobot:
         thread = threading.Thread(target=_do_push, name=f"push-{run_id}", daemon=True)
         thread.start()
         return {"op": "push", "run_id": run_id, "branch": branch, "state": "running",
-                "head": self.git.head(),
+                # ⚠ `target`, for the reason given at the audit row above: the async receipt
+                # is the ONLY thing a caller sees before `push_status` catches up, so it is
+                # the first place a wrong repo would be believed.
+                "head": target.head(),
                 "inventory": None if inv is None else inv.get("line"),
                 "note": ("the push is running in the background; poll push_status(). The "
                          "pre-push hook re-runs the full pipeline as the backstop, measured "
