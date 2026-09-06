@@ -160,4 +160,21 @@ A peer Claude session owns the consumer project and is hook-fenced out of these 
 Its `CLAUDE.md` is a durable carrier for its conventions — a rule agreed in conversation binds only
 the participants, so check whether a convention was ever written where the other side can read it.
 
+**⛔ NEVER `/clear` BOTH SESSIONS IN THE SAME WINDOW** (Tim, 2026-09-06). A handoff is PROSE: a
+fresh session inherits a *description* of how the tooling behaves, never the experience of
+watching it behave. Clear both together and both sides are reading descriptions, with nothing
+anchored to observation — the two halves corroborate each other's paperwork. **Staggering
+guarantees one session can say "I watched that, and it did not go that way."**
+
+Measured that day: the peer's final handover asserted a push had landed; from this side it was on
+no remote branch, four commits unpushed. They had told Tim "two unpushed" correctly four times
+and then filed the opposite into the one document meant to survive the boundary. ⚠ And the
+direction is why it mattered — **a false FAILURE gets re-run and discovers itself; a false
+SUCCESS is never revisited.**
+
+So: after the peer clears, treat everything from the new session as RELAYED until re-measured. It
+has the handoff and the tickets, not the thread — and a message that merely *sounds* like a green
+light is not one. ⚠ The mirror half of this rule binds only if it is written where the other side
+reads it; this file is not that place.
+
 Local state and current work-in-progress: see `.claude/HANDOFF.md` (gitignored, machine-local).
