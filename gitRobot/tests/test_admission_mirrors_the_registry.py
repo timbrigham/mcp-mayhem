@@ -14,6 +14,20 @@ narrowing WITH A STATED REASON. Admission's own comment names the relationship:
 since without any of them surfacing. A rule for resolving a conflict, with no detector for
 the conflict, is a rule that fires only when somebody happens to look.
 
+⭐⭐ AND IT WAS ALREADY KNOWN, WRITTEN DOWN, AND INERT FOR A WEEK. `requirements()` in
+`gitrobot_server/server.py` has recorded this since 2026-08-30, in prose:
+
+    "for `push` both lists are 20 entries and they DIFFER — the ledger marks `rely` required,
+     gitRobot admits `build` instead. **Same count, 19 shared, so a reader comparing sizes
+     concludes they agree.** A caller following the ledger's list burns rounds converging
+     `rely`, which is excluded precisely because it is unsatisfiable by construction."
+
+Two sets of the SAME SIZE differing in membership — the units defect at its purest, where the
+count is a true measurement of the wrong property, and the cheapest check anyone would reach
+for is the one that cannot see it. The fact was measured, narrated, and never detected,
+because nothing compared the sets themselves. **This file is that paragraph turned into a
+line that fires.**
+
 ⭐ THE IDEA IS THE CONSUMER SESSION'S. They proposed a `check_briefs.py` leg asserting every
 `--step` named in a brief is registered, after reporting a registered-type count they had
 read off a differently-named field. Asked whether we had an equivalent blind spot; we did,
@@ -44,10 +58,26 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 #   rely       registry [commit, push, tag]  admission [tag]                 LOOSER, and
 #              DELIBERATE on this side — `_rely_not_admitted_at_commit_or_push` states it and
 #              98c3480 landed it ("rely records and stops blocking — it gated the machinery it
-#              reviews"). By admission's own rule the REGISTRY is the stale half here.
-#   prior_art  registry ['push']             admission []                    LOOSER, and NOT
-#              documented on this side. The consumer is mid-rework (0912906 "Stop asking the
-#              push whether the whole corpus is reviewed"), so this is expected to move.
+#              reviews"). The consumer confirmed 2026-09-06 that their registry has NO
+#              `actions` key for `rely` at all, so it defaults to every action rather than
+#              narrowing. By admission's own rule the REGISTRY is the stale half.
+#              ⛔ NOT RESOLVED UNILATERALLY: narrowing it removes a required row from
+#              `inventory(action=push)`, which feeds `complete`, which gitRobot REQUIRES — so
+#              it makes a push EASIER to judge complete. A loosening is gate policy even when
+#              it only makes the record honest. With Tim.
+#   prior_art  registry ['push']             admission []                    LOOSER, and
+#              ⛔ DELIBERATE — DO NOT "FIX" EITHER SIDE. Confirmed by the consumer 2026-09-06
+#              from `policy.v1.json`'s `_refrozen_2026_09_01c`: "Registering is not admitting.
+#              `prior_art` is deliberately ABSENT from admission.v1.json... The row has to
+#              EXIST for `batch.check_prior_art_attribution` to read it; `coverage_gap`
+#              returns `steps: []` for a step that does not apply to the action." So
+#              `actions: ["push"]` is load-bearing for a READER, not a gater: remove the
+#              narrowing and their per-file push leg goes blind. The first attempt at exactly
+#              that was reverted the same morning as backwards.
+#              ⚠ The disagreement is still REAL and still worth flagging — only the
+#              justification is elsewhere. Their finding, not mine: **a narrowing whose reason
+#              lives in a different file from the entry is indistinguishable from an
+#              unexplained one.** They are moving it onto the registry entry.
 #
 # ⛔ DO NOT ADD A LINE HERE TO MAKE THIS PASS. Adding one declares a new place where the two
 # surfaces disagree about what gates a push.
