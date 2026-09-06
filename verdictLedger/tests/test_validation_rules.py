@@ -581,3 +581,39 @@ def test_v2_still_names_the_defect_it_was_written_for(ledger):
     found = [e for e in errs(ledger, good(subjects=[])) if e.startswith("V2")][0]
     assert "cannot pass having examined nothing" in found
     assert "the defect this rule exists to catch" in found
+
+
+# -- V16b: a scoped mechanical UNDECIDED must name its own checker ------------
+
+
+def _undecided(**over):
+    """A mechanical UNDECIDED built from the house fixture, so a probe changes one thing."""
+    rec = good(verdict="UNDECIDED",
+               decided={"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
+               evidence=[])
+    rec.update(over)
+    return rec
+
+
+def test_v16b_a_scoped_mechanical_undecided_must_name_its_checker(ledger):
+    """⭐⭐ THE ESCALATION CANNOT HAND OVER CODE THE RECORD DOES NOT NAME.
+
+    A mechanical step that reaches its limit records UNDECIDED, and something hands the failing
+    bytes to an agent round that supersedes at a higher revision. That handoff needs the CHECKER
+    THAT GAVE UP at the exact version — `evidence` carries [{path, git_blob_id}], so it is
+    reconstructable from git rather than described in prose.
+    """
+    subject = good()["subjects"][0]["path"]
+    rule(ledger, _undecided(failing=[subject]), "V16b")
+
+
+def test_v16b_does_not_stop_a_dying_checker_recording_that_it_died(ledger):
+    """⛔ THE CASE A BLANKET VERSION OF THIS RULE WOULD HAVE BROKEN.
+
+    V16's own comment already ruled it out: "requiring evidence there would also stop a checker
+    that DIED before it could hash itself from recording the fact that it died." So `failing` is
+    the discriminator — **if you were specific enough to name which files defeated you, you were
+    alive enough to name yourself.** An UNDECIDED with no `failing` indicts every subject, is
+    fail-closed, and stays recordable with no evidence at all.
+    """
+    assert not any(e.startswith("V16b") for e in errs(ledger, _undecided())),         "a checker that died must still be able to record that it died"

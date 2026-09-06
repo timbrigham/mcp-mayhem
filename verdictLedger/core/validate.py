@@ -219,6 +219,42 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     # wrongly is not the failure this system defends against; requiring evidence there
     # would also stop a checker that died before it could hash itself from recording
     # the fact that it died.
+    # ⭐⭐ V16b — A MECHANICAL `UNDECIDED` THAT NAMES A SUBSET MUST NAME ITS OWN CHECKER.
+    #
+    # Added 2026-09-06 for the escalation path: a mechanical step that reaches the limit of what
+    # it can judge records UNDECIDED, and something hands the failing bytes to an agent round
+    # which supersedes at a higher revision. That handoff needs the CODE THAT GAVE UP, not a
+    # description of it — `evidence` carries [{path, git_blob_id}], so the agent reads the exact
+    # checker at the exact version, reconstructable from git alone.
+    #
+    # ⛔ AND IT IS DELIBERATELY NOT A BLANKET REQUIREMENT, because the comment below already
+    # ruled that out and was right: "requiring evidence there would also stop a checker that DIED
+    # before it could hash itself from recording the fact that it died." A crashed checker must
+    # keep its ability to say so. So two different UNDECIDEDs exist and only one is escalatable:
+    #
+    #   "I ran and reached my limit"  -> knows WHICH bytes defeated it -> carries `failing`
+    #   "I died"                      -> knows nothing                 -> carries no `failing`
+    #
+    # ⭐ `failing` IS THEREFORE THE DISCRIMINATOR, and the rule reads: **if you were specific
+    # enough to name which files you could not judge, you were alive enough to name yourself.**
+    # An UNDECIDED with no `failing` indicts every subject, is fail-closed, and stays recordable
+    # by a checker in the middle of dying.
+    #
+    # ⚠ ZERO MIGRATION COST, AND THAT WINDOW IS WHY THIS LANDS NOW. There are 0 UNDECIDED records
+    # in 2,313 and no producer has ever emitted one — the CLI could not until 2026-09-06. Every
+    # producer is still unbuilt, so this is a rule the first one is born under rather than one
+    # retrofitted onto a corpus.
+    if (how == "mechanical" and verdict == "UNDECIDED" and config.v16_required
+            and record.get("failing") and not (record.get("evidence") or [])):
+        out.append(
+            "V16b: a mechanical UNDECIDED that names `failing` must also carry `evidence` — "
+            "[{path, git_blob_id}] for the checker module that could not decide. Naming WHICH "
+            "bytes defeated you means you were running well enough to name YOURSELF, and an "
+            "escalation cannot hand an agent the code that gave up unless the record says which "
+            "code it was. SUPPLY IT: pass `evidence=record.module_evidence(__file__)`. A checker "
+            "that DIED records UNDECIDED with no `failing` — that indicts every subject, is "
+            "fail-closed, and is deliberately still allowed with no evidence.")
+
     if how == "mechanical" and verdict == "PASS" and config.v16_required:
         evidence = record.get("evidence") or []
         if not evidence:
