@@ -488,9 +488,34 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
 
     action='add' (ref defaults to HEAD) creates a detached worktree under a scratch area
     OUTSIDE the repository, with its own HEAD, index and working tree: nothing done there can
-    reach the caller's files. action='list' shows them; action='remove' with the path from
+    reach the caller's FILES. action='list' shows them; action='remove' with the path from
     add tears one down. This is the answer whenever you want a clean slate — it is why
     reset --hard, checkout -- ., clean and stash are refused rather than merely discouraged.
+
+    ⛔⛔ THE ISOLATION IS OF FILES. IT IS NOT ISOLATION OF THE LEDGER, AND A VERDICT RECORDED
+    FROM INSIDE A WORKTREE LANDS AGAINST THE MAIN REPO'S TREE. This sentence used to read
+    "nothing done there can reach the caller's files" with no such qualifier, and an agent
+    reasonably read it as containment of everything it might do.
+
+    ⚠ IT IS NOT A LEAK — IT IS CONTENT-ADDRESSING WORKING CORRECTLY, which is why no guard
+    catches it. A verdict's basis is a git TREE id. A detached worktree holding the same
+    content as the main checkout resolves to the SAME tree, because that is what a content
+    hash means. Isolation of paths cannot produce isolation of content identity, and nothing
+    that compares trees can tell the two checkouts apart. There is nothing here to fix in the
+    plumbing; the defect was the word "isolated" spanning two claims.
+
+    ⚠⚠ MEASURED 2026-09-06, and it left a live record. A `/rely` round probing `--failing-file`
+    inside a worktree wrote `rely@def0143fcd1ab84264234ebcbbc3c320737edf6e#0` — FAIL, tier A,
+    reason "probe reason - do not use". That basis is byte-identical to the main repo's
+    `HEAD^{tree}`, and both indicted blobs are still live at HEAD. `rely` is registered but
+    NOT admitted for push, so it blocks no push — it IS admitted for `tag`, so a probe record
+    currently blocks a tag. Disposition is Tim's: the stream is append-only and a revision is
+    a restatement, not an erasure.
+
+    ⭐ SO: IF YOU ARE RECORDING A VERDICT, THE WORKTREE BUYS YOU NOTHING. Use it for a clean
+    slate to WORK in. Anything you `record.py` from inside it is a real verdict about real
+    content, with the same force as one written from the main checkout, and it will still be
+    there when the worktree is gone.
 
     action='remove' also accepts any path git itself lists as a worktree of this repo (never
     the main checkout), so leftovers from other sessions can be cleaned up. action='prune'
