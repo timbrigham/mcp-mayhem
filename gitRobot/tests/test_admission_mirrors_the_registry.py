@@ -92,11 +92,22 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 #              `copy_editor` joins `admission.v1.json` (this side's file) and this line goes.
 #              Registry entry carries `_why_not_admitted_yet` naming the same condition, so
 #              both halves state their own removal test rather than either owning it alone.
+#   check_briefs  registry [ALL — no `actions` key]  admission []             LOOSER, and
+#              ⛔ EXPECTED AND CORRECT FOR NOW. Registered 2026-09-06 alongside `copy_editor`
+#              so the brief-conformance leg can RECORD. Registering is not admitting; nothing
+#              gates on it yet, and admitting a leg whose own `/rely` round just returned
+#              BLOCKING:5 would gate on a checker that is still being fixed.
+#              ⚠ Note the registry shape differs from `copy_editor`'s: no `actions` key at
+#              all, so it defaults to EVERY action rather than narrowing to one. That is the
+#              `rely` shape, and it is the shape that later reads as a stale registry rather
+#              than a deliberate narrowing — worth an `actions` key with a reason before it
+#              is forgotten.
 KNOWN_MISMATCHES = {
     ("build", ("tag",), ("commit", "push", "tag")),
     ("rely", ("commit", "push", "tag"), ("tag",)),
     ("prior_art", ("push",), ()),
     ("copy_editor", ("push",), ()),
+    ("check_briefs", ("commit", "push", "tag"), ()),
 }
 
 
