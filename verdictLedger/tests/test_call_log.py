@@ -207,3 +207,53 @@ def test_the_join_key_is_captured(tmp_path, monkeypatch):
     assert row["rpc_id"] == "7f3c1e2a-uuid", "caller's JSON-RPC id is the join key"
     assert row["session"] == "sess-abc123", "session header lookup must be case-insensitive"
     assert row["tool"] == "append"
+
+
+def test_truncation_is_flagged_when_the_accumulation_ceiling_bites(tmp_path, monkeypatch):
+    """⭐⭐ TWO LIMITS, ONE FLAG — AND THE FLAG HAS TO KNOW ABOUT BOTH.
+
+    A body passes two independent limits: the accumulation ceiling (memory, applied while
+    chunks arrive) and the stored-body cap (disk, applied at write time). `_clip` can only
+    see the buffer it is handed, which has ALREADY been through the ceiling — so a body
+    clipped by the ceiling but under the cap looked WHOLE.
+
+    Found 2026-09-06 while raising the cap to 1 MB on Tim's over-provision argument. The
+    bug was latent at every previous cap and would have been ARMED by the raise rather than
+    caught by it: an incomplete record rendering as a complete one, in the bookkeeping of
+    the log built to expose exactly that.
+
+    Driven here by making the cap enormous and the ceiling small, so only the ceiling bites.
+    """
+    monkeypatch.setenv("ZPLOG_DIR", str(tmp_path))
+    monkeypatch.setattr("mcpcommon.calllog._ACCUM_CEILING", 2048)
+    logger, path = build_logger("t")
+
+    big = b"z" * 50_000
+    body = b'{"jsonrpc":"2.0","id":1,"method":"tools/call","pad":"' + big + b'"}'
+
+    # cap far above the body: only the accumulation ceiling can clip it
+    _drive(CallLogMiddleware(_echo_app, logger, max_body=10_000_000, server_name="t"), body)
+    for handler in logger.handlers:
+        handler.flush()
+
+    row = _rows(path)[-1]
+    assert row["req_bytes"] == len(body), "wire count must price the whole body"
+    assert len(row["req"]) < len(body), "the ceiling should have clipped the stored copy"
+    assert row["req_truncated"] is True, \
+        "a ceiling-clipped body reported itself complete — absence rendering as success"
+
+
+def test_the_ceiling_can_never_sit_below_the_cap(monkeypatch):
+    """⚠ The derivation is the other half of the belt: if the ceiling could fall under the
+    cap, the flag above would be doing all the work alone. Either fix closes the hole; both
+    together mean the arithmetic cannot go wrong AND the flag cannot lie about it."""
+    import importlib
+    import mcpcommon.calllog as cl
+    monkeypatch.setenv("ZPLOG_MAX_BODY", str(8 * 1024 * 1024))
+    importlib.reload(cl)
+    try:
+        assert cl._ACCUM_CEILING > 8 * 1024 * 1024, \
+            "accumulation ceiling must stay above any configured body cap"
+    finally:
+        monkeypatch.delenv("ZPLOG_MAX_BODY", raising=False)
+        importlib.reload(cl)

@@ -103,13 +103,50 @@ DEFAULT_BACKUPS = 5
 # ⚠ THE COST IS WINDOW LENGTH AND IT IS REAL. Full bodies for the first sample were 2.1 MB,
 # so a 5 MB x 5 window holds roughly a dozen sessions. That is a rotation-size decision,
 # not a cap decision — raise ZPLOG_MAX_BYTES if the history matters more than the disk.
-DEFAULT_MAX_BODY = 128 * 1024
+#
+# ⭐⭐ AND THEN 128 KB WAS RAISED TO 1 MB, ON A DESIGN ARGUMENT RATHER THAN A MEASUREMENT.
+# Tim, 2026-09-06: *"I really don't like the idea of capping log line sizes any more than is
+# absolutely necessary... If I were designing SQL tables I would always give a larger data
+# structure than needed just to accommodate future growth."*
+#
+# He is right, and the history proves it: 16 KB and 64 KB were BOTH set just above the
+# then-observed maximum, and both were wrong within a day. **A threshold derived from an
+# observed maximum is a silent prediction that the maximum will not move.** It never says so
+# out loud, and it is always eventually false.
+#
+# ⚠ THE REFRAME THAT MATTERS: this cap is a SAFETY VALVE against a pathological body, not a
+# tuning knob for normal traffic. Sized as a valve it should be absurd — orders of magnitude
+# above anything real — so it only ever catches pathology. Sized as a knob it must be
+# re-tuned forever, and each re-tune is a round trip and some truncated evidence.
+#
+# ⚠ AND RAISING IT COSTS NOTHING IN DISK. Rotation bounds the file set absolutely
+# (ZPLOG_MAX_BYTES x ZPLOG_BACKUPS); the cap only decides whether an individual body is
+# whole. Observed traffic maxes at 72,995 bytes, so at 1 MB nothing real is clipped and the
+# disk footprint is unchanged. The only cost is RAM per in-flight request, bounded below.
+DEFAULT_MAX_BODY = 1024 * 1024
 
 # ⚠ Accumulation ceiling, separate from the stored cap and the reason this middleware
 # cannot be turned into a memory leak by a large stream. A streamable-HTTP response
 # arrives as many `http.response.body` messages; without a ceiling a long SSE stream
 # would be buffered in full just to throw most of it away at write time.
-_ACCUM_CEILING = 256 * 1024
+#
+# ⚠⚠ IT MUST STAY ABOVE THE BODY CAP, AND THE FAILURE IF IT DOES NOT IS SILENT. Found
+# 2026-09-06 while raising the cap to 1 MB. `_clip` decided truncation by comparing the
+# ACCUMULATED buffer against `max_body` — but accumulation already stops here. So with a cap
+# ABOVE this ceiling, a 3 MB body accumulates to the ceiling, `_clip` sees that it fits under
+# the cap, and the row reports `truncated: false` on a body that is missing most of itself.
+#
+# **An incomplete record rendering as a complete one** — the exact class this log was built to
+# expose, latent in the log's own bookkeeping, and it would have been ARMED by raising the cap
+# rather than caught by it. Two limits, one flag, and the flag only knew about one of them.
+#
+# ⭐ FIXED IN TWO PLACES, BELT AND BRACES. This ceiling is now derived so it cannot sit below
+# the cap whatever anyone sets, AND truncation is decided against the authoritative wire byte
+# count rather than against whichever buffer happened to fill first. Either fix alone would
+# have closed it; the derivation stops the arithmetic going wrong and the wire comparison
+# stops the flag lying if it ever does.
+_ACCUM_CEILING = max(4 * 1024 * 1024,
+                     4 * int(os.environ.get("ZPLOG_MAX_BODY", DEFAULT_MAX_BODY)))
 
 
 def _truthy(value: Optional[str], default: bool) -> bool:
@@ -212,26 +249,48 @@ class CallLogMiddleware:
         resp_bytes = 0
         status: dict[str, Any] = {}
 
+        # ⚠⚠ THE CEILING BOUNDS THE BUFFER, NOT THE NUMBER OF CHUNKS — AND IT USED NOT TO.
+        # The guard was `if sum(already_kept) < CEILING: keep(whole_chunk)`, tested BEFORE the
+        # append, so a single chunk could carry the buffer arbitrarily past the limit: one
+        # 100 MB body arriving as one message was buffered entire, ceiling or no ceiling. The
+        # limit only ever constrained bodies that arrived in many small pieces — i.e. exactly
+        # the ones that were never the memory risk.
+        #
+        # Found 2026-09-06 by a test written for a DIFFERENT bug: driving a 50 KB body through
+        # a 2 KB ceiling to prove the truncation flag, and finding the body stored whole. **A
+        # memory bound that only holds when the traffic is already harmless.**
+        #
+        # ⭐ Now the CHUNK is sliced to the remaining room, so the buffer can never exceed the
+        # ceiling by even a byte, whatever shape the body arrives in. Running totals rather
+        # than `sum()` per chunk, which was also O(n²) over a long stream.
+        req_kept_bytes = resp_kept_bytes = 0
+
         async def recv():
-            nonlocal req_bytes
+            nonlocal req_bytes, req_kept_bytes
             message = await receive()
             if message.get("type") == "http.request":
                 chunk = message.get("body", b"") or b""
-                req_bytes += len(chunk)
-                if sum(len(p) for p in req_parts) < _ACCUM_CEILING:
-                    req_parts.append(chunk)
+                req_bytes += len(chunk)          # the WIRE count, before any limit
+                room = _ACCUM_CEILING - req_kept_bytes
+                if room > 0:
+                    kept = chunk[:room]
+                    req_parts.append(kept)
+                    req_kept_bytes += len(kept)
             return message
 
         async def snd(message):
-            nonlocal resp_bytes
+            nonlocal resp_bytes, resp_kept_bytes
             kind = message.get("type")
             if kind == "http.response.start":
                 status["code"] = message.get("status")
             elif kind == "http.response.body":
                 chunk = message.get("body", b"") or b""
-                resp_bytes += len(chunk)
-                if sum(len(p) for p in resp_parts) < _ACCUM_CEILING:
-                    resp_parts.append(chunk)
+                resp_bytes += len(chunk)         # the WIRE count, before any limit
+                room = _ACCUM_CEILING - resp_kept_bytes
+                if room > 0:
+                    kept = chunk[:room]
+                    resp_parts.append(kept)
+                    resp_kept_bytes += len(kept)
             await send(message)
 
         error: Optional[str] = None
@@ -256,8 +315,27 @@ class CallLogMiddleware:
     def _write(self, scope, status, req_parts, resp_parts,
                req_bytes, resp_bytes, started, error) -> None:
         req_raw = b"".join(req_parts)
-        req_text, _, req_trunc = _clip(req_raw, self.max_body)
-        resp_text, _, resp_trunc = _clip(b"".join(resp_parts), self.max_body)
+        resp_raw = b"".join(resp_parts)
+        req_text, _, _ = _clip(req_raw, self.max_body)
+        resp_text, _, _ = _clip(resp_raw, self.max_body)
+
+        # ⚠ KEPT bytes, which is neither the wire total NOR `_clip`'s second value — that one
+        # reports the length of the buffer it was handed, and the buffer has already been
+        # limited by the accumulation ceiling. Three quantities live here (wire, accumulated,
+        # kept) and only two of them have ever had names; taking the wrong one is how the
+        # flag went wrong in the first place.
+        req_kept = min(len(req_raw), self.max_body)
+        resp_kept = min(len(resp_raw), self.max_body)
+
+        # ⚠⚠ TRUNCATION IS DECIDED AGAINST THE WIRE, NOT AGAINST THE BUFFER. `_clip` can only
+        # see what it was handed, and what it is handed has ALREADY passed the accumulation
+        # ceiling — so its own verdict is blind to the other limit and would report a
+        # ceiling-clipped body as whole. `req_bytes`/`resp_bytes` are counted from every
+        # chunk as it passes, before any limit applies, which makes them the only figure that
+        # prices the thing the field claims to price. Two limits, one flag, and the flag has
+        # to know about both: `kept < wire` is true if EITHER bit.
+        req_trunc = req_kept < req_bytes
+        resp_trunc = resp_kept < resp_bytes
 
         # ⚠ NAME THE TOOL WHERE ONE IS NAMEABLE. The whole point is "which of our tools
         # does the consumer actually call", and digging that out of the body at read
