@@ -103,7 +103,27 @@ class Ledger:
         violations = validate_mod.validate(
             rec, config=cfg, existing_ids=self.store.ids(), tips=self.store.tips(),
             known_config_shas=self.store.config_shas() | {cfg.config_sha})
-        return {"ok": not violations, "errors": violations}
+        # ⚠⚠ `error_type` HERE BECAUSE THIS REFUSAL IS *RETURNED*, NOT RAISED — AND THAT MADE
+        # IT THE ONE REFUSAL ON THE FLEET WITHOUT IT. `_guard` builds its reply as
+        # `{"ok": True, **result}` and attaches `error_type` in its `except` branches. A
+        # raised `ValidationFailure` (append) or `UsageError` (find) therefore carries the
+        # field; this method RETURNS its refusal, so the spread quietly overwrote `ok` to
+        # False and no except branch ever ran.
+        #
+        # ⛔ AND IT WAS ABSENT FROM PRECISELY THE PATH WE TELL CALLERS TO USE. `validate` is
+        # the no-write dry run — the answer to "how do I test a record without appending one"
+        # — so the tool a caller reaches for to classify a problem was the tool that would not
+        # say what kind of problem it was. Measured 2026-09-06 by the consumer, who went
+        # looking for the field on the wire after being told it was on every refusal, could
+        # not find it, and built a whole extra `status` round trip to recover the distinction
+        # by other means. That claim was mine and it was wrong.
+        #
+        # ⚠ Keyed on `violations`, never on `ok`: an empty violation list IS a pass and must
+        # not acquire an error type. Absence of a problem is not a kind of problem.
+        result = {"ok": not violations, "errors": violations}
+        if violations:
+            result["error_type"] = "validation"
+        return result
 
     # -- writing ---------------------------------------------------------------
 

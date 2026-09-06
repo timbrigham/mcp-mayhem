@@ -237,3 +237,39 @@ def test_output_schema_debt_is_exactly_the_declared_count(tools):
         f"outputSchema debt moved: {len(missing)} tools lack one, expected "
         f"{TOOLS_WITHOUT_OUTPUT_SCHEMA}. Missing: {sorted(missing)}. "
         f"SATISFIED WHEN: this reaches 0 and both this test and CLAUDE.md's ⛔ marker go.")
+
+
+def test_every_refusal_carries_error_type_including_the_returned_one():
+    """⭐⭐ A REFUSAL THAT WILL NOT SAY WHAT KIND IT IS, ON THE PATH WE TELL CALLERS TO USE.
+
+    `_guard` replies `{"ok": True, **result}` and attaches `error_type` in its `except`
+    branches — so RAISED refusals (`append` → ValidationFailure, `find` → UsageError) carry
+    it, and the one refusal that is RETURNED rather than raised did not. That one is
+    `validate`: the no-write dry run, the answer to "test a record without appending one",
+    and therefore the exact tool a caller reaches for when classifying a problem.
+
+    Measured 2026-09-06 by the consumer session, after this side asserted "error_type is on
+    every refusal and always has been". It is not, it was not, and they built an extra
+    `status` round trip to recover the distinction because the field they were told to key on
+    was missing from the wire.
+
+    ⚠ Keyed on violations, not on `ok`: a clean validate must NOT acquire an error_type.
+    Absence of a problem is not a kind of problem.
+    """
+    bad = {"schema": "zp.record.v1", "step": "nope", "tier": "M", "verdict": "FAIL",
+           "basis": {"kind": "tree", "value": "x"}, "subjects": []}
+
+    for tool, args in (("validate", {"record": bad}),
+                       ("append", {"record": bad}),
+                       ("find", {"verdict": "NONSENSE"})):
+        result, text = _call(tool, args)
+        payload = json.loads(text)
+        assert result.isError is True, f"{tool} refused without setting isError"
+        assert payload["ok"] is False
+        assert payload.get("error_type"), (
+            f"{tool} refused without an error_type — a caller cannot tell a validation "
+            f"refusal from an outage, which is the distinction errors.py exists to keep")
+
+    # a PASSING validate must stay clean
+    _, text = _call("validate", {"record": bad | {"step": "guards"}})
+    assert "error_type" not in json.loads(text) or json.loads(text)["ok"] is False
