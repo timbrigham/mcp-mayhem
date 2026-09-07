@@ -380,12 +380,38 @@ def _reload(tmp_path, config_dir):
                   required_path=config_dir / "required.v2.json")
 
 
+
+def _clear_switches(config_dir, step):
+    """Drop a step's `switches` so a coverage fixture can reach zero unexamined.
+
+    ⚠ NOT a convenience. Switches are part of the coverage obligation by design (V15), so a
+    step that declares them cannot be fully covered by a record that does not name them. A
+    control about NARROWED COVERAGE must isolate coverage from that, or it measures V15."""
+    import json
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)[step]["switches"] = []
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+
 def _set_scope(config_dir, step, scope=None, exclude=None):
-    """Point one registry type's scope somewhere. Returns nothing; the ledger re-reads live."""
+    """Point one registry type's scope somewhere. Returns NOTHING — build a fresh Ledger after.
+
+    ⚠⚠ IT ALSO SETS A `reason`, AND WITHOUT ONE THIS HELPER SILENTLY DOES NOTHING.
+    `Config.requirements()` DISCARDS a reason-less narrowing and leaves the type required over
+    every path — the `encoding_whitelist.txt` convention, deliberately: *"a typo in an exemption
+    must fail safe. Inclusion is free; exclusion is the thing that takes effort."*
+
+    ⚠ Measured 2026-09-07, and it is a trap because it fires SELECTIVELY. An earlier test used
+    this on `adversary` and worked — that type already carries a reason in the shipped sample.
+    Used on `check_prose`, which does not, the scope was written to the file, read back by
+    `requirements()` as `None`, and the row reported the whole tree. The helper looked correct
+    and the failure looked like a bug in the code under test."""
     import json
     path = config_dir / "required.v2.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
     spec = doc["types"][step]
+    spec.setdefault("reason", "narrowed by a test fixture")
     if scope is not None:
         spec["scope"] = scope
     if exclude is not None:
@@ -470,3 +496,73 @@ def test_an_unresolvable_base_claims_nothing_rather_than_full_coverage(ledger, t
     assert "unwitnessed_by_family" not in out, (
         "a zero-length unwitnessed list on an unreadable base is the false-negative this "
         "whole disclosure exists to prevent")
+
+
+def test_the_push_line_reports_how_many_steps_are_unvalidated_not_only_the_worst(
+        ledger, tmp_path, config_dir):
+    """⭐⭐ NAMING THE EXTREME AND OMITTING THE COUNT UNDERSTATES THE CONDITION.
+
+    The push line has reported the THINNEST gating step since 2026-08-23 — one step, named.
+    Measured 2026-09-07 against the live range: **NINE of nineteen gating steps read SATISFIED
+    with 823 in-scope paths never examined between them.** A reader saw one and had no way to
+    tell it was an outlier from a condition.
+
+    ⚠ Tim, 2026-09-07: *"absence should render as unknown, not pass."* The ROW still says
+    SATISFIED — changing that is a coordinated change, because the consumer's `batch.py` treats
+    anything that is not SATISFIED as blocking under worst-wins. The LINE is prose nobody
+    branches on, so it is where the truth can be told for free while the status change waits.
+
+    ⚠ REPORTED, NOT BLOCKING. Whether an unexamined path refuses a push is
+    `coverage.require_complete`, which is policy and is currently false.
+    """
+    base, shas = _repo(tmp_path, n=1)
+    blob = _blob(tmp_path, shas[-1], "doc.md")
+    _set_scope(config_dir, "check_prose", scope=["*.md", "*.absent"])
+    led = _reload(tmp_path, config_dir)
+
+    # a record covering doc.md but not the second in-scope glob
+    out = _check(led, tmp_path, f"{base}..{shas[-1]}",
+                 records=[_rec("check_prose", "doc.md", blob, shas[-1])],
+                 admission=("check_prose",))
+
+    uv = {st for r in out["commits"] for st, _s, _c in (r.get("unvalidated") or [])}
+    text = canpush_mod.render(out)
+    if uv:
+        assert "UNVALIDATED COVERAGE" in text, (
+            "a gating step that did not examine its scope must be named on the PUSH path, "
+            "not only in `inventory` — the push path is the one that matters")
+        assert "gating step(s) read SATISFIED" in text
+        assert "never looked at" in text
+        assert "not blocking" in text, (
+            "and it must say it does not block, or a reader treats disclosure as a gate")
+
+
+def test_the_unvalidated_line_is_silent_when_every_step_covered_its_scope(
+        ledger, tmp_path, config_dir):
+    """⚠ THE CONTROL. A warning that fires on every push is wallpaper — the same reason
+    `relaxations` and the `witness` disclosure each have a silence test. If this line cannot
+    go quiet, it carries no information when it speaks."""
+    base, shas = _repo(tmp_path, n=1)
+    blob = _blob(tmp_path, shas[-1], "doc.md")
+    # ⚠ The scope is pinned to the EXACT path the record covers. `*.md` is not narrow
+    # enough here: `config_dir` lives inside `tmp_path`, which `_repo` git-inits, so the
+    # tree also holds the two copied config files and the fixture never reached 0
+    # unexamined. Measured while writing this control — the silence half failed and the
+    # cause was the fixture, not the code.
+    # ⚠⚠ SWITCHES COUNT TOWARD THE OBLIGATION, and that is V15 working rather than a
+    # fixture quirk: a step depending on an exemption list must NAME it as a subject, or
+    # editing that list cannot stale the key. `check_prose` declares two switches, so its
+    # row read scope=3 against one matched file and this control could never reach zero.
+    # Measured while writing it — the silence half failed twice, and both times the cause
+    # was the fixture rather than the code.
+    _set_scope(config_dir, "check_prose", scope=["doc.md"])
+    _clear_switches(config_dir, "check_prose")
+    led = _reload(tmp_path, config_dir)
+
+    out = _check(led, tmp_path, f"{base}..{shas[-1]}",
+                 records=[_rec("check_prose", "doc.md", blob, shas[-1])],
+                 admission=("check_prose",))
+
+    assert all(not (r.get("unvalidated") or []) for r in out["commits"]), (
+        "the fixture must fully cover its scope or this control proves nothing")
+    assert "UNVALIDATED COVERAGE" not in canpush_mod.render(out)

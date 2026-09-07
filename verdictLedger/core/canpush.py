@@ -233,6 +233,22 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
             "narrowed": sorted({f"{r['step']} (from {r['narrowed_from']})"
                                 for r in inv["rows"]
                                 if r.get("gating") and r.get("narrowed_from")}),
+            # ⭐⭐ HOW MANY GATING STEPS HAVE NOT EXAMINED THEIR SCOPE, not just the worst
+            # one. Added 2026-09-07. `thinnest` has reported the extreme since 2026-08-23 and
+            # a reader sees ONE step named — measured the same day this landed, NINE of
+            # nineteen gating steps read SATISFIED with 823 in-scope paths never examined
+            # between them. Naming the extreme and omitting the count understates the
+            # condition by a factor of nine, in the direction that reads as healthier.
+            #
+            # ⚠ REPORTED, NOT BLOCKING, and deliberately so. Whether an unexamined path
+            # refuses a push is `coverage.require_complete`, which is policy and is FALSE.
+            # This changes only what the reader is TOLD. Tim, 2026-09-07: *"absence should
+            # render as unknown, not pass"* — the row still says SATISFIED, and until that
+            # is a coordinated change the line is where the truth can be said for free.
+            "unvalidated": sorted(
+                (r["step"], r["scope"] - r["subjects_unexamined"], r["scope"])
+                for r in inv["rows"]
+                if r.get("gating") and (r.get("subjects_unexamined") or 0) > 0),
             # the thinnest gating step at this commit, so a green key over a narrow
             # scope is visible on THE PUSH PATH and not only in `inventory`
             "thinnest": min(
@@ -435,8 +451,22 @@ def render(result: dict) -> str:
     thin = [r["thinnest"] for r in result.get("commits") or [] if r.get("thinnest")]
     if thin:
         step, seen, scope = min(thin, key=lambda t: t[1] / t[2] if t[2] else 1)
-        lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
-                     f"{seen}/{scope} in-scope paths (reported, not blocking)")
+        # ⚠ THE COUNT AND THE TOTAL, not only the extreme — see `unvalidated` above. Naming
+        # one step when nine are in the same state reads as an outlier rather than a
+        # condition.
+        uv = {}
+        for r in result.get("commits") or []:
+            for st, sn, sc in (r.get("unvalidated") or []):
+                uv[st] = (sn, sc)
+        missing = sum(sc - sn for sn, sc in uv.values())
+        if uv:
+            lines.append(
+                f"  ⚠ UNVALIDATED COVERAGE — {len(uv)} gating step(s) read SATISFIED without "
+                f"examining their full scope: {missing} in-scope path(s) never looked at. "
+                f"Thinnest is {step} at {seen}/{scope} (reported, not blocking).")
+        else:
+            lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
+                         f"{seen}/{scope} in-scope paths (reported, not blocking)")
 
     # ⚠⭐ NARROWED INDICTMENT, ON THE PUSH PATH — the sibling of the block above, and it was
     # missing for the same reason that one was until 2026-08-23: the argument got made where
