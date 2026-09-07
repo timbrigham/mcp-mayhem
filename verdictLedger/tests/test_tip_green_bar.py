@@ -24,6 +24,7 @@ import subprocess
 import pytest
 
 from core import canpush as canpush_mod
+from core.errors import ConfigError
 from test_can_push import _blob, _check, _rec, _repo
 
 
@@ -192,8 +193,9 @@ def test_render_names_every_forgiven_commit(ledger, tmp_path):
 # -- ⛔ a bar nobody configured is worth saying out loud -----------------------
 
 def _config_without_push_bar(config_dir):
-    """The LIVE shape: a policy that never names the bar. ZeroParadox's `tools/verify` policy
-    has no `push` key, which is exactly why they could not find the mechanism."""
+    """The shape that USED to be live: a policy that never names the bar. ZeroParadox's
+    `tools/verify` policy had no `push` key, which is exactly why they could not find the
+    mechanism. As of 2026-09-07 this shape no longer LOADS — see below."""
     import json
     path = config_dir / "policy.v1.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
@@ -202,19 +204,25 @@ def _config_without_push_bar(config_dir):
     return path
 
 
-def test_the_bar_reports_whether_it_was_configured_or_defaulted(ledger, tmp_path, config_dir):
-    """⛔⛔ THE BAR RAN ON AN INVISIBLE DEFAULT. Found by ZeroParadox 2026-09-05 with a push
-    blocked: `can_push` reported `push_bar: "tip_green"` and they could not find the mechanism
-    anywhere. **They were right — it is not in the policy the server reads.** `push.bar` went
-    into `verdictLedger/config/policy.v1.json`, which the TESTS load; the live server reads
-    `ZPLEDGER_CONFIG` at ZeroParadox's `tools/verify`, whose policy has no `push` key at all.
+def test_a_policy_that_never_names_the_bar_refuses_to_load(ledger, tmp_path, config_dir):
+    """⭐⭐ WHAT THIS TEST USED TO ASSERT IS THE DEFECT IT NOW PREVENTS.
 
-    ⚠⚠ A rule governing what may be published was a hardcoded fallback, in a project whose first
-    principle is CONFIG, NOT CONSTANTS — undiscoverable precisely BECAUSE it was working. **A
-    default that behaves correctly is the hardest kind to notice.**
+    Until 2026-09-07 it pinned the DISCLOSURE: an absent `push.bar` still ran, still returned
+    `tip_green`, and merely SAID `push_bar_source == "default"`. That was the right first move —
+    the bar had been invisible for three days, was "fixed" in the file only the tests load, and
+    was found again a day later because the live server reads a different one. Disclosure made
+    it findable.
 
-    ⭐ Reporting the SOURCE is what makes it findable: a reader asking "where is this set" learns
-    the answer is nowhere, instead of searching a file that will never contain it."""
+    ⚠⚠ BUT DISCLOSURE LEFT THE LOOSE DIRECTION IN FORCE. Absent fell back to `tip_green` while a
+    TYPO fell back to `every_commit` — so the more likely mistake got the more permissive
+    treatment, and the only thing standing between a silent widening of what may be published
+    and the world was whether somebody read a field. Tim, 2026-09-06: *"invisible defaults need
+    to be visible.. and unless there's a damn good reason, they need to return an unknown
+    value."*
+
+    ⚠ A config failure is a SERVED state, not a crash — the process must not die into a restart
+    loop the supervisor cannot fix. The error is held and every gated action refuses with it.
+    """
     from core.ledger import Ledger
 
     assert ledger.config.push_bar_source == "policy", "the shipped test config names the bar"
@@ -222,23 +230,65 @@ def test_the_bar_reports_whether_it_was_configured_or_defaulted(ledger, tmp_path
     _config_without_push_bar(config_dir)
     led = Ledger(tmp_path / "p2.jsonl", policy_path=config_dir / "policy.v1.json",
                  required_path=config_dir / "required.v2.json")
-    assert led.config.push_bar == "tip_green", "behaviour is unchanged by the key being absent"
-    assert led.config.push_bar_source == "default", (
-        "a bar nobody configured must SAY it was not configured — that silence is the defect")
+
+    assert led.config is None, "an unnamed bar must refuse the config, not default quietly"
+    assert "push.bar" in led.config_error, "the refusal must name the key"
+    # ⚠ `_require_config()` fires before the record is even looked at, so an empty dict is
+    # enough — the point is that the REFUSAL comes from the config, not from the record.
+    with pytest.raises(ConfigError):
+        led.validate({})
 
 
-def test_a_defaulted_bar_is_named_in_the_rendered_line(ledger, tmp_path, config_dir):
-    """⚠ IN THE HUMAN LINE, NOT ONLY THE PAYLOAD. The caller who hit this was reading rendered
-    output, not JSON — a provenance field nobody sees is the same silence in a new field."""
+def test_the_refusal_names_the_value_that_restores_todays_behaviour(tmp_path, config_dir):
+    """⭐⭐ `UsageError(what, satisfied_when)` — A REFUSAL NAMES THE SUCCESS CONDITION.
+
+    The repo's test for this is: could a reader construct a passing next attempt from the
+    success condition ALONE, with the complaint deleted? So the message must carry the literal
+    value, not merely "set push.bar". Anyone hitting this is mid-outage on a server that is
+    refusing every gated action, which is the worst moment to make them go reading source to
+    learn that `tip_green` was what they were already running under.
+    """
     from core.ledger import Ledger
 
     _config_without_push_bar(config_dir)
     led = Ledger(tmp_path / "p3.jsonl", policy_path=config_dir / "policy.v1.json",
                  required_path=config_dir / "required.v2.json")
-    base, shas = _repo(tmp_path, n=1)
-    text = canpush_mod.render(canpush_mod.check(
-        records=[], config=led.config, repo=str(tmp_path),
-        rev_range=f"{base}..{shas[-1]}", admission=[STEP], commit_admission=[STEP]))
 
-    assert "built-in DEFAULT" in text, "a defaulted bar must be visible where it is read"
-    assert "policy()" in text, "and must name how to find which file was loaded"
+    assert "tip_green" in led.config_error, (
+        "the refusal must name the value that keeps behaviour identical — a reader must be "
+        "able to write the fix from the message without knowing what the built-in was")
+    assert "PERMISSIVE" in led.config_error, (
+        "and must say WHY absence is a defect: the fallback bought the looser rule")
+
+
+def test_a_strict_default_is_NOT_made_fatal(tmp_path, config_dir):
+    """⛔⛔ THE ASYMMETRY, PINNED — the control for the two tests above.
+
+    Three keys were disclosed as running on built-ins and only TWO were made fatal. The
+    discriminator is not "was it defaulted" but WHICH DIRECTION the default errs:
+
+        push.bar                        absent -> tip_green   PERMISSIVE   refuse
+        coverage.require_complete       absent -> False       PERMISSIVE   refuse
+        migration.v16_evidence_required absent -> True        STRICT       ALLOW
+
+    Deleting the V16 key is how the cutover ENDS. `test_deleting_the_key_re_arms_the_rule` pins
+    that removal RE-ARMS the rule, and `test_the_shipped_policy_relaxes_nothing` pins that the
+    shipped policy carries no `migration` block at all — so requiring it would force a live
+    relaxation block back into every policy file, which is the exact thing that test exists to
+    prevent. Absence is a defect only where absence is the loose direction.
+    """
+    import json
+    from core.ledger import Ledger
+
+    path = config_dir / "policy.v1.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.pop("migration", None)
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+    led = Ledger(tmp_path / "p4.jsonl", policy_path=path,
+                 required_path=config_dir / "required.v2.json")
+
+    assert led.config is not None, (
+        "a STRICT default must still load — making it fatal would force a `migration` block "
+        "into every policy file and convert a safe terminal absence into an outage")
+    assert led.config.v16_required is True, "and absent must still mean strict"

@@ -128,6 +128,58 @@ class Config:
             raise ConfigError("policy.agreement.min_passes must be an integer")
         if not isinstance(p.get("supersede", {}).get("max_depth"), int):
             raise ConfigError("policy.supersede.max_depth must be an integer")
+        # ⭐⭐ REFUSE ON A MISSING POLICY-GRADE KEY, added 2026-09-07. This file's own
+        # header has always said the bar "must never fall back to a built-in default,
+        # because a built-in default is a second copy of the policy and the weaker one
+        # is the copy nobody notices" — and that was enforced for the WHOLE FILE and
+        # never for an INDIVIDUAL KEY. `push.bar` ran as an invisible built-in for
+        # THREE DAYS, was "fixed" in the file only the tests load, and was found again
+        # a day later because the live server reads a different one. Two discoveries
+        # of one defect. `min_passes` and `max_depth` above are the model: no built-in
+        # at all, raise if unset.
+        #
+        # ⛔⛔ THE LIST IS DELIBERATELY NOT ALL THREE KEYS THAT WERE DISCLOSED.
+        # `migration.v16_evidence_required` is ABSENT FROM IT ON PURPOSE, and adding
+        # it would be a real regression, not extra safety:
+        #
+        #   push.bar                        absent -> tip_green   PERMISSIVE
+        #   coverage.require_complete       absent -> False       PERMISSIVE
+        #   migration.v16_evidence_required absent -> True        STRICT
+        #
+        # Absence is only a defect where absence is the LOOSE direction. For V16,
+        # deleting the key is how the cutover ENDS — `test_deleting_the_key_re_arms_
+        # the_rule` pins that removal re-arms the rule, and `test_the_shipped_policy_
+        # relaxes_nothing` pins that the shipped policy carries NO `migration` block
+        # precisely so that leaving a live relaxation behind turns the suite red.
+        # Requiring the key would force that block back into every policy file and
+        # convert a safe, intended, terminal absence into a fatal one.
+        #
+        # ⚠ A TYPO IS STILL NOT REFUSED HERE, and that asymmetry is deliberate: an
+        # unknown `push.bar` falls back to `every_commit`, the STRICTER bar. Missing
+        # was the loose direction; misspelt is already the safe one.
+        for dotted, block, key, kind, what in (
+                ("push.bar", "push", "bar", str,
+                 "what may be published: whether every commit in a range is judged, "
+                 "or only the tip"),
+                ("coverage.require_complete", "coverage", "require_complete", bool,
+                 "whether a step may report SATISFIED having examined almost none of "
+                 "its declared scope"),
+        ):
+            node = p.get(block)
+            if not isinstance(node, dict) or key not in node:
+                raise ConfigError(
+                    f"policy.{dotted} is not set. It governs {what}. Its built-in "
+                    f"fallback is the PERMISSIVE direction, so an absent key quietly "
+                    f"buys the looser rule — write the value you are actually running "
+                    f"under into the policy file. To keep today's behaviour exactly, "
+                    f"set it to "
+                    f"{'\"tip_green\"' if dotted == 'push.bar' else 'false'}.")
+            # ⚠ `False` IS A CONFIGURED VALUE. A truthiness test here would refuse the
+            # very value coverage.require_complete actually holds.
+            if not isinstance(node[key], kind) or isinstance(node[key], bool) != (kind is bool):
+                raise ConfigError(
+                    f"policy.{dotted} must be {kind.__name__}, got {node[key]!r}")
+
         mig = p.get("migration")
         if mig is not None:
             if not isinstance(mig, dict):
@@ -368,6 +420,23 @@ class Config:
         ⚠ `agreement.min_passes` and `supersede.max_depth` are deliberately ABSENT from this list:
         they have no built-in at all and raise if unset, which is the behaviour every entry here
         should eventually have. They are the model, not an oversight.
+
+        ⭐ AND AS OF 2026-09-07 TWO ENTRIES REACHED THAT MODEL. `push.bar` and
+        `coverage.require_complete` now RAISE in `_validate` when absent, so on a config that
+        loaded they can never appear here — this list reports them only via the `Config.__new__`
+        path a unit test uses. They are KEPT rather than deleted: the disclosure is what the
+        refusal is built on, and if the refusal is ever weakened the disclosure must come back
+        rather than the key going quiet again.
+
+        ⛔ `migration.v16_evidence_required` STAYS DISCLOSURE-ONLY, and that is not an oversight
+        either. Its default is STRICT, and deleting the key is how a V16 cutover ENDS — making
+        absence fatal would force a live `migration` block into every policy file, which is the
+        exact thing `test_the_shipped_policy_relaxes_nothing` exists to prevent. **Absence is a
+        defect only where absence is the loose direction.** Disclosed, never refused.
+
+        ⚠ The `lock.*` entries are operational rather than policy and stay disclosure-only for a
+        different reason: a wrong lock timeout is a performance bug, not a widening of what may
+        be published.
         """
         out = []
 

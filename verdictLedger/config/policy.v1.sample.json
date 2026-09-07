@@ -33,5 +33,9 @@
     "_why_not_every_commit": "`every_commit` cannot express the NORMAL shape of a remediation arc: a real defect at commit N, fixed at commit M, both inside one push. Under it that range can never be pushed commit-by-commit-green, and the only escape is rewriting history -- which `squash` does and which is remediation-only on principle, because `can_push` justifies per-commit strictness on the grounds that intermediates are 'fetchable, bisectable, citable forever'. Squashing satisfies that gate by DESTROYING what the gate protects.",
     "_what_is_NOT_forgiven": "MISSING, STALE and LEGACY_IDENTITY still block at every commit. 'We never looked' and 'we looked and it was broken, then we fixed it' are different facts; only the second is a defect that can be fixed within a push. Forgiving the first would make the bar mean 'the tip is green', which is the reading Tim did NOT choose.",
     "bar": "tip_green"
+  },
+  "coverage": {
+    "_comment": "\u26a0 REQUIRED SINCE 2026-09-07 \u2014 an absent key now REFUSES THE WHOLE CONFIG rather than defaulting, because its built-in was the PERMISSIVE direction. `false` means a step may report SATISFIED while never having examined most of its declared scope: measured 2026-08-25, `guards` read SATISFIED over 4 of 504 tracked paths. SETTING IT `true` IS A REAL POLICY CHANGE, not a clearing \u2014 it would likely block everything until a full sweep has genuinely run, and that is a separate decision. `false` here asserts only what was already in force, so the permissiveness stops being invisible. \u26d4 Note what is NOT required alongside it: `migration.v16_evidence_required` defaults STRICT, and deleting it is how a cutover ENDS \u2014 requiring it would force a live `migration` block into every policy file, which is the exact thing test_the_shipped_policy_relaxes_nothing exists to prevent.",
+    "require_complete": false
   }
 }
