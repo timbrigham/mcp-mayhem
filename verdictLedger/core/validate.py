@@ -300,6 +300,29 @@ def rules(record: dict, *, config: Config, existing_ids: set,
             # VIOLATED pin refuses with the actual blob in the message, ready to paste — the next
             # attempt is on different bytes, so naming the bytes that failed is useless without
             # naming the bytes to approve.
+            # ⛔⛔ ON A NEW BUILD: REPLACE THE HASH, DO NOT ACCUMULATE. Decided 2026-09-06.
+            #
+            #   * GIT IS ALREADY THE HISTORY. `required.v2.json` is versioned, so every past
+            #     approved set is recoverable with `git log -p`. A list inside the field
+            #     duplicates what git content-addresses, and the duplicate is the copy that rots.
+            #   * AN ACCUMULATING LIST STOPS BEING A PIN. Approve v1, v2, v3, v4 and eventually
+            #     every build ever written is approved — still LOOKING pinned while constraining
+            #     nothing. That is `RLY31-6`'s shape: a control that decayed into permissiveness
+            #     while appearing to hold, with nothing positioned to notice.
+            #   * OLD RECORDS DO NOT NEED IT. Nothing re-validates the stored stream; `validate`
+            #     runs only at append. A record made under v1 stays exactly as valid as the day
+            #     it landed, whatever the registry says now.
+            #
+            # ⚠ THE ONLY LEGITIMATE PAIR IS A ROLLOUT WINDOW — v2 shipping while a run is in
+            # flight on v1. If you take it, give the second entry a STATED EXPIRY the way
+            # `copy_editor`'s `_why_not_admitted_yet` does, or the transitional pair quietly
+            # becomes permanent.
+            #
+            # ⭐ AND THE TWO-STEP COST IS SMALLER THAN IT LOOKS, because editing a checker
+            # ALREADY stales every row it produced — `inventory` compares `evidence` blobs
+            # against current content and reports "every subject still matches, but the producer
+            # changed". A v2 therefore means re-running that step regardless. Approving the new
+            # blob is one line in the same commit that ships the code, not a separate chore.
             approved = (spec or {}).get("approved_modules")
             if module and approved:
                 got = {e.get("git_blob_id") for e in evidence
