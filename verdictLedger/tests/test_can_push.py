@@ -368,3 +368,105 @@ def test_the_unset_render_names_the_exact_call_to_make(ledger, tmp_path):
     assert "requirements(action='commit')" in text
     assert "commit_admission" in text, "both sets must be named, not just the push set"
     assert f"{base}..{shas[-1]}" in text, "the suggested call must carry the caller's own range"
+
+
+# -- ⭐⭐ a family that examined nothing must SAY so ---------------------------
+
+def _reload(tmp_path, config_dir):
+    """A Ledger reading the registry AS IT IS NOW. `Ledger.config` is built in `__init__`."""
+    from core.ledger import Ledger
+    return Ledger(tmp_path / "reload.jsonl",
+                  policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json")
+
+
+def _set_scope(config_dir, step, scope=None, exclude=None):
+    """Point one registry type's scope somewhere. Returns nothing; the ledger re-reads live."""
+    import json
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    spec = doc["types"][step]
+    if scope is not None:
+        spec["scope"] = scope
+    if exclude is not None:
+        spec["scope_exclude"] = exclude
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+
+def test_a_family_that_examined_nothing_in_the_push_is_named(ledger, tmp_path, config_dir):
+    """⭐⭐ THE DETECTOR FOR THE THING A HUMAN CAUGHT BY EYE.
+
+    Measured 2026-09-07: a push of 11 files reported ALLOWED, 19/19 satisfied, 0 blocking,
+    with `adversary` and `editorial` both ADMITTED, both SATISFIED, both `gating: true`,
+    73/73 subjects and 0 unexamined — and both covering **zero** of the eleven changed paths.
+    Their scope is the published prose surface; the push was `CLAUDE.md` and ten files under
+    `tools/verify/`. Every number was correct and the review layer had looked at nothing.
+
+    ⚠⚠ It was caught by Tim reading a status line and asking why a step that must gate was
+    sitting in a list of things that do not. That question is `scope ∩ changed = ∅` — a set
+    intersection over data `check` already holds — and a person must never be the instrument
+    for it.
+
+    ⚠ REPORTED, NEVER BLOCKING. `allowed` must not move: whether an unwitnessed path refuses
+    a push is the admission set's decision, and shipping it as a gate here would refuse a
+    push that every configured rule permits.
+    """
+    base, shas = _repo(tmp_path, n=1)
+    # `adversary` is family=review and admitted; point it away from the only changed file.
+    _set_scope(config_dir, "adversary", scope=["nothing/matches/this/*"])
+    _set_scope(config_dir, "check_prose", scope=["*.md"])
+    # ⚠ A FRESH Ledger. `Ledger.config` is loaded in __init__ and is NOT re-read, so the
+    # injected fixture still holds the registry as it was before `_set_scope`.
+    led = _reload(tmp_path, config_dir)
+
+    out = _check(led, tmp_path, f"{base}..{shas[-1]}",
+                 admission=("check_prose", "adversary"))
+
+    w = out["witness"]
+    assert w["resolved"] is True
+    assert w["changed_paths"] == 1, "doc.md is rewritten by the fixture's every commit"
+    assert w["witnessed_by_family"]["mechanical"] == 1, "check_prose scopes *.md"
+    assert w["witnessed_by_family"]["review"] == 0, (
+        "adversary is admitted and scoped elsewhere, so the review family witnessed nothing")
+    assert w["unwitnessed_by_family"]["review"] == ["doc.md"], (
+        "the unwitnessed PATHS must be named — a count alone cannot be acted on")
+
+    text = canpush_mod.render(out)
+    assert "NO REVIEW STEP EXAMINED THIS PUSH" in text, (
+        "a caller reading the rendered line must see it; the push_bar_source defect was "
+        "invisible for three days precisely because it lived only in the payload")
+    assert "doc.md" in text
+    assert "NOT blocking" in text, "the line must say it is disclosure, not a refusal"
+
+
+def test_the_witness_is_silent_when_every_family_looked(ledger, tmp_path, config_dir):
+    """⚠ THE CONTROL. A warning that fires on every push is wallpaper, and `relaxations`
+    already has a test for exactly this reason. If both families cover the changed paths,
+    `unwitnessed_by_family` must be EMPTY and the rendered line must carry no warning."""
+    base, shas = _repo(tmp_path, n=1)
+    _set_scope(config_dir, "adversary", scope=["*.md"], exclude=[])
+    _set_scope(config_dir, "check_prose", scope=["*.md"])
+    led = _reload(tmp_path, config_dir)
+
+    out = _check(led, tmp_path, f"{base}..{shas[-1]}",
+                 admission=("check_prose", "adversary"))
+
+    assert out["witness"]["unwitnessed_by_family"] == {}
+    assert out["witness"]["witnessed_by_family"] == {"mechanical": 1, "review": 1}
+    assert "EXAMINED THIS PUSH" not in canpush_mod.render(out)
+
+
+def test_an_unresolvable_base_claims_nothing_rather_than_full_coverage(ledger, tmp_path,
+                                                                       config_dir):
+    """⛔ ABSENCE IS NEVER SUCCESS. If the base cannot be read, the honest answer is that
+    nothing is known about which families looked — NOT an empty `unwitnessed` list, which
+    renders identically to a push every family covered."""
+    from core import canpush as cp
+    base, shas = _repo(tmp_path, n=1)
+    out = cp._witness(config=ledger.config, repo=str(tmp_path),
+                      base="0" * 40, tip_files={}, admitted=["adversary"])
+    assert out["resolved"] is False
+    assert "no claim is made" in out["why"]
+    assert "unwitnessed_by_family" not in out, (
+        "a zero-length unwitnessed list on an unreadable base is the false-negative this "
+        "whole disclosure exists to prevent")

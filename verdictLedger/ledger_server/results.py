@@ -209,6 +209,13 @@ class CanPushResult(Result, total=False):
     failed: list[Any]
     legacy: list[Any]
     config_sha: str
+    # ⭐ Which FAMILY of admitted step has the CHANGED paths in scope. Added 2026-09-07 after
+    # a push read ALLOWED 19/19 while zero review-family steps covered any of its 11 files —
+    # `adversary` and `editorial` were green over a scope with no overlap at all. Reported,
+    # never blocking: whether that refuses a push belongs to the admission set.
+    # ⚠ `resolved: false` when the base could not be read — an unresolvable base is NOT
+    # "nothing changed", and it carries no counts rather than counts of zero.
+    witness: dict[str, Any]
     line: str
 
 

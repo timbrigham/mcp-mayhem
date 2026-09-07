@@ -39,10 +39,23 @@ def ledger(tmp_path, config_dir) -> Ledger:
 
 
 def set_policy(config_dir, **changes):
-    """Edit the policy in place. Returns NOTHING — call it for the side effect, then use the
-    `ledger` fixture, whose config is re-read live.
+    """Edit the policy in place. Returns NOTHING — call it for the side effect, then CONSTRUCT
+    A NEW `Ledger` over the same `config_dir`.
 
-    ⚠ This docstring used to say "and return a Ledger reading it", which it has never done."""
+    ⛔⛔ IT DOES NOT RETURN A LEDGER, AND THE INJECTED `ledger` FIXTURE WILL NOT SEE THE EDIT.
+    This docstring has now made that same class of false claim TWICE. It first said "and
+    return a Ledger reading it", which it has never done. It was then corrected to "use the
+    `ledger` fixture, whose config is re-read live" — ALSO FALSE: `Ledger.__init__` calls
+    `config_mod.load` once and `self.config` is a plain attribute, so a fixture built before
+    this call holds the pre-edit registry forever.
+
+    ⚠ Measured 2026-09-07: that second claim cost a debugging cycle on a NEW test, which
+    asserted a scope change and got the old scope back. Every existing caller already builds
+    a fresh Ledger — `test_migration_switch._led` does exactly that — so the docstring was
+    describing behaviour that no caller relied on and no test would have caught.
+
+    ⭐ Both errors are the same shape: a comment asserting a control that is not RUN. The fix
+    is to say what the callers actually do."""
     path = config_dir / "policy.v1.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
     for dotted, value in changes.items():

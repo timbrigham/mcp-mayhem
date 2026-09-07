@@ -31,6 +31,7 @@ gates are worth having rather than one.
 
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 from typing import Optional
 
@@ -41,6 +42,8 @@ from core import inventory as inventory_mod
 # ⚠ A CAP, BECAUSE AN UNBOUNDED WALK IS A HANG. It is LOUD rather than silent: a
 # truncated audit that renders like a complete one is the failure this server exists
 # to end, so exceeding it REFUSES rather than reporting on the part it managed.
+FAMILIES = frozenset(("mechanical", "review"))
+
 DEFAULT_LIMIT = 500
 
 
@@ -70,6 +73,76 @@ def _files_at(repo: str, ref: str) -> dict:
         blob, path = line.split("\t", 1)
         out[path.strip()] = blob.strip()
     return out
+
+
+def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict:
+    """Which FAMILY of step, if any, has the paths this range CHANGES in its scope.
+
+    ⚠⚠ THE HUMAN WAS THE DETECTOR FOR THIS, AND THAT IS THE DEFECT. Measured 2026-09-07:
+    a push of 11 files — CLAUDE.md and ten under `tools/verify/` — reported ALLOWED, 19/19
+    satisfied, 0 blocking. `adversary` and `editorial` were both admitted, both SATISFIED,
+    both `gating: true`, 73/73 subjects, 0 unexamined. Every number was correct.
+
+    ⛔ AND BOTH COVERED **ZERO** OF THE ELEVEN CHANGED PATHS. Their scope is the published
+    prose surface and `scope_exclude` drops `CLAUDE.md` and `tools/*.md`, so a green
+    adversary row said nothing whatever about what the push actually contained. The only
+    review-family step scoped to that surface is `rely`, which is excluded from admission
+    by design — so not one review step gated one file in that push.
+
+    ⭐ Tim caught it by reading a status line and asking why a step that must gate was
+    sitting in a list of things that do not. That question is a SET INTERSECTION —
+    `scope ∩ changed = ∅` — over data this module already holds, and a person should never
+    be the instrument for it. This is that question, asked on every call.
+
+    ⚠ IT REPORTS AND NEVER BLOCKS. Whether an uncovered path should refuse a push is gate
+    policy and belongs to the admission set, not here; shipping it as a gate would have
+    refused a push that every configured rule permits. **The claim is only that `ALLOWED`
+    must stop rendering identically whether a family looked or not.**
+
+    ⚠ CHANGED means the blob MOVED across the range — added, deleted, or rewritten. A path
+    present at both ends with one blob is untouched by this push and is nobody's debt here,
+    however wide a step's scope is.
+    """
+    try:
+        base_files = _files_at(repo, base)
+    except ValueError:
+        # ⚠ An unresolvable base is not "nothing changed". Say so and claim nothing —
+        # rendering it as full coverage is the exact failure this function exists to end.
+        return {"resolved": False,
+                "why": ("the range base could not be resolved, so no claim is made about "
+                        "which families witnessed these paths")}
+
+    changed = sorted(p for p in set(base_files) | set(tip_files)
+                     if base_files.get(p) != tip_files.get(p))
+    types = (config.required or {}).get("types") or {}
+    admit = set(admitted or [])
+
+    by_family, uncovered = {}, {}
+    for path in changed:
+        fams = set()
+        for step, spec in types.items():
+            if step not in admit or not isinstance(spec, dict):
+                continue
+            when = spec.get("when")
+            globs = spec.get("scope") or ([when] if when else [])
+            drop = spec.get("scope_exclude") or []
+            if globs and not any(fnmatch.fnmatch(path, g) for g in globs):
+                continue
+            if any(fnmatch.fnmatch(path, g) for g in drop):
+                continue
+            fams.add(spec.get("family") or "unknown")
+        for f in fams:
+            by_family[f] = by_family.get(f, 0) + 1
+        for f in (FAMILIES - fams):
+            uncovered.setdefault(f, []).append(path)
+
+    return {"resolved": True,
+            "changed_paths": len(changed),
+            "witnessed_by_family": {f: by_family.get(f, 0) for f in sorted(FAMILIES)},
+            "unwitnessed_by_family": {f: uncovered[f] for f in sorted(uncovered)},
+            "note": ("counts paths CHANGED by this range whose scope is claimed by at least "
+                     "one ADMITTED step of that family. A family at 0 examined nothing this "
+                     "push touched, however green its rows read. Reported, never blocking.")}
 
 
 def check(*, records: list, config, repo: str, rev_range: str, action: str = "push",
@@ -275,6 +348,14 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "stale": sorted({s for r in rows for s in r["stale"]}),
         "failed": sorted({s for r in rows for s in r["failed"]}),
         "legacy": sorted({s for r in rows for s in r["legacy"]}),
+        # ⭐ Disclosure, not a gate — see `_witness`. ALLOWED must not render the same
+        # whether a whole family of steps looked at this push or never touched it.
+        # ⚠ The base is the FIRST commit's PARENT, not the left side of `rev_range`.
+        # It is the state this push departs from under `..` and `...` alike, and it
+        # does not re-parse a range string a caller may have written either way.
+        "witness": _witness(config=config, repo=repo,
+                            base=rows[0]["commit"] + "^",
+                            tip_files=tip_files, admitted=admitted),
     }
 
 
@@ -384,6 +465,25 @@ def render(result: dict) -> str:
     if result.get("push_bar_source") == "default":
         lines.append(f"  ⚠ push bar '{result.get('push_bar')}' is the built-in DEFAULT — no "
                      f"`push.bar` in the loaded policy. `policy()` reports which file that is.")
+
+    # ⭐⭐ A FAMILY THAT LOOKED AT NOTHING MUST SAY SO IN THE LINE, not only in the payload.
+    # The push_bar_source defect above is the precedent: the caller who hit it was reading
+    # RENDERED output, and a provenance field nobody sees is the same silence in a new field.
+    w = result.get("witness") or {}
+    if w.get("resolved") is False:
+        lines.append(f"  ⚠ WITNESS UNKNOWN — {w.get('why')}")
+    for fam, paths in sorted((w.get("unwitnessed_by_family") or {}).items()):
+        lines.append(
+            f"  ⚠⚠ NO {fam.upper()} STEP EXAMINED THIS PUSH — {len(paths)} of "
+            f"{w.get('changed_paths')} changed path(s) fall outside the scope of every "
+            f"ADMITTED {fam} step, so a green {fam} row prices a DIFFERENT set of files:")
+        for path in paths[:SHOWN]:
+            lines.append(f"       {path}")
+        if len(paths) > SHOWN:
+            lines.append(f"       … and {len(paths) - SHOWN} more")
+        lines.append(
+            f"     ⚠ Reported, NOT blocking — whether this refuses a push is the admission "
+            f"set's call, not the ledger's.")
 
     if result.get("forgiven"):
         # ⚠ "a real FAIL" WAS WRONG THE MOMENT `failing` LANDED ON UNDECIDED. `failed` is
