@@ -102,4 +102,19 @@ def good(**over):
         "run": {"id": "run-1", "started": None, "config_sha": None, "env": {}},
     }
     rec.update(over)
+    # ⭐ V19, 2026-09-07: a blocking verdict must NAME what it indicts. A generic fixture
+    # must produce a COMPLIANT record, so a probe still changes exactly one thing — the
+    # whole point of this builder. Absent `failing` on a FAIL used to be legal and now
+    # reads as "indicts every subject", which V19 refuses as a maximal claim by omission.
+    #
+    # ⚠ Only when the caller did not speak. A test probing V19 itself passes
+    # `failing=[]` explicitly and must still get an empty list, not a helpful default —
+    # a fixture that repairs the defect under test is a fixture that hides it.
+    # ⛔ FAIL ONLY — matching V19's scope, and I got this wrong first. Auto-adding `failing`
+    # to an UNDECIDED broke `test_v16b_does_not_stop_a_dying_checker_recording_that_it_died`:
+    # the fixture handed the dying-checker probe a `failing` list, which triggered V16b and
+    # made the test fail for a reason it was not testing. Exactly the trap the note below
+    # names, committed one line above the note.
+    if "failing" not in over and rec.get("verdict") == "FAIL":
+        rec["failing"] = [s["path"] for s in rec.get("subjects") or []]
     return rec

@@ -685,3 +685,68 @@ def test_v16c_is_silent_when_the_registry_pins_nothing(ledger):
     to find out which tools are unconstrained.
     """
     assert not any(e.startswith("V16c") for e in errs(ledger, good())),         "a step with no approved_modules must still record"
+
+
+# -- V19: a FAIL must name what it indicts ------------------------------------
+
+
+def test_v19_refuses_a_fail_that_names_nothing(ledger):
+    """⭐⭐ ABSENCE CARRYING A MAXIMAL CLAIM. An absent `failing` is read by the resolver as
+    INDICTING EVERY SUBJECT — so a FAIL that says nothing says *everything*, by omission.
+
+    Measured harm: `check_checkers` examined 24 files, failed on one, and condemned all 24,
+    with the narrow set sitting in a local variable (`LED-10a`). Worst-verdict-wins then read
+    FAIL for every commit sharing those 23 innocent blobs, including one that predated the bad
+    file existing at all.
+
+    ⚠ Tim, 2026-09-07: *"absence should render as unknown, not pass."* The same argument
+    refuses absence rendering as EVERYTHING.
+    """
+    assert rule(ledger, good(verdict="FAIL", reason="x", failing=[]), "V19")
+    assert rule(ledger, good(verdict="FAIL", reason="x", failing=None), "V19")
+
+
+def test_v19_accepts_a_fail_that_names_its_subset(ledger):
+    """⚠ THE MUST-SUPPRESS HALF. A rule that refuses everything is not a rule."""
+    assert not any(e.startswith("V19") for e in
+                   errs(ledger, good(verdict="FAIL", reason="x",
+                                     failing=["docs/x.md"])))
+
+
+def test_v19_does_not_touch_undecided_so_a_dying_checker_still_records(ledger):
+    """⛔⛔ THE CASE THAT REFUTED THE FIRST DRAFT, PINNED SO IT CANNOT COME BACK.
+
+    V19 was written for FAIL **and** UNDECIDED. `test_v16b_does_not_stop_a_dying_checker_
+    recording_that_it_died` went red, and the design it defends is right: *"if you were
+    specific enough to name which files defeated you, you were alive enough to name
+    yourself."*
+
+    ⚠⚠ A checker that CRASHED cannot name a subset. Requiring one stops it recording that it
+    died, and the step renders MISSING rather than UNDECIDED — **absence rendering as NOTHING
+    instead of as unknown**, which is strictly worse and the opposite of the rule's purpose.
+
+    ⭐ The line is CAPABILITY, not safety direction. Both a wide FAIL and a wide UNDECIDED are
+    fail-closed. The difference is that a FAIL always COULD have named its subset and withheld
+    it; a dead checker could not.
+    """
+    assert not any(e.startswith("V19") for e in
+                   errs(ledger, good(verdict="UNDECIDED", reason="could not enumerate",
+                                     failing=[], evidence=[])))
+
+
+def test_v19_is_governed_by_the_rule_engine_not_the_shape_pass(ledger):
+    """⚠ IT WAS FIRST WRITTEN IN `structural()`, AND THE NEUTER CONTROL CAUGHT IT.
+
+    `test_neuter_control_every_probe_depends_on_the_rules` stubs the rule engine and asserts
+    every probe goes green. V19 stayed RED — because `structural()` is the shape pass and runs
+    regardless. **A probe that survives the rules being switched off is testing a proxy.**
+
+    V19 is policy about what a blocking verdict must CARRY, not about whether the record can be
+    READ, so it belongs with V1-V18. This asserts where it lives, by behaviour rather than by
+    reading the source.
+    """
+    from core import validate as validate_mod
+    assert not any(e.startswith("V19") for e in
+                   validate_mod.structural(good(verdict="FAIL", reason="x", failing=[]))), (
+        "V19 must not fire from the shape pass — it is a rule, and the neuter control "
+        "only governs `rules()`")

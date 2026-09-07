@@ -71,6 +71,12 @@ def structural(record: dict) -> list[str]:
     # UNDECIDED both BLOCK, so narrowing one moves paths from blocked to clear and the reader
     # can see which. A PASS blocks nothing; `failing` there could only ever mean something the
     # resolver does not implement, and V18 already governs what a PASS may carry.
+    # ⚠ V19 IS NOT HERE, AND THE NEUTER CONTROL IS WHY. It was first written in this
+    # function, and `test_neuter_control_every_probe_depends_on_the_rules` — which stubs the
+    # rule engine and asserts every probe goes green — stayed RED. A probe that survives the
+    # rules being switched off is testing a proxy, not the rule. V19 is policy about what a
+    # blocking verdict must CARRY, not about whether the record can be READ, so it lives in
+    # `rules()` with V1-V18.
     if "failing" in record:
         failing = record.get("failing")
         if not isinstance(failing, list) or not all(
@@ -184,6 +190,52 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     step_name = record.get("step")
     spec = (config.requirements() or {}).get(step_name) if step_name else None
     declared = list((spec or {}).get("switches") or [])
+    # ⭐⭐ V19 — A BLOCKING VERDICT MUST SAY WHICH BYTES IT CONDEMNS. Landed 2026-09-07,
+    # AFTER the consumer's emitter, in that order and never the reverse.
+    #
+    # ⚠⚠ ABSENT `failing` MEANS ALL SUBJECTS ARE INDICTED — absence carrying a MAXIMAL claim,
+    # silently. Tim, this afternoon: *"absence should render as unknown, not pass."* The same
+    # argument refuses absence rendering as EVERYTHING. `check_checkers` examined 24 files,
+    # failed on one, and condemned all 24 — with the narrow set sitting in a local variable
+    # (`LED-10a`). Worst-verdict-wins then read FAIL for every commit sharing those 23
+    # innocent blobs, including one that predated the bad file existing.
+    #
+    # ⛔ WHY THIS IS ENFORCED HERE AND NOT ONLY IN THE CLIENT. All three emitter routes now
+    # guarantee it — `common.py:781` makes FAIL ⟺ non-empty `bad` an IDENTITY, `agent_gate`
+    # inherits it, and `record.py`'s CLI refuses the flagless case as of `acbe1c7`. **But that
+    # guarantee lives entirely in the consumer's repo**, in a file whose own header says
+    # editing it "stales EVERY mechanical step at once" — so it will be edited again, and an
+    # identity is one refactor from being a policy someone gets wrong. `CLAUDE.md`: *"a rule
+    # living in a client is a rule with one copy and no enforcement."* The gated party must
+    # not be the sole enforcer of the gate.
+    #
+    # ⚠ HISTORICAL RECORDS ARE UNTOUCHED. Validation runs at APPEND; nothing re-validates the
+    # stream. The 118 tier-A blocking records carrying no `failing` stay exactly as they are —
+    # correcting one is a re-emission at a higher revision, a separate decision nobody made.
+    # ⛔⛔ FAIL ONLY, NOT UNDECIDED, AND THE TEST SUITE REFUTED THE BLANKET VERSION.
+    # `test_v16b_does_not_stop_a_dying_checker_recording_that_it_died` went red on the first
+    # draft, and the design it defends is right: *"`failing` is the discriminator — if you
+    # were specific enough to name which files defeated you, you were alive enough to name
+    # yourself."* A checker that CRASHED cannot name a subset. Requiring one would stop it
+    # recording that it died, and the step would render MISSING rather than UNDECIDED —
+    # absence rendering as NOTHING instead of as unknown, which is the worse of the two and
+    # the opposite of what this rule is for.
+    #
+    # ⭐ THE LINE IS CAPABILITY, NOT SAFETY DIRECTION. Both a wide FAIL and a wide UNDECIDED
+    # are fail-CLOSED. The difference is that a FAIL always COULD have named its subset —
+    # `check_checkers` had `_bad` sitting in a local variable while it condemned all 24 — and
+    # a dead checker could not. Require it where the emitter had the answer and withheld it.
+    #
+    # ⚠ UNDECIDED stays governed by V16b: carrying `failing` obliges `evidence`; carrying
+    # neither is the dying-checker case and stays recordable.
+    if record.get("verdict") == "FAIL" and not record.get("failing"):
+        out.append(
+            "V19: a blocking verdict must name what it indicts. `failing` is absent or "
+            "empty, which the resolver reads as INDICTING EVERY SUBJECT — a maximal claim "
+            "made by omission. SATISFIED WHEN: `failing` lists the subset this verdict "
+            "actually condemns; if it genuinely condemns all of them, pass the full subject "
+            "list and say so explicitly. Absence is not a way to spell 'all'.")
+
     if declared:
         named = {s.get("path") for s in (record.get("subjects") or [])
                  if isinstance(s, dict)}
