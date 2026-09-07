@@ -353,3 +353,50 @@ def test_a_genuine_server_fault_is_still_unhandled():
         assert iserror._caller_argument_error(exc, "get") is None, (
             "an INTERNAL model failure is the server's fault; titled 'Inner', not "
             "'getArguments', so it must not be re-labelled as the caller's mistake")
+
+
+def test_the_remedy_is_machine_actionable_not_only_readable():
+    """⭐⭐ A PROGRAM MUST BE ABLE TO ACT ON IT, NOT ONLY A READER.
+
+    The convention's test is *"could a reader construct a passing next attempt from
+    `satisfied_when` alone, with `what` deleted?"* — and I asserted this shape passed it.
+    ZeroParadox then RAN it: discarded `error`, read only the structured `fields`, rebuilt
+    the arguments mechanically, and the retry succeeded.
+
+    ⚠⚠ THAT PROPERTY WAS ASSERTED BY ME AND RUN BY NOBODY, which this codebase calls an
+    unpriced exemption: *"a control whose surviving enforcement is ASSERTED rather than RUN."*
+    Their verification was a one-off in a live session and would not survive the week. This
+    is it, permanently.
+
+    ⚠ SCOPE, DELIBERATELY NARROW. It asserts the ARGUMENT error clears — not that the record
+    exists. `fields` promises "here is what is wrong with your call", never "your query will
+    find something", and testing the second would make this fail for reasons that are not
+    about the contract.
+    """
+    import asyncio
+    from ledger_server import server as srv
+    from mcpcommon import iserror
+
+    bad = _refuse("get", {"record_id": "rely@abc#1"})
+    assert bad["error_type"] == "usage"
+
+    # Build the retry from `fields` ALONE — no English parsed, `error` never read.
+    retry_args = {f["field"]: "rely@abc#1"
+                  for f in bad["fields"] if f["problem"] == "missing"}
+    assert retry_args == {"id": "rely@abc#1"}, (
+        "the structured fields must be sufficient to name the argument that was wrong")
+
+    still_a_usage_error = {}
+
+    async def _go():
+        try:
+            await srv.mcp._tool_manager.call_tool(
+                "get", retry_args, context=None, convert_result=False)
+        except Exception as exc:                        # noqa: BLE001
+            if iserror._caller_argument_error(exc, "get") is not None:
+                still_a_usage_error["yes"] = str(exc)
+
+    asyncio.run(_go())
+    assert not still_a_usage_error, (
+        f"arguments rebuilt from `fields` must satisfy the inputSchema; still refused as a "
+        f"usage error: {still_a_usage_error.get('yes')}")
