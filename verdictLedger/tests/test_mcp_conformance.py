@@ -30,6 +30,10 @@ os.environ.setdefault("ZPLEDGER_CONFIG", r"C:\Workspace\ZeroParadox\tools\verify
 
 from ledger_server.server import mcp  # noqa: E402
 
+# ⚠ The repo's OWN config copies, suffixed `.sample` so nobody confuses them with the
+# live bar in the consumer's tree (Tim, 2026-09-06).
+ROOT_CONFIG = Path(__file__).resolve().parents[1] / "config"
+
 # ⚠ Everything that WRITES to the stream. Kept as a literal rather than derived from the
 # annotations under test — a control that reads its expectation from the thing it is
 # checking asserts only that the code equals itself.
@@ -400,3 +404,77 @@ def test_the_remedy_is_machine_actionable_not_only_readable():
     assert not still_a_usage_error, (
         f"arguments rebuilt from `fields` must satisfy the inputSchema; still refused as a "
         f"usage error: {still_a_usage_error.get('yes')}")
+
+
+# -- ⭐⭐ the contract's FETCH PATH — see the corpus/harness tenancy terms -------
+
+def test_requirements_serves_the_fields_the_consumer_must_stop_parsing():
+    """⭐⭐ THE CONTRACT DEPENDS ON THIS AND NOTHING PINNED IT.
+
+    Agreed 2026-09-07 (Tim): the config files move to this repo, and ZeroParadox stops reading
+    them off disk. Two call sites parse `required.v2.json` by FILESYSTEM PATH today —
+    `guards.py:461` for `types.rely.scope`, and `check_release_ready.py:363` for the whole
+    `types` dict. Both convert to `requirements()` BEFORE custody moves, because moving the file
+    first breaks them.
+
+    ⚠⚠ SO `requirements()` BECOMES LOAD-BEARING FOR ANOTHER REPO, and the field it must carry is
+    exactly the one this function has already dropped once. `Config.requirements()` rebuilds each
+    spec KEY BY KEY from a whitelist: measured 2026-09-06, V16c was written, the registry was
+    pinned, the spec read correctly from disk — and nothing fired, because `approved_modules`
+    never survived the rebuild. **A validator can only enforce what that dict carries, and now so
+    can a consumer.**
+
+    ⛔ `scope_exclude` IS THE ONE THAT MATTERS MOST. Under term 2 the harness owns the carve-outs
+    — carving is deciding — so it is the field the consumer must fetch rather than hold. If it
+    silently stopped being served, the consumer would fetch a policy with no exclusions and
+    every excluded path would read as in-scope. That is a widening, in the direction of more
+    work rather than less, so it would look like diligence rather than a defect.
+    """
+    from core import config as config_mod
+
+    cfg = config_mod.load(policy_path=ROOT_CONFIG / "policy.v1.sample.json",
+                          required_path=ROOT_CONFIG / "required.v2.sample.json")
+    served = cfg.requirements()
+
+    declared_scope = {s for s, v in (cfg.required.get("types") or {}).items()
+                      if isinstance(v, dict) and v.get("scope")}
+    declared_excl = {s for s, v in (cfg.required.get("types") or {}).items()
+                     if isinstance(v, dict) and v.get("scope_exclude")}
+    assert declared_scope and declared_excl, (
+        "the sample registry must exercise BOTH fields or this test proves nothing — a control "
+        "over data that does not contain the case is the warrant-satisfied-while-empty shape")
+
+    missing_scope = {s for s in declared_scope if not (served.get(s) or {}).get("scope")}
+    assert not missing_scope, (
+        f"`requirements()` dropped `scope` for {sorted(missing_scope)}. `guards.py` fetches this "
+        f"instead of parsing the file; dropping it silently un-scopes a step.")
+
+    missing_excl = {s for s in declared_excl if not (served.get(s) or {}).get("scope_exclude")}
+    assert not missing_excl, (
+        f"`requirements()` dropped `scope_exclude` for {sorted(missing_excl)}. The harness OWNS "
+        f"the carve-outs under term 2 — a consumer fetching policy with no exclusions reads "
+        f"every excluded path as in-scope, which widens the gate while looking like diligence.")
+
+
+def test_the_served_exclusions_are_the_declared_ones_not_merely_present():
+    """⚠ PRESENCE IS NOT VALUE, and this project has paid for that distinction already.
+
+    `RLYB4-1`: a verdict row was PRESENT and held a zero the leg never earned — *"Presence was
+    checked and value was not."* A `scope_exclude` served as `[]` would pass a presence check and
+    carve out nothing. So compare the CONTENT against the registry, not the key against None.
+    """
+    from core import config as config_mod
+
+    cfg = config_mod.load(policy_path=ROOT_CONFIG / "policy.v1.sample.json",
+                          required_path=ROOT_CONFIG / "required.v2.sample.json")
+    served = cfg.requirements()
+    for step, spec in (cfg.required.get("types") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        declared = spec.get("scope_exclude")
+        if not declared:
+            continue
+        want = [declared] if isinstance(declared, str) else list(declared)
+        assert (served.get(step) or {}).get("scope_exclude") == want, (
+            f"{step}: served exclusions differ from the registry. The consumer would carve out a "
+            f"different set than the file declares, and neither side would see the disagreement.")
