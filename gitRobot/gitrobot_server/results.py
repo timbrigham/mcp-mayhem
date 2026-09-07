@@ -92,6 +92,19 @@ class PreflightStatusResult(Result, total=False):
     run_id: str
     ts: str
     gates: list[dict[str, Any]]
+    # ⭐ A TIMEOUT IS NOT A VERDICT. Added 2026-09-07 after pre-push crossed 1800s and this
+    # returned `state: "failed"` with the only evidence — exit 124 — buried in `gates[0].note`,
+    # while the ledger said ALLOWED and the consumer's own prepush said PASS. A caller
+    # branching on `state` read "the clock ran out" as "the gate refused you".
+    # ⚠ `state` deliberately still says "failed"; changing a value a live consumer branches on
+    # is coordinated, client-first, exactly as `isError` was. This is the discriminator beside it.
+    failure_kind: str          # "timeout" | "verdict" — only when state == "failed"
+    # ⚠ The budget, published because it is a BUILT-IN CONSTANT in core/gates.py that no caller
+    # can otherwise read — and on `running` too, which is the state where waiting is the question.
+    gate_timeout_seconds: dict[str, int]
+    started_at: str
+    started_pid: int
+    note: str
 
 
 class PushStatusResult(Result, total=False):

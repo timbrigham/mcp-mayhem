@@ -331,3 +331,90 @@ def test_a_dead_worker_in_a_live_process_reports_orphaned_not_running(robot, rep
         f"wait for a verdict that nothing will ever write")
     assert state["state"] != "running"
     assert "not a lock you are waiting on" in state["note"]
+
+
+# -- ⭐⭐ a timeout is not a verdict -------------------------------------------
+
+def _slow_gate(repo, seconds: float):
+    entry = repo / "tools" / "verify" / "hooks.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(f"import time\ntime.sleep({seconds})\n", encoding="utf-8")
+    return entry
+
+
+def test_a_timed_out_gate_is_not_reported_as_a_verdict(robot, repo, tmp_path, monkeypatch,
+                                                       fake_gate, ledger_ok):
+    """⭐⭐ THE CLOCK RUNNING OUT AND THE GATE SAYING NO ARE DIFFERENT FACTS.
+
+    Reported by ZeroParadox 2026-09-07. Their pre-push crossed the 1800s cap:
+
+        preflight 81ff049327a0  state failed  exit_code 124
+                  note "gate timed out after 1800s"
+
+    ⚠⚠ The verdictLedger said ALLOWED with 0 blocking and their own `batch.py prepush` said
+    PASS. **The gate was green and the plumbing could not carry it** — ~96% of each nested run
+    was an ADVISORY agent layer that by construction blocks nothing. Yet `preflight_status`
+    returned `state: "failed"` with the only evidence buried in `gates[0].note`, so a caller
+    branching on `state` reads "we ran out of clock" as "you were refused".
+
+    ⚠ `state` still says "failed" and that is deliberate — it IS a failure to produce a
+    verdict, and changing a value a live consumer branches on is a coordinated change. The
+    discriminator sits beside it.
+    """
+    # ⚠ COMMIT FIRST, under the fast default gate. The pre-commit leg runs INSIDE `commit()`,
+    # so installing the slow gate up front times that out and the test never reaches preflight.
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    robot.stage(["a.txt"])
+    msg = tmp_path / "m.txt"
+    msg.write_text("m\n", encoding="utf-8")
+    robot.commit(str(msg))
+
+    monkeypatch.setattr("core.gates.PHASE_TIMEOUT", {"pre-commit": 1, "pre-push": 1})
+    _slow_gate(repo, 5)
+    robot.preflight(wait=True)
+    st = robot.preflight_status()
+
+    assert st["state"] == "failed", "a timeout still fails — it produced no verdict"
+    assert st["failure_kind"] == "timeout", (
+        "and it must be DISTINGUISHABLE from a refusal without reading gates[].note")
+    assert "NOT a gate refusal" in st["note"]
+    # ⚠ the REPORTED budget must be the ENFORCED one. Reading an import-time copy here would
+    # print 1800 while 1 was in force — a second copy of the value, which is the defect this
+    # codebase exists to remove.
+    assert st["gate_timeout_seconds"] == {"pre-commit": 1, "pre-push": 1}
+
+
+def test_a_real_gate_failure_is_still_a_verdict(robot, repo, tmp_path, fake_gate, ledger_ok):
+    """⚠ THE CONTROL. If `failure_kind` said "timeout" for every failure it would carry no
+    information — the same reason `relaxations` has a silence test."""
+    (repo / "b.txt").write_text("b\n", encoding="utf-8")
+    robot.stage(["b.txt"])
+    msg = tmp_path / "m.txt"
+    msg.write_text("m\n", encoding="utf-8")
+    robot.commit(str(msg))          # clean pre-commit
+
+    fake_gate(1)                    # NOW the pipeline refuses, on its own merits
+    robot.preflight(wait=True)
+    st = robot.preflight_status()
+    assert st["state"] == "failed"
+    assert st["failure_kind"] == "verdict", "an exit-1 gate REFUSED; it did not run out of time"
+    assert "NOT a gate refusal" not in (st.get("note") or "")
+
+
+def test_the_budget_is_published_while_running_not_only_after(robot, repo, tmp_path,
+                                                              fake_gate, ledger_ok):
+    """⚠ THE STATE WHERE THE CAP ACTUALLY MATTERS. ZeroParadox: *"a caller who does not know
+    the budget cannot tell 'timed out' from 'still going.'"* It lives in a module constant no
+    caller can read, so a long poll is indistinguishable from a hang."""
+    (repo / "c.txt").write_text("c\n", encoding="utf-8")
+    robot.stage(["c.txt"])
+    msg = tmp_path / "m.txt"
+    msg.write_text("m\n", encoding="utf-8")
+    robot.commit(str(msg))
+
+    _slow_gate(repo, 3)             # still running when the start receipt is read
+    started = robot.preflight(wait=False)
+    assert started["gate_timeout_seconds"]["pre-push"] == 1800, (
+        "the start receipt must carry the budget — the caller is about to poll")
+    assert "not policy and not configurable" in started["note"], (
+        "and must say it is a built-in, so nobody hunts for a config key that does not exist")

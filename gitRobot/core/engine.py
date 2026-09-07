@@ -39,6 +39,7 @@ from core import ledger as ledger_client
 from core import tiers
 from core.audit import AuditLog
 from core.errors import GitRobotError, RefusalError, RepoError, UsageError
+from core import gates as gates_mod
 from core.gates import Gates, _clip as _clip_output
 from core.gitio import Git
 
@@ -673,8 +674,17 @@ class GitRobot:
         thread = threading.Thread(target=_run, name=f"preflight-{run_id}", daemon=True)
         thread.start()
         return {"op": "preflight", "run_id": run_id, "head": head, "state": "running",
+                # ⚠ THE BUDGET IS PUBLISHED AT START, NOT ONLY IN THE POST-MORTEM. A caller
+                # polling a long run cannot tell "still going" from "hung" without knowing
+                # what the cap is, and it lives in a module constant nobody outside this
+                # process can read. ZeroParadox asked for exactly this after pre-push crossed
+                # 1800s: "a caller who does not know the budget cannot tell timed out from
+                # still going."
+                "gate_timeout_seconds": gates_mod.PHASE_TIMEOUT,
                 "note": "the pipeline runs in the background; poll preflight_status(). "
-                        "push stays refused until it lands green for this HEAD."}
+                        "push stays refused until it lands green for this HEAD. Gate budgets "
+                        f"are {gates_mod.PHASE_TIMEOUT} seconds — a BUILT-IN CONSTANT in "
+                        "gitRobot's core/gates.py, not policy and not configurable."}
 
     def preflight_status(self) -> dict:
         """The state of the latest preflight for the current HEAD.
@@ -691,9 +701,41 @@ class GitRobot:
         run_id = started.get("run_id")
         for record in reversed(self.audit.read()):
             if record.get("run_id") == run_id and record.get("decision") in ("allowed", "failed"):
-                return {"state": "passed" if record["decision"] == "allowed" else "failed",
-                        "head": head, "run_id": run_id, "ts": record["ts"],
-                        "gates": record.get("gates")}
+                gates = record.get("gates")
+                out = {"state": "passed" if record["decision"] == "allowed" else "failed",
+                       "head": head, "run_id": run_id, "ts": record["ts"],
+                       "gates": gates}
+                if out["state"] == "failed":
+                    # ⭐⭐ A TIMEOUT IS NOT A VERDICT, AND `state` ALONE COULD NOT SAY WHICH.
+                    # Reported by ZeroParadox 2026-09-07: pre-push crossed the 1800s cap and
+                    # `preflight_status` returned `state: "failed"` with the only evidence —
+                    # exit 124, "gate timed out after 1800s" — buried in `gates[0].note`. The
+                    # ledger said ALLOWED with 0 blocking and their own prepush said PASS: the
+                    # gate was GREEN and the clock ran out. A caller branching on `state` reads
+                    # that as "the gate refused you", which is the opposite fact.
+                    #
+                    # ⚠ ADDITIVE ON PURPOSE. `state` KEEPS the value "failed" — a timeout did
+                    # fail to produce a verdict, and changing the vocabulary a live consumer
+                    # branches on is a coordinated change, not a unilateral one. This adds the
+                    # discriminator beside it. Promoting it to its own `state` is the follow-up
+                    # and it goes client-first, exactly like `isError` did.
+                    #
+                    # ⚠ 124 is the shell's timeout convention AND what `gates.py` stamps on
+                    # `TimeoutExpired`. A gate that genuinely exits 124 on its own would be
+                    # misread here — no measured case, and named so the next reader can check.
+                    timed_out = [g for g in (gates or []) if g.get("exit_code") == 124]
+                    out["failure_kind"] = "timeout" if timed_out else "verdict"
+                    out["gate_timeout_seconds"] = gates_mod.PHASE_TIMEOUT
+                    if timed_out:
+                        out["note"] = (
+                            f"THE CLOCK RAN OUT — this is NOT a gate refusal. "
+                            f"{len(timed_out)} gate(s) hit the cap: "
+                            f"{', '.join(g.get('phase') or '?' for g in timed_out)}. "
+                            f"Budgets are {gates_mod.PHASE_TIMEOUT} seconds, a BUILT-IN "
+                            f"CONSTANT in gitRobot's core/gates.py — not policy, not "
+                            f"configurable, and reported here so a caller can tell "
+                            f"'timed out' from 'still going' without reading source.")
+                return out
         # ⭐⭐ THREE STATES, AND THE OLD `or` COLLAPSED TWO OF THEM. This read
         # `if alive or started.get("pid") == os.getpid(): running`, so once the audit row had
         # been written by THIS process the answer was "running" whether or not any worker
@@ -712,7 +754,10 @@ class GitRobot:
                     for t in threading.enumerate())
         if alive:
             return {"state": "running", "head": head, "run_id": run_id,
-                    "started_at": started["ts"]}
+                    "started_at": started["ts"],
+                    # ⚠ Same reason as the start receipt: this is the state where a caller
+                    # most needs the cap, because it is the one where waiting is the question.
+                    "gate_timeout_seconds": gates_mod.PHASE_TIMEOUT}
         if started.get("pid") == os.getpid():
             # ⚠⚠ OUR PROCESS, NOT OUR THREAD. Nothing is executing and nothing will ever write
             # the verdict, so a caller told `running` waits for an event that cannot arrive.
