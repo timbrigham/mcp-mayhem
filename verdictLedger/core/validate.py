@@ -275,6 +275,47 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                     f"mechanical verdict must name the module the registry says "
                     f"implements it, or the evidence field certifies some other file.")
 
+            # ⭐⭐ V16c — WHICH VERSION OF THE TOOL, not merely which file.
+            #
+            # V16 above pins the step to a PATH: `check_prose` verdicts must name
+            # `tools/verify/check_prose.py`. That answers "was this recorded by the right tool"
+            # and not "was it recorded by an APPROVED BUILD of it" — an edited checker records
+            # exactly as happily as a reviewed one, because a path is not a version.
+            #
+            # `approved_modules` closes that: a list of git blob ids the registry accepts for
+            # this step's module. Evidence carries `{path, git_blob_id}` already, so nothing new
+            # is transmitted and no key exists anywhere — the identity is the CONTENT, verifiable
+            # against git by anyone, which is the same instrument the whole ledger already rests
+            # on.
+            #
+            # ⛔⛔ ABSENT MEANS UNPINNED AND IS DISCLOSED, NEVER SILENTLY PERMITTED. A step with
+            # no `approved_modules` still records — refusing every unpinned step would brick all
+            # 20 mechanical steps the moment this shipped, which is an outage, not a loud
+            # failure. Instead `Config.unpinned_modules` enumerates exactly which steps are
+            # running unpinned, and `policy()` returns it on every call beside `defaulted`.
+            # **The absence is a fact the caller is told, not a default nobody can see.**
+            #
+            # ⚠ Tim, 2026-09-06, on the two-step cost of pinning (edit the tool, then approve its
+            # new hash): *"the 'silently can't record' is the problem. fail loudly."* So a
+            # VIOLATED pin refuses with the actual blob in the message, ready to paste — the next
+            # attempt is on different bytes, so naming the bytes that failed is useless without
+            # naming the bytes to approve.
+            approved = (spec or {}).get("approved_modules")
+            if module and approved:
+                got = {e.get("git_blob_id") for e in evidence
+                       if isinstance(e, dict) and e.get("path") == module}
+                if got and not (got & set(approved)):
+                    actual = sorted(g for g in got if g)
+                    out.append(
+                        f"V16c: step {step_name!r} was produced by an UNAPPROVED build of "
+                        f"{module!r}. Evidence names blob {actual[0] if actual else '?'}, and "
+                        f"the registry approves {sorted(approved)}. A path says which tool ran; "
+                        f"a blob says which VERSION of it, and only the second is reviewable. "
+                        f"SATISFIED WHEN: either record with an approved build, or add this "
+                        f"blob to `approved_modules` for {step_name!r} in the registry — which "
+                        f"is a REVIEWABLE EDIT in the same history as the tool change, and is "
+                        f"the point of pinning rather than an obstacle to it.")
+
     # V17 — ⭐⭐ A DELEGATED VERDICT NAMES THE BRIEF IT RAN UNDER.
     # Tim, 2026-08-25: "the entire idea having these agents is so that I can delegate
     # trust to them." Before this, no delegated review could record a PASS at all --

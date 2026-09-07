@@ -89,6 +89,7 @@ class PolicyResult(Result, total=False):
     max_depth: int
     genesis: Any
     defaulted: list[dict[str, Any]]
+    unpinned_modules: list[dict[str, Any]]
     policy_path: str
     required_path: str
     config_source: str

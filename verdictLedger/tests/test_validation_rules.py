@@ -617,3 +617,71 @@ def test_v16b_does_not_stop_a_dying_checker_recording_that_it_died(ledger):
     fail-closed, and stays recordable with no evidence at all.
     """
     assert not any(e.startswith("V16b") for e in errs(ledger, _undecided())),         "a checker that died must still be able to record that it died"
+
+
+# -- V16c: which VERSION of the tool, not merely which file -------------------
+
+
+def _pin(config_dir, step, module, approved):
+    """Add `approved_modules` to a step in the REGISTRY (required.v2.json), not the policy."""
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    types = doc.get("types") if isinstance(doc.get("types"), dict) else doc
+    types.setdefault(step, {})
+    types[step]["module"] = module
+    types[step]["approved_modules"] = approved
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_v16c_refuses_an_unapproved_build_of_an_approved_module(tmp_path, config_dir):
+    """⭐⭐ A PATH SAYS WHICH TOOL RAN; A BLOB SAYS WHICH VERSION, AND ONLY THE SECOND IS
+    REVIEWABLE.
+
+    V16 pins a step to a module path, so its verdicts must name that file. That accepts an
+    EDITED checker exactly as readily as a reviewed one. `approved_modules` pins the build.
+
+    ⚠ Tim, 2026-09-06, on the two-step cost (edit the tool, then approve its hash): *"the
+    'silently can't record' is the problem. fail loudly."* So the refusal names the offending
+    blob AND the remedy — the next attempt is on different bytes, so naming what failed is
+    useless without naming what to approve.
+    """
+    rec = good()
+    step = rec["step"]
+    module = f"tools/verify/{step}.py"
+    rec["evidence"] = [{"path": module, "git_blob_id": "d" * 40}]
+    _pin(config_dir, step, module, ["a" * 40, "b" * 40])
+    # ⚠ Build the ledger AFTER pinning: Config is read in Ledger.__init__, so a fixture-built
+    # ledger has already loaded the registry and would never see the edit.
+    ledger = Ledger(tmp_path / "records.jsonl",
+                    policy_path=config_dir / "policy.v1.json",
+                    required_path=config_dir / "required.v2.json")
+
+    found = errs(ledger, rec)
+    assert any(e.startswith("V16c") for e in found), f"V16c did not fire; got {found}"
+    msg = next(e for e in found if e.startswith("V16c"))
+    assert "d" * 40 in msg, "the refusal must name the blob that was rejected"
+    assert "approved_modules" in msg, "the refusal must name the remedy, not just the fault"
+
+
+def test_v16c_accepts_an_approved_build(tmp_path, config_dir):
+    """The other direction: a pinned step records normally when the build is on the list."""
+    rec = good()
+    step = rec["step"]
+    module = f"tools/verify/{step}.py"
+    rec["evidence"] = [{"path": module, "git_blob_id": "a" * 40}]
+    _pin(config_dir, step, module, ["a" * 40, "b" * 40])
+    ledger = Ledger(tmp_path / "records.jsonl",
+                    policy_path=config_dir / "policy.v1.json",
+                    required_path=config_dir / "required.v2.json")
+    assert not any(e.startswith("V16c") for e in errs(ledger, rec))
+
+
+def test_v16c_is_silent_when_the_registry_pins_nothing(ledger):
+    """⛔ AN ABSENT PIN IS DISCLOSED, NEVER SILENTLY REFUSED — and never silently permitted.
+
+    Refusing every unpinned step would brick all twenty mechanical steps the moment this
+    shipped: an outage, not a loud failure. So an unpinned step records, and
+    `Config.unpinned_modules` names it on every `policy()` call so nobody has to read source
+    to find out which tools are unconstrained.
+    """
+    assert not any(e.startswith("V16c") for e in errs(ledger, good())),         "a step with no approved_modules must still record"

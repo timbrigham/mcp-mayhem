@@ -409,6 +409,11 @@ def _sync_policy() -> dict:
             # disclosure that only appears when someone asks the right question is a
             # disclosure nobody will remember to ask for.
             "defaulted": cfg.defaulted,
+            # ⚠ Which steps accept ANY build of their checker. V16 pins the PATH; only
+            # `approved_modules` pins the VERSION, and a step without one records from an
+            # edited tool exactly as readily as from a reviewed one. Reported here rather than
+            # left to a source read, for the same reason `defaulted` is.
+            "unpinned_modules": cfg.unpinned_modules,
             **cfg.paths()}
 
 

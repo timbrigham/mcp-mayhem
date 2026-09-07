@@ -313,6 +313,37 @@ class Config:
         return "policy" if (self.policy.get("push") or {}).get("bar") is not None else "default"
 
     @property
+    def unpinned_modules(self) -> list:
+        """Steps that declare a `module` but no `approved_modules` — running unpinned.
+
+        ⚠⚠ THE COMPANION TO V16c, AND THE REASON AN ABSENT PIN IS NOT A SILENT PERMIT. V16 pins
+        a step to a PATH; `approved_modules` pins it to a set of git blob ids, so an edited
+        checker cannot record until its new build is approved by a reviewable edit in the same
+        history as the change.
+
+        ⛔ Refusing every UNPINNED step would brick all twenty mechanical steps the moment this
+        shipped. That is an outage, not a loud failure. So an unpinned step still records — and
+        appears here, on every `policy()` call, so nobody has to read source to discover which
+        tools are unconstrained. **Absence disclosed is not the same as absence defaulted.**
+
+        ⭐ Tim, 2026-09-06: *"the 'silently can't record' is the problem. fail loudly."* Both
+        halves answer that. A VIOLATED pin refuses with the offending blob and the remedy; an
+        ABSENT pin is named here rather than being invisible.
+        """
+        types = (self.required or {}).get("types") or self.required or {}
+        if not isinstance(types, dict):
+            return []
+        out = []
+        for step, spec in sorted(types.items()):
+            if not isinstance(spec, dict):
+                continue
+            module = spec.get("module")
+            if module and not spec.get("approved_modules"):
+                out.append({"step": step, "module": module,
+                            "risk": "any build of this file can record for this step"})
+        return out
+
+    @property
     def defaulted(self) -> list:
         """Every policy setting whose key is ABSENT, so a built-in constant is in force.
 
@@ -470,6 +501,21 @@ class Config:
                      # this server does not own had been annotated — the correct
                      # implementation bricking the system, again.
                      "module": spec.get("module"),
+                     # ⚠⚠ AND WHICH BUILD OF IT — the same graduation one notch further.
+                     # `module` pins the PATH so V16 goes from "carry some evidence" to
+                     # "carry THIS module"; `approved_modules` pins the VERSION so V16c
+                     # goes from "this module" to "an APPROVED build of this module". Also
+                     # free: it makes the bar stricter, never weaker.
+                     #
+                     # ⚠ THIS ENTRY IS AN EXPLICIT WHITELIST AND THAT IS A TRAP FOR THE NEXT
+                     # FIELD. `requirements()` rebuilds each spec key by key rather than
+                     # passing the registry entry through, so a key absent from THIS dict is
+                     # invisible to every rule downstream no matter what the registry says.
+                     # Measured 2026-09-06: V16c was written, the registry was pinned, the
+                     # spec looked correct when read directly — and nothing fired, because
+                     # the key never survived this function. **A validator can only enforce
+                     # what this dict carries.**
+                     "approved_modules": list(spec.get("approved_modules") or []) or None,
                      "scope_exclude": None}
             reason = spec.get("reason")
             actions = spec.get("actions")
