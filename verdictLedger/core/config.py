@@ -566,7 +566,7 @@ class Config:
 _ROOT = Path(__file__).resolve().parents[1]
 
 
-def _resolve(kind: str, filename: str) -> Path:
+def _resolve(kind: str, filename: str, local_name: str) -> Path:
     """Where a config file lives, in precedence order.
 
     ``ZPLEDGER_CONFIG`` names a DIRECTORY holding both files — normally
@@ -593,9 +593,28 @@ def _resolve(kind: str, filename: str) -> Path:
                 f"prevent. Put {filename} in that directory, or unset ZPLEDGER_CONFIG "
                 f"to use the ledger's own config/.")
         return candidate
-    return _ROOT / "config" / filename
+    # ⚠⚠ THE LOCAL COPY IS `.sample.json`, AND THE SUFFIX IS THE POINT. Tim, 2026-09-06:
+    # *"if we have local copies of those files such as required.v2.json, I really want
+    # '.sample', '.test' or something appended so it's obvious when we have segregated files
+    # being used that aren't what we generally would have in use in production. Duplicate names
+    # not segmenting which is which is dangerous."*
+    #
+    # ⛔ MEASURED COST OF THE OLD NAMING, TWICE IN TWO DAYS. `verdictLedger/config/policy.v1.json`
+    # and `ZeroParadox/tools/verify/policy.v1.json` were the same filename in two repos. The
+    # `push.bar` key was added to the first — which only tests and this last-resort read — while
+    # the LIVE server reads the second. The bar went on running as a built-in, and the consumer
+    # session discovered the same defect a second time a day later, because nothing in either
+    # path said which one was the bar.
+    #
+    # ⚠ AND THE DIRECTION IS NOT UNIFORM ACROSS THE FLEET, which is why the names have to carry
+    # it: for policy and the registry MY copy is the local one and ZeroParadox's is live, but for
+    # `admission.v1.json` it is the other way round — gitRobot's IS live and ZeroParadox's is read
+    # by nothing. A reader who learns the rule from one file gets the other backwards.
+    return _ROOT / "config" / local_name
 
 
 def load(policy_path=None, required_path=None) -> Config:
-    return Config(policy_path or _resolve("POLICY", "policy.v1.json"),
-                  required_path or _resolve("REQUIRED", "required.v2.json"))
+    return Config(policy_path or _resolve("POLICY", "policy.v1.json",
+                                       "policy.v1.sample.json"),
+                  required_path or _resolve("REQUIRED", "required.v2.json",
+                                            "required.v2.sample.json"))

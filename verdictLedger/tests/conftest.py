@@ -21,8 +21,13 @@ def config_dir(tmp_path):
     prove the value is data rather than a constant."""
     dst = tmp_path / "config"
     dst.mkdir()
+    # ⚠ The SOURCE is `*.sample.json` and the copy is written under the CANONICAL name.
+    # A real config directory holds `policy.v1.json`; the repo's own copy is suffixed so
+    # nobody confuses it with the live bar in ZeroParadox (Tim, 2026-09-06). Tests therefore
+    # keep referring to the canonical names inside `config_dir`, and only the source moved.
     for name in ("policy.v1.json", "required.v2.json"):
-        shutil.copy(ROOT / "config" / name, dst / name)
+        src = name.replace(".json", ".sample.json")
+        shutil.copy(ROOT / "config" / src, dst / name)
     return dst
 
 

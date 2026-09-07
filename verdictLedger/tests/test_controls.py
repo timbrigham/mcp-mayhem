@@ -940,7 +940,7 @@ def test_the_genesis_config_value_is_dead_and_stays_dead(ledger):
     assert ledger.config.genesis is None      # a @property, not a method
     import pathlib
     policy = json.loads((pathlib.Path(__file__).resolve().parents[1] /
-                         "config" / "policy.v1.json").read_text(encoding="utf-8-sig"))
+                         "config" / "policy.v1.sample.json").read_text(encoding="utf-8-sig"))
     assert "commit" not in policy.get("genesis", {}), (
         "the dead config field is back; the floor has two sources again")
 

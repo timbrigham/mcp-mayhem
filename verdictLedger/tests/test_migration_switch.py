@@ -26,7 +26,7 @@ from conftest import good, set_policy
 from core.config import ConfigError
 from core.ledger import Ledger
 
-ROOT_POLICY = "config/policy.v1.json"
+ROOT_POLICY = "config/policy.v1.sample.json"
 
 
 def _led(config_dir, tmp_path, required: bool):
