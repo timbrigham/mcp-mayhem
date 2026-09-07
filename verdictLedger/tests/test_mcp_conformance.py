@@ -48,9 +48,14 @@ WRITERS = {"append", "sign", "override", "narrow", "genesis"}
 # would refuse every review gate on its next FAIL.
 #
 # ⛔ DO NOT ADD TO THIS SET TO MAKE A TEST PASS. Adding a line here is declaring new debt.
+# ⭐ 2026-09-07: `append` and `validate` now take a declared `Record` model
+# (`ledger_server/inputs.py`), so `step`, `verdict`, `subjects`, `basis`, `run.id` and
+# `failing` are visible to the protocol instead of living in a 50-line docstring. Tim:
+# *"the terms of how we accept input into the mcp servers.. that should be an immediate
+# gate."* The ratchet below FAILS on this being fixed without the list shrinking, which is
+# why it shrank in the same change.
+# ⚠ `sign`/`override` `basis` remain — a smaller, separate shape, not yet modelled.
 UNCONSTRAINED_DEBT = {
-    ("append", "record"),
-    ("validate", "record"),
     ("sign", "basis"),
     ("override", "basis"),
 }
@@ -129,8 +134,8 @@ def test_the_debt_is_shrinking_not_load_bearing(tools):
     Pins the count so it appears in the failure message of any change, and states the
     exit condition in the assertion rather than only in a comment.
     """
-    assert len(UNCONSTRAINED_DEBT) <= 4, (
-        "unconstrained parameters must not grow past the 2026-09-06 baseline of 4. "
+    assert len(UNCONSTRAINED_DEBT) <= 2, (
+        "unconstrained parameters must not grow past the 2026-09-07 baseline of 2. "
         "SATISFIED WHEN: `record` and `basis` take Pydantic models, at which point this "
         "set is empty and both this test and the ratchet above can be deleted.")
 
@@ -478,3 +483,95 @@ def test_the_served_exclusions_are_the_declared_ones_not_merely_present():
         assert (served.get(step) or {}).get("scope_exclude") == want, (
             f"{step}: served exclusions differ from the registry. The consumer would carve out a "
             f"different set than the file declares, and neither side would see the disagreement.")
+
+
+# -- ⭐⭐ the input contract, and the control that keeps it honest --------------
+
+def test_the_input_model_accepts_every_record_in_the_stream():
+    """⭐⭐ A MODEL STRICTER THAN REALITY REFUSES TRAFFIC THAT WORKS TODAY.
+
+    `append` and `validate` published `{"type":"object","additionalProperties": true}` — any
+    object at all — so the real contract lived in a fifty-line docstring a direct caller never
+    reads. Declaring a shape closes that. Declaring the WRONG shape closes the server.
+
+    ⚠⚠ THIS CONTROL EARNED ITS KEEP ON ITS FIRST RUN. The first draft gave `failing` the same
+    shape as `subjects` — a list of objects — by analogy rather than by measurement. The stream
+    refused it: 37 records carry `failing`, 308 elements, **every one a `str`**, some not even
+    paths (`tools/verify/(roster)`). Modelled from the docstring, contradicted by the data.
+
+    ⚠ So the assertion is not "the model is correct" — it is "the model admits everything the
+    ledger has ever accepted". Anything this rejects, V1-V18 would have to reject too, never
+    the reverse.
+    """
+    import json
+    from pydantic import ValidationError
+    from ledger_server.inputs import Record
+
+    # ⛔⛔ THIS TEST SKIPPED ON ITS FIRST RUN AND THAT WAS THE DEFECT, NOT THE SETUP. The real
+    # stream lives in the gitignored `.mcp-local`, so `pytest.skip` made a control that never
+    # ran and reported green — the exact shape this file exists to catch, committed while
+    # writing a control against it.
+    #
+    # ⚠ The stream cannot be committed: it carries consumer paths and reason prose, and THIS
+    # REPO IS PUBLIC. So the always-runs half is a SYNTHETIC fixture of shapes MEASURED off the
+    # real stream, and the live stream is checked additionally when present. The fixture guards
+    # the shapes we know about; the live check guards the ones we do not.
+    fixture = [
+        # a mechanical PASS, the common case
+        {"schema": "zp.record.v1", "id": "s@t#0", "step": "s", "tier": "M", "verdict": "PASS",
+         "basis": {"kind": "tree", "value": "a" * 40, "resolved_from": "explicit"},
+         "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}],
+         "evidence": [{"path": "t.py", "git_blob_id": "c" * 40}],
+         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
+         "revision": 0, "cost": {"seconds": None, "usd": 0.0},
+         "run": {"id": "r", "started": "2026-09-07T00:00:00+00:00", "config_sha": "d" * 64,
+                 "env": {}}},
+        # ⚠ `failing` as a list of STRINGS — the shape the first draft of the model got wrong
+        {"step": "s", "verdict": "FAIL", "tier": "A",
+         "failing": ["tools/verify/x.py", "tools/verify/(roster)"]},
+        # a minimal record: almost everything absent, which must remain legal
+        {"step": "s", "verdict": "UNDECIDED"},
+        # ⚠ the pre-2026-08-25 run key, which V10 names rather than the schema rejecting
+        {"step": "s", "verdict": "PASS", "run": {"policy_sha": "e" * 64}},
+    ]
+    records = list(fixture)
+
+    data = os.environ.get("ZPLEDGER_DATA")
+    live = Path(data) if data else (Path(__file__).resolve().parents[1] / "data"
+                                    / "records.jsonl")
+    if live.is_file():
+        records += [json.loads(l) for l in live.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+
+    rejected = []
+    for rec in records:
+        try:
+            Record.model_validate(rec)
+        except ValidationError as exc:
+            rejected.append((rec.get("id"), exc.errors()[0].get("loc"),
+                             exc.errors()[0].get("type")))
+    assert not rejected, (
+        f"the declared input shape REJECTS {len(rejected)} of {len(records)} records already "
+        f"in the stream. Every one is a call that works today and would stop. "
+        f"First three: {rejected[:3]}")
+
+
+def test_failing_is_still_optional_because_the_emitter_is_not_at_a_hundred():
+    """⛔ STEP ONE OF TWO, AND THE ORDER IS TIM'S: structure, then emitter, then require.
+
+    Requiring `failing` is the point of modelling the record at all — a FAIL that does not say
+    which bytes it condemns indicts everything it examined, which is how one FAIL condemned a
+    sixteen-commit push. But measured 2026-09-07: **118 of 123 tier-A blocking records carry no
+    `failing`**, and only 37 of 92 recent ones do. Requiring it now refuses every review gate
+    on its next FAIL.
+
+    ⚠ THIS TEST INVERTS WHEN THE EMITTER LANDS. It asserts the field is OPTIONAL, so it fails
+    the moment someone makes it required — deliberately, so that step two is a decision with a
+    red test in front of it rather than a quiet tightening. Delete it in the same change that
+    requires the field.
+    """
+    from ledger_server.inputs import Record
+
+    assert Record.model_fields["failing"].default is None, (
+        "`failing` must remain OPTIONAL until the consumer's emitter reaches 100%")
+    Record.model_validate({"step": "check_prose", "verdict": "FAIL"})   # must not raise

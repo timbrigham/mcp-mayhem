@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
+from ledger_server.inputs import Record as RecordIn  # noqa: E402
 from ledger_server.results import (  # noqa: E402
     AppendResult, CanPushResult, CoverageGapResult, CoverageResult, CrossrefResult,
     FindResult, GenesisResult, GetResult, HealPlanResult, InventoryResult,
@@ -164,9 +165,31 @@ def _files(ref: str) -> dict:
 
 # -- writes -------------------------------------------------------------------
 
+
+def _as_record(record) -> dict:
+    """The declared shape back to the dict the ledger judges.
+
+    ⚠⚠ `exclude_unset=True` IS LOAD-BEARING. Dumping with defaults would hand the ledger
+    `subjects: []`, `revision: 0` and friends for keys the CALLER NEVER SENT — so a record
+    that omitted a field would become one that asserted an empty value for it. `_prepare`
+    already fills structural blanks, and `payload()` compares records to tell a dedupe from a
+    V11 conflict; inventing sent-ness here would make two different facts compare equal.
+
+    ⚠ `by_alias=True` restores `schema`, which is `schema_` on the model because the name
+    collides with pydantic's own attribute. A `UserWarning` about that shadowing is already
+    on every import of `results.py`.
+
+    ⚠ Extras survive: the model allows them so V7 can refuse unknown top-level keys BY NAME
+    rather than the schema rejecting them anonymously.
+    """
+    if isinstance(record, dict):
+        return record
+    return record.model_dump(by_alias=True, exclude_unset=True)
+
+
 @mcp.tool(title='Append a verdict',
           annotations=ToolAnnotations(title='Append a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def append(record: dict) -> AppendResult:
+async def append(record: RecordIn) -> AppendResult:
     """Append one verdict. Validated against V1-V18; REFUSES anything short.
 
     ⚠ THIS DOCSTRING IS THE WRITING GUIDE. `client/record.py` carries the same advice
@@ -215,7 +238,7 @@ async def append(record: dict) -> AppendResult:
     ⚠ A REFUSAL IS TERMINAL. Do not retry it — fix the record. Retrying a rejected
     record is how a validation rule gets worn down, and the errors list names every
     violation at once so one round trip is enough."""
-    return await _guard(_ledger().append, record)
+    return await _guard(_ledger().append, _as_record(record))
 
 
 @mcp.tool(title='Sign off a verdict',
@@ -288,12 +311,12 @@ async def genesis(commit: str, note: Optional[str] = None) -> GenesisResult:
 
 @mcp.tool(title='Preview validation',
           annotations=ToolAnnotations(title='Preview validation', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def validate(record: dict) -> ValidateResult:
+async def validate(record: RecordIn) -> ValidateResult:
     """Schema plus V1-V18. Pure, no write — use it to check a record BEFORE
     appending. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
     up and works around the thing."""
-    return await _guard(_ledger().validate, record)
+    return await _guard(_ledger().validate, _as_record(record))
 
 
 @mcp.tool(title='Get one record',
