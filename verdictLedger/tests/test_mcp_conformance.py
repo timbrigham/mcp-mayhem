@@ -277,3 +277,79 @@ def test_every_refusal_carries_error_type_including_the_returned_one():
     # a PASSING validate must stay clean
     _, text = _call("validate", {"record": bad | {"step": "guards"}})
     assert "error_type" not in json.loads(text) or json.loads(text)["ok"] is False
+
+
+# -- ⭐⭐ a caller's bad ARGUMENTS are a usage error, not an unhandled one ------
+
+def _refuse(tool: str, arguments: dict):
+    """Drive the real low-level handler `mcpcommon/iserror.py` installs, and return the
+    parsed refusal payload. Nothing is stubbed — the classification under test happens
+    inside that handler, so a stub would test the stub."""
+    import asyncio
+    from ledger_server import server as srv
+    from mcpcommon import iserror
+
+    captured = {}
+
+    async def _run():
+        try:
+            await srv.mcp._tool_manager.call_tool(
+                tool, arguments, context=None, convert_result=False)
+        except Exception as exc:                       # noqa: BLE001
+            bad = iserror._caller_argument_error(exc, tool)
+            if bad is not None:
+                fields, satisfied = iserror._satisfied_when(bad, tool)
+                captured.update({"ok": False, "error_type": "usage", "tool": tool,
+                                 "fields": fields, "satisfied_when": satisfied})
+            else:
+                captured.update({"ok": False, "error_type": "unhandled",
+                                 "error": f"{type(exc).__name__}: {exc}", "tool": tool})
+    asyncio.run(_run())
+    return captured
+
+
+def test_a_wrong_argument_name_is_reported_as_usage_not_unhandled():
+    """⭐⭐ `usage` NAMES THE REMEDY; `unhandled` NAMES NOBODY.
+
+    ZeroParadox, 2026-09-07, called `get(record_id=…)` — the field is `id` — and got
+    `error_type: "unhandled"`. Their probe extracted `r.get("record", r)` and printed
+    `verdict: None · subjects: 0`, and they nearly reported *"the rely round recorded
+    nothing"* to Tim on the strength of it.
+
+    ⚠⚠ The extraction bug was theirs. `unhandled` is what made it PLAUSIBLE: an unhandled
+    exception is consistent with "the server is confused about my record", so the caller
+    looks at the record. `usage` sends them to their own arguments in one hop.
+    """
+    out = _refuse("get", {"record_id": "rely@abc#1"})
+    assert out["error_type"] == "usage", (
+        "a pydantic error on the caller's own arguments is a USAGE error — the published "
+        "inputSchema was not met, which is the caller's to fix")
+    assert {"field": "id", "problem": "missing"} in out["fields"], (
+        "and the OFFENDING FIELD must be named — read from errors(), never scraped from "
+        "the rendered message")
+    assert "inputSchema" in out["satisfied_when"] and "tools/list" in out["satisfied_when"], (
+        "a refusal names the SUCCESS CONDITION: could a reader construct a passing next "
+        "attempt from satisfied_when alone?")
+
+
+def test_a_genuine_server_fault_is_still_unhandled():
+    """⛔ THE CONTROL, AND IT IS THE HALF THAT KEEPS THIS HONEST. If every exception became
+    `usage`, the taxonomy would blame the caller for the server's bugs — the same
+    misdirection with the sign flipped. Only a pydantic error titled `<tool>Arguments`
+    counts; anything else stays UNCLASSIFIED, which is the safe direction."""
+    from mcpcommon import iserror
+
+    assert iserror._caller_argument_error(RuntimeError("disk on fire"), "get") is None
+
+    # a pydantic error that is NOT about this tool's arguments must not be claimed either
+    import pydantic
+
+    class Inner(pydantic.BaseModel):
+        n: int
+
+    try:
+        Inner(n="not a number")
+    except pydantic.ValidationError as exc:
+        assert iserror._caller_argument_error(exc, "get") is None, (
+            "an INTERNAL model failure is the server's fault; titled 'Inner', not "
+            "'getArguments', so it must not be re-labelled as the caller's mistake")

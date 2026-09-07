@@ -50,6 +50,69 @@ def _text(value: Any) -> str:
     return json.dumps(value, indent=2, default=str)
 
 
+
+def _caller_argument_error(exc: BaseException, tool: str):
+    """The pydantic `ValidationError` for THIS tool's arguments, or None.
+
+    ⭐⭐ WHY THIS EXISTS AND WHY IT IS NARROW. ZeroParadox, 2026-09-07, called `get` with
+    `record_id=` instead of `id=` and got back
+
+        {"ok": false, "error_type": "unhandled",
+         "error": "ToolError: Error executing tool get: 1 validation error for getArguments
+                   id  Field required ..."}
+
+    Their probe extracted `r.get("record", r)` and printed `verdict: None · subjects: 0`, and
+    they nearly reported *"the rely round recorded nothing"* on the strength of it. The
+    extraction bug was theirs; `unhandled` is what made it PLAUSIBLE. **`usage` names the
+    remedy; `unhandled` names nobody, so the caller looks in the wrong place** — an unhandled
+    exception reads as "the server is confused about my record" rather than "check your
+    arguments". `coverage_gap` already does this right, refusing a missing `admission` with
+    `usage` and a `SATISFIED WHEN:` line.
+
+    ⚠⚠ AND IT DOES NOT CONTRADICT THE `unhandled` RULE ABOVE, which says inventing a class
+    here would be "a guess wearing a taxonomy". This guesses nothing: a pydantic
+    `ValidationError` whose title is `<tool>Arguments` is a STRUCTURAL fact — the caller's
+    arguments did not match the published `inputSchema` — read off the exception TYPE, never
+    off its message. Two of my own errors today came from matching strings where I should
+    have parsed; this deliberately does not.
+
+    ⚠ THE TITLE CHECK IS THE DISCRIMINATOR AND IT MATTERS. A tool that validates a pydantic
+    model INTERNALLY also raises `ValidationError`, and that is the server's fault, not the
+    caller's — blaming the caller for it would be the same misdirection with the sign flipped.
+    `<tool>Arguments` is FastMCP's naming for the generated argument model. If that convention
+    ever changes this returns None and the error stays `unhandled`: unclassified, which is the
+    safe direction to be wrong in.
+    """
+    try:
+        from pydantic import ValidationError
+    except ImportError:                       # pragma: no cover -- pydantic is a hard dep
+        return None
+    seen, err = 0, exc
+    while err is not None and seen < 10:      # bounded: __context__ chains can cycle
+        if isinstance(err, ValidationError) and getattr(err, "title", None) == f"{tool}Arguments":
+            return err
+        err = err.__cause__ or err.__context__
+        seen += 1
+    return None
+
+
+def _satisfied_when(err, tool: str):
+    """The field-level remedy, so a refusal names the SUCCESS CONDITION rather than the fault.
+
+    ⚠ `errors()` is structured -- `[{'type': 'missing', 'loc': ('id',), ...}]` -- so the
+    fields are READ, never scraped from the rendered message.
+    """
+    fields = []
+    for item in err.errors():
+        loc = ".".join(str(part) for part in (item.get("loc") or ())) or "(root)"
+        fields.append({"field": loc, "problem": item.get("type") or "invalid"})
+    named = ", ".join(f"{f['field']} ({f['problem']})" for f in fields) or "the arguments"
+    return fields, (
+        f"call `{tool}` with arguments matching its published inputSchema. Fix: {named}. "
+        f"The schema is discoverable through `tools/list` and is the contract -- a shape you "
+        f"FETCH cannot go stale the way a docstring can.")
+
+
 def install(mcp) -> None:
     """Re-register the low-level `call_tool` handler so refusals set `isError`.
 
@@ -87,10 +150,18 @@ def install(mcp) -> None:
             # tool did not classify this failure, and inventing a class for it here would
             # be a guess wearing a taxonomy — the same move as reconstructing `failing`
             # from a reason string.
+            bad_args = _caller_argument_error(exc, name)
+            if bad_args is not None:
+                fields, satisfied = _satisfied_when(bad_args, name)
+                payload = {"ok": False, "error_type": "usage",
+                           "error": f"arguments do not match the inputSchema for {name!r}",
+                           "tool": name, "fields": fields,
+                           "satisfied_when": satisfied}
+            else:
+                payload = {"ok": False, "error_type": "unhandled",
+                           "error": f"{type(exc).__name__}: {exc}", "tool": name}
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=_text(
-                    {"ok": False, "error_type": "unhandled",
-                     "error": f"{type(exc).__name__}: {exc}", "tool": name}))],
+                content=[types.TextContent(type="text", text=_text(payload))],
                 isError=True,
             )
 
