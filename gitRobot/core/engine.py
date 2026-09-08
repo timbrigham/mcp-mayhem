@@ -1977,6 +1977,28 @@ class GitRobot:
             return None
         return (time.time() - max(stamps)) / 3600.0
 
+    def _worktree_dirty_paths(self, path: Path, session_state: list) -> Optional[list]:
+        """The paths that make a worktree dirty, EXCLUDING declared session state.
+
+        ⭐ Reported on every kept row so the `session_state` list cannot decay silently.
+        ZeroParadox flagged it 2026-09-08: *"session_state is now a list someone maintains.
+        The next runtime-rewritten tracked file that is not on it re-creates the defect for
+        that one file, quietly."* Correct — and the answer is not a smarter list, it is making
+        the omission SELF-ANNOUNCING. A chronically-dirty unlisted file appears in the same
+        kept row on every hourly sweep, forever, which is a pattern a reader notices. A list
+        that decays in silence is the defect; a list that decays in the output is a to-do.
+        """
+        res = self.git.run(["-C", str(path), "status", "--porcelain"], timeout=120)
+        if not res.ok:
+            return None
+        ignore = set(session_state or [])
+        out = []
+        for line in (res.output or "").splitlines():
+            entry = line[3:].strip() if len(line) > 3 else ""
+            if entry and entry not in ignore:
+                out.append(entry)
+        return out
+
     def _worktree_is_dirty(self, path: Path, session_state: list) -> Optional[bool]:
         """Dirty IGNORING session-state paths. None when git cannot answer.
 
@@ -2018,12 +2040,17 @@ class GitRobot:
             if path.resolve() == main:
                 continue                      # ⛔ never the main checkout
             age = self._worktree_age_hours(path)
-            dirty = self._worktree_is_dirty(path, session_state)
+            dirty_paths = self._worktree_dirty_paths(path, session_state)
+            dirty = None if dirty_paths is None else bool(dirty_paths)
             # ⚠ unreadable status counts as DIRTY — see `_worktree_is_dirty`
             treat_dirty = True if dirty is None else dirty
             horizon = dirty_h if treat_dirty else clean_h
             row = {"path": str(path), "age_hours": None if age is None else round(age, 1),
-                   "dirty": dirty, "horizon_hours": horizon}
+                   "dirty": dirty, "horizon_hours": horizon,
+                   # ⭐ NAMED, not counted — a path that shows up here on every sweep for
+                   # weeks is a session-state file missing from the policy, and saying which
+                   # one is the difference between a decaying list and a visible to-do.
+                   "dirty_paths": (dirty_paths or [])[:10]}
             if age is None or horizon is None or age < horizon:
                 row["kept_because"] = ("age unknown" if age is None else
                                        "no horizon configured" if horizon is None else

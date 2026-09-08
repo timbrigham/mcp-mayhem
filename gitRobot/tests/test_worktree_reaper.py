@@ -154,3 +154,31 @@ def test_no_policy_means_no_reaping(repo, tmp_path, policy):
     out = bot.worktree("reap")
     assert out["configured"] is False
     assert out["removed"] == []
+
+
+def test_a_kept_dirty_worktree_NAMES_what_made_it_dirty(repo, tmp_path, policy):
+    """⭐ SO THE `session_state` LIST CANNOT DECAY IN SILENCE.
+
+    ZeroParadox, 2026-09-08: "session_state is now a list someone maintains. The next
+    runtime-rewritten tracked file that is not on it re-creates the defect for that one file,
+    quietly." Right — and the answer is not a smarter list. It is that a chronically-dirty
+    unlisted file appears in the same kept row on every hourly sweep, forever, which a reader
+    eventually notices. A list that decays in silence is a defect; a list that decays in the
+    output is a to-do.
+    """
+    policy({"clean_after_hours": 48, "dirty_after_hours": 168,
+            "session_state": ["gate_round.json"]})
+    bot = _bot(repo, tmp_path)
+    path = _path_of(bot.worktree("add", ref="HEAD", name="undeclared"))
+    # one declared session-state file and one that nobody put on the list
+    (Path(path) / "gate_round.json").write_text('{"round": 9}', encoding="utf-8")
+    (Path(path) / "f.txt").write_text("an unlisted chronically-dirty file", encoding="utf-8")
+    _age(path, 60)
+    out = bot.worktree("reap")
+    kept = {Path(r["path"]).name: r for r in out["kept"]}
+    row = kept[Path(path).name]
+    assert row["dirty"] is True
+    assert "f.txt" in row["dirty_paths"], "the reason it was kept must be NAMED, not counted"
+    assert "gate_round.json" not in row["dirty_paths"], (
+        "a declared session-state path must not appear — it carries no information about "
+        "whether this tree holds work")
