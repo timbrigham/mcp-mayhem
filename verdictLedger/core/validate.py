@@ -1,4 +1,4 @@
-"""V1–V18. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
+"""V1–V21. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
 
 ⚠ Every violation is returned, never just the first. A caller fixing one rule per
 round trip is a caller who stops using the thing.
@@ -76,7 +76,7 @@ def structural(record: dict) -> list[str]:
     # rule engine and asserts every probe goes green — stayed RED. A probe that survives the
     # rules being switched off is testing a proxy, not the rule. V19 is policy about what a
     # blocking verdict must CARRY, not about whether the record can be READ, so it lives in
-    # `rules()` with V1-V18.
+    # `rules()` with V1-V21.
     if "failing" in record:
         failing = record.get("failing")
         if not isinstance(failing, list) or not all(
@@ -169,7 +169,7 @@ def structural(record: dict) -> list[str]:
 
 def rules(record: dict, *, config: Config, existing_ids: set,
           tips: Optional[dict] = None, known_config_shas: Optional[set] = None) -> list[str]:
-    """V1–V18. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
+    """V1–V21. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
     out: list[str] = []
     basis = record.get("basis") or {}
     decided = record.get("decided") or {}

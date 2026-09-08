@@ -694,3 +694,39 @@ def test_every_required_field_is_one_the_rules_also_demand(ledger):
     assert unjudged == [], (
         "these are REQUIRED at the door but the rules accept their absence, so the model is "
         "stricter than the judge and refuses callers nothing would have judged: %s" % unjudged)
+
+
+def test_no_served_description_understates_the_rules_it_runs():
+    """⛔⛔ A DESCRIPTION THAT UNDERSTATES COVERAGE MAKES EVERY CLEAN RESULT UNCITEABLE.
+
+    Found by the consumer 2026-09-08, and it is the INVERSE of the usual hazard. `validate`'s
+    served description said "Schema plus V1-V18" while the function demonstrably ran V19, V20
+    and V21. They posted an agreement-route record to `validate`, got no V21 objection, and
+    could not cite the result — because if the description were true, V21 was never checked
+    there and a clean answer proved nothing. An overstated claim gets caught the first time it
+    is wrong; an understated one silently voids every green result taken against it.
+
+    ⚠ SEVEN PLACES CLAIMED A RANGE AND TWO OF THEM WENT OVER THE WIRE. This is the
+    second-copy-of-the-policy shape: a hand-maintained range in prose beside the rules it
+    describes, drifting the moment a rule lands. So the range is DERIVED from the source here
+    rather than pinned to a literal, and this fails when the next rule ships without the
+    descriptions moving with it.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "core" / "validate.py").read_text(encoding="utf-8")
+    highest = max(int(n) for n in re.findall(r'"V(\d+):', src))
+
+    stale = []
+    for rel in ("core/validate.py", "core/errors.py", "ledger_server/server.py",
+                "ledger_server/inputs.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        for claimed in re.findall(r"V1[-–]V(\d+)", text):
+            if int(claimed) != highest:
+                stale.append("%s claims V1-V%s, code implements V1-V%d"
+                             % (rel, claimed, highest))
+    assert not stale, (
+        "a served or documented rule range disagrees with the code. An UNDERSTATED range is "
+        "the dangerous direction: it makes clean results from that path uncitable. %s" % stale)

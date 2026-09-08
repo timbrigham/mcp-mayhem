@@ -10,6 +10,7 @@ stream is empty.
 
 import inspect
 import json
+import pathlib
 
 import pytest
 
@@ -1191,7 +1192,15 @@ def test_the_append_tool_documents_the_vocabulary_an_agent_must_use():
     from ledger_server import server
     doc = inspect.getdoc(server.append.fn if hasattr(server.append, "fn")
                          else server.append)
-    for token in ("delegated", "outstanding", "evidence", "V1-V18",
+    # ⚠ THE RANGE IS DERIVED, NOT LITERAL. This asserted "V1-V18" and became the SECOND COPY
+    # of the rule range the moment V19 landed — the same defect the docstring it guards had.
+    # Found 2026-09-08 when the consumer reported `validate`'s served description understating
+    # its coverage, which makes every clean result from that path uncitable.
+    import re as _re
+    _src = (pathlib.Path(__file__).resolve().parents[1] / "core" / "validate.py"
+            ).read_text(encoding="utf-8")
+    _range = "V1-V%d" % max(int(n) for n in _re.findall(r'"V(\d+):', _src))
+    for token in ("delegated", "outstanding", "evidence", _range,
                   "thirty-nine", "revision: 1"):
         assert token in doc, f"append's description never mentions {token!r}"
     assert "(step, basis, verdict, reason, subjects, revision)" not in doc, (

@@ -24,7 +24,7 @@ second-copy-of-the-policy that `config.py` forbids."* So:
 publish a contract that goes stale the moment the registry moves — and the registry is
 deliberately editable without a restart.
 
-⚠⚠ THIS IS NOT A SECOND VALIDATOR. V1–V18 in `core/validate.py` remain the only judge of
+⚠⚠ THIS IS NOT A SECOND VALIDATOR. V1–V21 in `core/validate.py` remain the only judge of
 whether a record may be RECORDED. This says only what SHAPE may arrive. Anything it rejects,
 V-rules would reject too — never the reverse — and `test_the_input_model_accepts_every_record_
 in_the_stream` pins that against all 2,361 records, because a model stricter than reality
@@ -93,7 +93,7 @@ class Cost(BaseModel):
 
 
 class Record(BaseModel):
-    """One verdict, as it may ARRIVE. Judged afterwards by V1–V18.
+    """One verdict, as it may ARRIVE. Judged afterwards by V1–V21.
 
     ⚠ `extra="allow"` throughout is deliberate and is NOT laxity. V7 refuses unknown top-level
     keys BY NAME, which is a better error than a schema rejection that says only "extra fields
