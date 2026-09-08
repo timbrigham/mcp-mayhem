@@ -1363,7 +1363,21 @@ class GitRobot:
         tree `_require_clean` just guaranteed.
         """
         if not branch or branch.startswith("-"):
-            raise UsageError(f"{branch!r} is not a branch name")
+            # ⚠⚠ `branch` ACCEPTS ANY COMMIT-ISH — a sha, a tag, a detached HEAD's commit.
+            # Only empty or a `-` prefix is refused; git resolves the rest.
+            # ⛔ THE NAME COST A WORKFLOW. Measured 2026-09-08: the consumer was implementing
+            # D1 (a reviewer authors its fix in its own worktree, the carrier brings it back)
+            # and could not find the sanctioned route. `worktree(action='add')` hardcodes
+            # `--detach`, so there IS no branch to name, and `switch` takes no worktree. They
+            # stopped and asked rather than guess on a branch with five unpushed commits —
+            # right call, and the answer was here all along behind a parameter name and a
+            # docstring that both said "branch". A contract that UNDERSTATES what it accepts
+            # makes a valid route invisible; same shape as `validate` advertising V1-V18.
+            raise UsageError(
+                f"{branch!r} is not a valid merge target. Pass a branch name, a tag, or a "
+                f"COMMIT SHA — anything git resolves to a commit. A worktree from "
+                f"worktree(action='add') is DETACHED, so carry its commit sha back rather "
+                f"than looking for a branch name it never had.")
         if not (isinstance(reason, str) and reason.strip()):
             raise UsageError("merge requires a non-empty reason")
         args = {"branch": branch}
