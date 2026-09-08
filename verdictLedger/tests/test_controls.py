@@ -1274,3 +1274,152 @@ def test_defaulted_reports_every_setting_running_on_a_builtin(tmp_path):
         "a fully configured policy must report NOTHING defaulted; a list that always has "
         "entries says nothing, which is what test_status_is_silent_when_nothing_is_relaxed "
         "exists to hold for `relaxations`")
+
+
+# -- ⭐⭐ REFUSED: a claim attempted and not accepted --------------------------
+
+def _files_for(rec):
+    return {s["path"]: s["git_blob_id"] for s in rec["subjects"]}
+
+
+def test_a_refused_append_no_longer_renders_as_never_ran(ledger, tmp_path):
+    """⭐⭐ THE INVERSION. Until 2026-09-07 a refused append bumped ONE GLOBAL COUNTER and
+    nothing else, so the step rendered MISSING — **indistinguishable from never having been
+    attempted.** Absence rendering as absence when it was a failure to produce a value.
+
+    ⚠ The only instrument that could see it was the HTTP call log, which is explicitly *"NOT
+    evidence and may never be cited as proof a control ran"* because it rotates. A rotating
+    buffer cannot carry a claim about the past.
+
+    Tim, 2026-09-07: *"fix the inversion."*
+    """
+    from core.errors import ValidationFailure
+
+    bad = good(step="check_prosee")          # V8: not a registered step
+    with pytest.raises(ValidationFailure):
+        ledger.append(bad)
+
+    ref = ledger.store.refusals()
+    assert "check_prosee" in ref, "the refusal must leave a durable, per-step trace"
+    assert ref["check_prosee"]["rule"] == "V8", "and name the RULE that refused it"
+    assert ref["check_prosee"]["count"] == 1
+
+
+def test_repeated_refusals_dedupe_on_step_and_rule_not_on_basis(ledger, tmp_path):
+    """⛔⛔ KEYED WITHOUT THE BASIS, AND ZEROPARADOX MEASURED WHY.
+
+    `ZPLEDGER_BASIS=INDEX` at precommit, so **every `git add` moves the basis.** Keying a
+    refusal the way a verdict is keyed would mint a fresh row per staging operation — they ran
+    precommit fifteen times in one afternoon.
+
+    ⭐ And the deeper reason is theirs: for a REJECTED record the basis is the least reliable
+    thing in it. The claim was never accepted, so what content it purported to be about
+    establishes nothing. Cardinality is steps x rules — bounded — never x stagings.
+    """
+    from core.errors import ValidationFailure
+
+    for i in range(4):
+        with pytest.raises(ValidationFailure):
+            ledger.append(good(step="check_prosee",
+                               basis={"kind": "tree", "value": chr(97 + i) * 40,
+                                      "resolved_from": "explicit"}))
+
+    ref = ledger.store.refusals()
+    assert list(ref) == ["check_prosee"], "four bases must not become four rows"
+    assert ref["check_prosee"]["count"] == 4, "but the COUNT must distinguish once from often"
+    assert ref["check_prosee"]["first_seen"] <= ref["check_prosee"]["last_seen"]
+
+
+def test_a_refused_row_carries_no_indictment_and_is_not_a_fail(ledger, tmp_path):
+    """⛔⛔ `REFUSED` IS NOT `FAIL`, AND CONFLATING THEM IS `LED-10` THROUGH A NEW DOOR.
+
+    A FAIL condemns subjects. A REFUSED condemns NOTHING — it establishes nothing. If a
+    resolver treats it as a FAIL it stamps condemnation on blobs the ledger never judged, and
+    tip-green forgiveness would then be asked whether those blobs moved.
+    """
+    from core.errors import ValidationFailure
+    from core import inventory as inv_mod
+
+    # ⚠ A REGISTERED step, refused for a DIFFERENT rule. `check_prosee` is refused by V8
+    # precisely because it is not registered — and `inventory` builds rows only for
+    # registered types, so a refusal there can never render. That is a real limit of this
+    # disclosure and it is the right one: an unregistered step is not part of the gate, so
+    # it has no row to carry a state. Found while writing this control.
+    rec = good(subjects=[])                       # V2: a PASS that examined nothing
+    with pytest.raises(ValidationFailure):
+        ledger.append(rec)
+
+    inv = inv_mod.build(config=ledger.config, records=[], action="commit",
+                        files={"docs/x.md": "b" * 40}, ref="a" * 40,
+                        admission=["check_invariants"],
+                        refusals=ledger.store.refusals())
+    row = next((r for r in inv["rows"] if r["step"] == "check_invariants"), None)
+    if row is not None:
+        assert row["status"] == "REFUSED"
+        assert not row.get("indicted"), (
+            "a REFUSED row must carry NO indictment — it condemns nothing, and a resolver "
+            "reading it as a FAIL would condemn bytes nothing judged")
+
+
+def test_the_refused_remedy_does_not_say_re_run_the_gate(ledger, tmp_path):
+    """⚠⚠ THE CONTROL ZEROPARADOX'S EXPERIENCE DEMANDED, AND IT IS NOT "does it block".
+
+    Their `batch.py` already blocked on an unknown status through its generic fall-through —
+    so a control asserting only that REFUSED blocks would have been GREEN against the defect.
+    What it actually said, measured verbatim before they branched on it:
+
+        REFUSED — run the gate and let it record its own verdict (`record.py --step editorial`)
+
+    **The one instruction that cannot work.** The gate DID run; the ledger declined its record;
+    re-running reproduces the refusal. `RLY41-2`'s shape: a true blocking answer wearing a
+    remedy for a different failure. **Blocking was never what was wrong.**
+    """
+    from core.errors import ValidationFailure
+    from core import inventory as inv_mod
+
+    rec = good(subjects=[])                       # V2, on a REGISTERED step
+    with pytest.raises(ValidationFailure):
+        ledger.append(rec)
+
+    inv = inv_mod.build(config=ledger.config, records=[], action="commit",
+                        files={"docs/x.md": "b" * 40}, ref="a" * 40,
+                        admission=["check_invariants"],
+                        refusals=ledger.store.refusals())
+    row = next((r for r in inv["rows"] if r["step"] == "check_invariants"), None)
+    if row is None:
+        pytest.fail("the refused step must appear as a row at all")
+    why = (row.get("why") or "").lower()
+    assert "do not simply re-run" in why, (
+        "the remedy must say NOT to re-run — re-running reproduces the refusal")
+    assert "defect in the record" in why, (
+        "and must name the RECORD as what is wrong, never the corpus")
+    assert "nothing has been established" in why
+
+
+def test_a_real_verdict_supersedes_a_refusal_with_no_clearing_step(ledger, tmp_path):
+    """⭐ THE TRANSIENT CASE, RESOLVED BY DERIVATION RATHER THAN BY A MECHANISM.
+
+    ZeroParadox asked whether a later successful append should CLEAR a refusal — a half-written
+    config refused at 14:02 and fixed at 14:03 should not leave a REFUSED row forever.
+
+    ⚠ It clears itself, and nothing is deleted: **the row status is DERIVED, not stored.** If a
+    valid covering record exists, the row renders from that record. The refusal stays in its
+    store as history. No clearing, no deletion, no append-only violation.
+    """
+    from core.errors import ValidationFailure
+    from core import inventory as inv_mod
+
+    with pytest.raises(ValidationFailure):
+        ledger.append(good(step="check_invariants", subjects=[]))   # V2
+    assert "check_invariants" in ledger.store.refusals()
+
+    ok = good()
+    ledger.append(ok)
+    inv = inv_mod.build(config=ledger.config, records=[ok], action="commit",
+                        files=_files_for(ok), ref=ok["basis"]["value"],
+                        admission=["check_invariants"],
+                        refusals=ledger.store.refusals())
+    row = next(r for r in inv["rows"] if r["step"] == "check_invariants")
+    assert row["status"] == "SATISFIED", (
+        "a real verdict must win over a stale refusal — the refusal's job is to stop ABSENCE "
+        "reading as nothing, and absence is no longer the state")

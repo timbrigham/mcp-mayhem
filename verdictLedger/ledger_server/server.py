@@ -489,7 +489,8 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
     cfg = led._require_config()
     inv = inventory_mod.build(config=cfg, records=led.store.records(),
                               action=action, files=_files(ref), ref=ref,
-                              admission=admission)
+                              admission=admission,
+                              refusals=led.store.refusals())
     inv["config_sha"] = cfg.config_sha
     inv["line"] = render_mod.render_inventory(inv)
     return inv

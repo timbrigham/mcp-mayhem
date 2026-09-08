@@ -100,6 +100,11 @@ class StatusResult(Result, total=False):
     last_append: str
     schema: str
     invalid_appends: int
+    # ⭐ Per-step refusals, keyed (step, rule) with counts and both timestamps. The
+    # `invalid_appends` integer above is the same fact with no shape: it cannot say WHICH
+    # step, WHICH rule, or WHEN, and a step whose record was refused rendered as MISSING —
+    # indistinguishable from never having run.
+    refusals: dict[str, Any]
     edge_conditions: int
     writable: bool
     problems: list[Any]

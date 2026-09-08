@@ -123,7 +123,8 @@ def cmd_can_push(args) -> int:
                                rev_range=args.range, action=args.action,
                                admission=args.admit,
                                commit_admission=args.admit_commit or args.admit,
-                               limit=args.limit)
+                               limit=args.limit,
+                              refusals=led.store.refusals())
     if args.json:
         _emit(result)
     else:

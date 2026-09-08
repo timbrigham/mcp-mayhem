@@ -50,6 +50,12 @@ class Store:
         # render absence as success. A tiny sidecar keeps them honest across calls
         # and restarts. It is an operational counter, not a second record store.
         self._counters_path = Path(str(self.path) + ".counters.json")
+        # ⚠⚠ REFUSALS LIVE BESIDE THE STREAM, NEVER IN IT. `records.jsonl` is verdicts that
+        # were ACCEPTED; a rejected claim is a different kind of thing and mixing them would
+        # make the append-only stream mean two things. This is the `invalid_appends` counter
+        # grown a shape — that counter is ONE GLOBAL INTEGER and cannot say which step, which
+        # rule, or when.
+        self._refusals_path = Path(str(self.path) + ".refusals.json")
 
     # -- reading ---------------------------------------------------------------
 
@@ -90,6 +96,51 @@ class Store:
             self._counters_path.write_text(json.dumps(c), encoding="utf-8")
         except OSError:
             pass          # a counter must never be the reason a write fails
+
+
+    # -- refusals: a claim ATTEMPTED and not accepted --------------------------
+
+    def refusals(self) -> dict:
+        """`{step: {rule, count, first_seen, last_seen}}` — never raises."""
+        try:
+            data = json.loads(self._refusals_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def record_refusal(self, step: str, rule: str, when: str) -> None:
+        """Note that a claim about `step` was refused by `rule`.
+
+        ⛔⛔ KEYED ON `(step, rule)` AND DELIBERATELY NOT ON THE BASIS, which is the opposite
+        of how a verdict is keyed. ZeroParadox measured why, 2026-09-07: `ZPLEDGER_BASIS=INDEX`
+        at precommit, so **every `git add` moves the basis** — keying a refusal that way mints a
+        fresh row per staging operation, and they ran precommit fifteen times that afternoon.
+
+        ⭐ And the deeper reason, which is theirs: for a REJECTED record the basis is the least
+        reliable thing in it. The claim was never accepted, so what content it purported to be
+        about establishes nothing. Cardinality is steps x rules — bounded — not x stagings.
+
+        ⚠ COUNT AND BOTH TIMESTAMPS, because "broken once" and "broken all afternoon" are
+        different facts and a single row would render them identically.
+
+        ⚠ A refusal must NEVER be the reason a write fails — same rule as `bump`. This is
+        disclosure about a failure that already happened.
+        """
+        if not step:
+            return
+        data = self.refusals()
+        prior = data.get(step) or {}
+        data[step] = {
+            "rule": rule,
+            "count": int(prior.get("count") or 0) + 1,
+            "first_seen": prior.get("first_seen") or when,
+            "last_seen": when,
+        }
+        try:
+            self._refusals_path.parent.mkdir(parents=True, exist_ok=True)
+            self._refusals_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        except OSError:
+            pass
 
     @property
     def invalid_appends(self) -> int:
@@ -224,6 +275,10 @@ class Store:
             "last_append": (last or {}).get("run", {}).get("started") if last else None,
             "schema": schema.SCHEMA_ID,
             "invalid_appends": self.invalid_appends,
+            # ⚠ The same fact WITH A SHAPE. The integer above cannot say which step, which
+            # rule, or when — and a step whose record was refused rendered as MISSING,
+            # indistinguishable from never having run.
+            "refusals": self.refusals(),
             "edge_conditions": self.edge_conditions,
             "writable": not problems,
             "problems": problems,

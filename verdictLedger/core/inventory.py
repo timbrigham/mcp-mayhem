@@ -163,7 +163,8 @@ def _dead_pattern(glob: str, files, field: str):
 
 
 def build(*, config, records, action: str, files: dict,
-          ref: Optional[str] = None, admission: Optional[list] = None) -> dict:
+          ref: Optional[str] = None, admission: Optional[list] = None,
+          refusals: Optional[dict] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
 
     ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
@@ -498,6 +499,31 @@ def build(*, config, records, action: str, files: dict,
             record = legacy_hit[0]
             why = ("recorded under the superseded `sha256` subject scheme and cannot be "
                    "compared to a git blob id; re-record it (or let it age out)")
+        elif covered == 0 and stale == 0 and (refusals or {}).get(step):
+            # ⭐⭐ A CLAIM WAS ATTEMPTED AND NOT ACCEPTED — which is NOT the same fact as
+            # nothing having been tried, and until 2026-09-07 both rendered as MISSING.
+            #
+            # ⛔ IT IS NOT `FAIL` AND MUST NEVER BE READ AS ONE. A FAIL condemns subjects; a
+            # REFUSED condemns NOTHING — it establishes nothing. So this row carries no
+            # `indicted`, contributes nothing to any indictment set, and never reaches
+            # tip-green forgiveness. ZeroParadox's framing, and it is the right one: treating
+            # it as a FAIL would stamp condemnation on blobs the ledger never judged, which is
+            # `LED-10` arriving through a new door.
+            #
+            # ⚠ AND THE REMEDY MUST NOT SAY "RE-RUN THE GATE". Measured by ZeroParadox before
+            # they branched on it: the generic fall-through already blocked, and already said
+            # *"run the gate and let it record its own verdict"* — the one instruction that
+            # cannot work. The gate DID run; the ledger declined its record; re-running
+            # reproduces the refusal. `RLY41-2`'s shape: a true blocking answer wearing a
+            # remedy for a different failure.
+            _r = (refusals or {})[step]
+            status = "REFUSED"
+            why = (f"the ledger REFUSED this claim ({_r.get('rule')}); NOTHING has been "
+                   f"established about these subjects. This is a defect in the RECORD, not a "
+                   f"finding about the corpus — do not simply re-run the gate, which would "
+                   f"reproduce it. Refused {_r.get('count')} time(s), first "
+                   f"{str(_r.get('first_seen'))[:19]}, last {str(_r.get('last_seen'))[:19]}. "
+                   f"Fix the record the emitter sends, then record again.")
         elif covered == 0 and stale == 0:
             status = "MISSING"
             if unscoped:

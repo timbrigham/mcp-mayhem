@@ -133,6 +133,19 @@ class Ledger:
         result = self.validate(rec)
         if not result["ok"]:
             self.store.bump("invalid_appends")
+            # ⭐⭐ THE INVERSION, FIXED. Until 2026-09-07 this bumped one global counter and
+            # nothing else, so a step whose record was REFUSED rendered as MISSING —
+            # indistinguishable from never having run. Absence rendering as absence when it
+            # was a FAILURE TO PRODUCE A VALUE, and the only instrument that could see it was
+            # the call log, which is explicitly not evidence because it rotates.
+            #
+            # ⚠ Tim, 2026-09-07: *"fix the inversion."* And ZeroParadox, whose defects this
+            # makes visible, did not object: *"I would rather my defects be visible than have
+            # my silence read as the corpus's silence."*
+            self.store.record_refusal(
+                step=(rec.get("step") or ""),
+                rule=(result["errors"][0].split(":")[0] if result.get("errors") else "?"),
+                when=_now())
             raise ValidationFailure(result["errors"])
 
         existing = self.store.get(rec["id"])
