@@ -528,3 +528,98 @@ def test_a_blocking_row_owing_nothing_still_explains_itself(ledger):
     assert "nothing in SCOPE is owed" in row["remedy"]
     assert "producer moved" in row["remedy"]
     assert row["evidence_stale"] == 1
+
+
+# -- ⭐⭐ the per-step coverage bar: a ratchet, not a flip ---------------------
+
+def _bar(config_dir, step, value):
+    import json
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)[step]["min_coverage"] = value
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_a_step_below_its_declared_bar_is_unvalidated_and_blocks(tmp_path, config_dir):
+    """⭐⭐ ONE SWITCH FOR EVERY STEP IS THE WRONG SHAPE, AND BOTH OF ITS POSITIONS ARE WRONG.
+
+    Measured 2026-09-07 against the live tree: `coverage.require_complete: false` left **9
+    gating steps reading SATISFIED over 823 in-scope paths they had never examined**; setting
+    it `true` blocks essentially everything until a full sweep runs.
+
+    ⚠ The spread is the reason neither answer fits: `check_classes` sat at 220/220 and could be
+    barred at 1.0 that day for nothing, while `check_pov` was at 305/522 and plainly could not.
+    So the bar is PER STEP and declared, and the flip becomes a ratchet that advances as sweeps
+    land.
+
+    ⚠ It is NOT a finding about the corpus — the paths the step DID examine passed. The row
+    text has to say that, or a reader goes hunting for a defect in the mathematics.
+    """
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    _bar(config_dir, "check_prose", 1.0)
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+
+    files = {"a.md": "1" * 40, "b.md": "2" * 40}
+    rec = {"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
+           "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],      # one of two
+           "basis": {"kind": "tree", "value": "t"}}
+
+    inv = inv_mod.build(config=led.config, records=[rec], action="commit",
+                        files=files, ref="t", admission=["check_prose"])
+    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
+    assert row["status"] == "UNVALIDATED", (
+        "a step below its OWN declared bar must not read SATISFIED")
+    assert "below the 100% bar" in row["why"]
+    assert "Not a finding about the corpus" in row["why"]
+    assert inv["complete"] is False
+
+
+def test_a_step_meeting_its_bar_is_satisfied(tmp_path, config_dir):
+    """⚠ THE MUST-SUPPRESS HALF. A bar that fails a step which met it is not a bar."""
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    _bar(config_dir, "check_prose", 1.0)
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+
+    files = {"a.md": "1" * 40}
+    rec = {"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
+           "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],
+           "basis": {"kind": "tree", "value": "t"}}
+    inv = inv_mod.build(config=led.config, records=[rec], action="commit",
+                        files=files, ref="t", admission=["check_prose"])
+    assert next(r for r in inv["rows"]
+                if r["step"] == "check_prose")["status"] == "SATISFIED"
+
+
+def test_an_unbarred_step_is_untouched_but_disclosed(tmp_path, config_dir):
+    """⛔ AN ABSENT BAR IS DISCLOSED, NEVER SILENT — the same rule as an absent pin.
+
+    Requiring every step to declare one would brick the corpus the day it shipped. Letting
+    absence pass unmentioned is how 823 unexamined paths came to sit under green rows in the
+    first place. **Absence disclosed is not absence defaulted.**
+    """
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    files = {"a.md": "1" * 40, "b.md": "2" * 40}
+    rec = {"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
+           "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],
+           "basis": {"kind": "tree", "value": "t"}}
+    inv = inv_mod.build(config=led.config, records=[rec], action="commit",
+                        files=files, ref="t", admission=["check_prose"])
+
+    assert next(r for r in inv["rows"]
+                if r["step"] == "check_prose")["status"] == "SATISFIED", (
+        "no declared bar must change nothing — this is the non-breaking half")
+    unbarred = {u["step"] for u in led.config.coverage_unbarred}
+    assert "check_prose" in unbarred, "but the absence must be NAMED on policy()"

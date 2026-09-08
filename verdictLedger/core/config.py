@@ -365,6 +365,58 @@ class Config:
         return "policy" if (self.policy.get("push") or {}).get("bar") is not None else "default"
 
     @property
+    def coverage_unbarred(self) -> list:
+        """Registered steps with NO declared `min_coverage` — no bar on how much of their
+        scope they must examine.
+
+        ⚠⚠ THE COMPANION TO `coverage.require_complete`, WHICH IS ONE SWITCH FOR EVERY STEP AT
+        ONCE. Measured 2026-09-07: `false` (today) means 9 gating steps read SATISFIED over
+        823 in-scope paths they never examined; `true` blocks essentially everything until a
+        full sweep runs. **Neither answer is the one anybody wants**, and the spread is why —
+        `check_classes` sits at 220/220 and could be barred at 1.0 today for nothing, while
+        `check_pov` is at 305/522 and plainly cannot.
+
+        ⭐ So the bar is PER STEP and declared, like `approved_modules`: a step naming
+        `min_coverage: 1.0` must have examined its whole scope. That turns one flip that
+        blocks 823 paths into a ratchet that advances as sweeps land.
+
+        ⛔ AND AN ABSENT BAR IS DISCLOSED, NEVER SILENT — the same rule as an absent pin.
+        Requiring every step to declare one would brick the corpus on the day it shipped;
+        letting absence pass unmentioned is how 823 unexamined paths came to sit under green
+        rows in the first place. **Absence disclosed is not absence defaulted.**
+
+        ⚠ A NAIVE RATCHET OFF THE RECORD STREAM WAS TRIED FIRST AND IS WRONG. "Most paths this
+        step has EVER covered" flags 13 of 27 steps as regressed — `adversary` reads 14 against
+        120, `rely` 5 against 73 — because the union aggregates scopes and bases that no longer
+        apply. A step reviewing a rotating subset is not backsliding. The baseline has to be
+        the CURRENT scope, which is what a declared bar is.
+        """
+        types = (self.required or {}).get("types") or self.required or {}
+        if not isinstance(types, dict):
+            return []
+        out = []
+        for step, spec in sorted(types.items()):
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("min_coverage") is None:
+                out.append({"step": step,
+                            "risk": "may report SATISFIED having examined any fraction of "
+                                    "its declared scope"})
+        return out
+
+    @property
+    def min_coverage(self) -> dict:
+        """`{step: float}` for steps that declare a coverage bar. Empty until one is set."""
+        types = (self.required or {}).get("types") or self.required or {}
+        if not isinstance(types, dict):
+            return {}
+        out = {}
+        for step, spec in (types or {}).items():
+            if isinstance(spec, dict) and isinstance(spec.get("min_coverage"), (int, float)):
+                out[step] = float(spec["min_coverage"])
+        return out
+
+    @property
     def unpinned_modules(self) -> list:
         """Steps that declare a `module` but no `approved_modules` — running unpinned.
 

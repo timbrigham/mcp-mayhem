@@ -451,6 +451,11 @@ def _sync_policy() -> dict:
             # edited tool exactly as readily as from a reviewed one. Reported here rather than
             # left to a source read, for the same reason `defaulted` is.
             "unpinned_modules": cfg.unpinned_modules,
+            # ⚠ The same disclosure one field over: a step with no `min_coverage` may report
+            # SATISFIED having examined any fraction of its scope. `coverage.require_complete`
+            # is one switch for all of them; this is the per-step bar that lets it ratchet.
+            "coverage_unbarred": cfg.coverage_unbarred,
+            "min_coverage": cfg.min_coverage,
             **cfg.paths()}
 
 

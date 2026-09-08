@@ -818,6 +818,36 @@ def build(*, config, records, action: str, files: dict,
             if short:
                 complete = False
 
+        # ⭐⭐ AND THE PER-STEP BAR, WHICH BINDS WHETHER OR NOT THE GLOBAL SWITCH IS ON.
+        # `coverage.require_complete` is ONE flip for every step at once, and neither
+        # position is the answer: `false` leaves 823 in-scope paths under green rows
+        # (measured 2026-09-07, 9 gating steps), `true` blocks essentially everything until
+        # a full sweep runs. The spread is why — `check_classes` sits at 220/220 and could be
+        # barred at 1.0 today for nothing, `check_pov` at 305/522 plainly cannot.
+        #
+        # ⚠ So a step may declare `min_coverage` and be held to it alone. That turns one flip
+        # into a RATCHET: bar the steps that are already complete, and advance as sweeps land.
+        # An absent bar is DISCLOSED on `policy()` as `coverage_unbarred`, never silent —
+        # requiring every step to declare one would brick the corpus the day it shipped.
+        bars = config.min_coverage
+        if bars:
+            under = []
+            for r in gating:
+                bar = bars.get(r["step"])
+                if bar is None or not r["scope"]:
+                    continue
+                seen = r["scope"] - r["subjects_unexamined"]
+                if (seen / r["scope"]) < bar:
+                    under.append(r["step"])
+                    r["status"] = "UNVALIDATED"
+                    r["why"] = (
+                        f"examined {seen}/{r['scope']} of its declared scope, below the "
+                        f"{bar:.0%} bar this step declares. Not a finding about the corpus — "
+                        f"the paths it DID examine passed. Run it over the rest, or lower "
+                        f"`min_coverage` deliberately.")
+            if under:
+                complete = False
+
     return {
         "ref": ref, "action": action,
         "admission_state": state,

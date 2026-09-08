@@ -90,6 +90,12 @@ class PolicyResult(Result, total=False):
     genesis: Any
     defaulted: list[dict[str, Any]]
     unpinned_modules: list[dict[str, Any]]
+    # ⭐ Steps with no declared `min_coverage` — no bar on how much of their scope they must
+    # examine. `coverage.require_complete` is ONE switch for every step: false leaves 823
+    # in-scope paths under green rows, true blocks until a full sweep runs. This is the
+    # per-step bar that lets that flip become a ratchet.
+    coverage_unbarred: list[dict[str, Any]]
+    min_coverage: dict[str, Any]
     policy_path: str
     required_path: str
     config_source: str
