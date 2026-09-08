@@ -1423,3 +1423,89 @@ def test_a_real_verdict_supersedes_a_refusal_with_no_clearing_step(ledger, tmp_p
     assert row["status"] == "SATISFIED", (
         "a real verdict must win over a stale refusal — the refusal's job is to stop ABSENCE "
         "reading as nothing, and absence is no longer the state")
+
+
+# -- ⭐ a pin's staleness and its enforcement are different events -------------
+
+def test_a_stale_pin_is_disclosed_before_the_step_next_records(ledger, config_dir):
+    """⭐⭐ THE INTERVAL, MADE VISIBLE. ZeroParadox measured it 2026-09-07: `check_checkers`
+    had been pinned to a superseded build **since three commits earlier** and nothing noticed,
+    because it is not in the five-checker precommit suite — so no run attempted its record
+    until push.
+
+    ⚠⚠ Their sentence, and it is the general form: **a pin's ENFORCEMENT POINT and a pin's
+    STALENESS are different events, and the gap between them is however long it takes that
+    step to next record.** V16c is enforced at APPEND, correctly — that is where a verdict is
+    claimed. So a pin can sit stale for days on a rarely-recording step and the first sign is
+    a refused commit.
+
+    ⚠ DISCLOSURE, NEVER A GATE. The refusal stays at append; reporting it here would be a
+    second enforcement point that could disagree with the first.
+    """
+    import json
+    from core import inventory as inv_mod
+
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)["check_invariants"].update(
+        {"module": "tools/verify/check_invariants.py", "approved_modules": ["d" * 40]})
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+    from core.ledger import Ledger
+    led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path)
+
+    inv = inv_mod.build(config=led.config, records=[], action="commit",
+                        files={"tools/verify/check_invariants.py": "e" * 40},
+                        ref="a" * 40, admission=["check_invariants"])
+    stale = {p["step"]: p for p in inv["stale_pins"]}
+    assert "check_invariants" in stale, (
+        "a module whose live blob is not among `approved_modules` must be named BEFORE the "
+        "step tries to record — that interval is the whole finding")
+    assert stale["check_invariants"]["live"] == "e" * 40
+    assert stale["check_invariants"]["approved"] == ["d" * 40]
+    assert "CANNOT record" in stale["check_invariants"]["consequence"]
+
+
+def test_a_current_pin_is_silent(ledger, config_dir):
+    """⚠ THE CONTROL. A disclosure that names every pinned step says nothing about any of
+    them — the same reason `relaxations`, `witness` and the unvalidated line each have a
+    silence half."""
+    import json
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)["check_invariants"].update(
+        {"module": "tools/verify/check_invariants.py", "approved_modules": ["e" * 40]})
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path)
+
+    inv = inv_mod.build(config=led.config, records=[], action="commit",
+                        files={"tools/verify/check_invariants.py": "e" * 40},
+                        ref="a" * 40, admission=["check_invariants"])
+    assert inv["stale_pins"] == [], "an APPROVED build must not be reported as stale"
+
+
+def test_a_module_absent_from_the_tree_is_not_called_stale(ledger, config_dir):
+    """⛔ ABSENT IS NOT STALE, and conflating them would be this project's own defect class.
+    A module missing from THIS tree is V16/V17's business — the evidence moved, or the file is
+    not here — and calling it a stale PIN would blame the registry for a fact about the tree."""
+    import json
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)["check_invariants"].update(
+        {"module": "tools/verify/check_invariants.py", "approved_modules": ["d" * 40]})
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path)
+
+    inv = inv_mod.build(config=led.config, records=[], action="commit",
+                        files={"docs/x.md": "b" * 40},          # module not in this tree
+                        ref="a" * 40, admission=["check_invariants"])
+    assert inv["stale_pins"] == []

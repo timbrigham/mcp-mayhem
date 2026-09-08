@@ -705,6 +705,41 @@ def build(*, config, records, action: str, files: dict,
                          else (f"{unexamined} in-scope path(s) never examined"
                                if status == "SATISFIED" else status.lower()))})
 
+    # ⭐⭐ PINS THAT NO LONGER MATCH THE TREE — disclosed BEFORE the step next records,
+    # not at the moment it is refused. Added 2026-09-07 on ZeroParadox's measurement:
+    # `check_checkers` had been pinned to a superseded build since `acbe1c7` and NOTHING
+    # noticed, because it is not in the five-checker precommit suite, so no run attempted
+    # its record until push.
+    #
+    # ⚠⚠ THEIR SENTENCE, AND IT IS THE GENERAL FORM: **a pin's ENFORCEMENT POINT and a pin's
+    # STALENESS are different events, and the gap between them is however long it takes that
+    # step to next record.** V16c is enforced at APPEND — correctly, since that is where a
+    # verdict is claimed — so a pin can sit stale for days on a step that records rarely, and
+    # the first sign is a refused commit. This makes the interval visible instead.
+    #
+    # ⚠ It is DISCLOSURE, never a gate. A stale pin refuses at append and that is where the
+    # refusal belongs; reporting it here would be a second enforcement point disagreeing with
+    # the first. `unpinned_modules` on `policy()` is the same shape for the same reason:
+    # absence disclosed is not absence defaulted.
+    stale_pins = []
+    for _step, _spec in sorted((config.required.get("types") or {}).items()):
+        if not isinstance(_spec, dict):
+            continue
+        _mod, _approved = _spec.get("module"), _spec.get("approved_modules")
+        if not _mod or not _approved:
+            continue
+        _live = files.get(_mod)
+        if _live is None:
+            continue          # not in this tree; V16/V17 own that, not this
+        if _live not in ([_approved] if isinstance(_approved, str) else list(_approved)):
+            stale_pins.append({
+                "step": _step, "module": _mod, "live": _live,
+                "approved": [_approved] if isinstance(_approved, str) else list(_approved),
+                "consequence": ("this step CANNOT record until the registry approves the "
+                                "current build — V16c refuses it at append. Nothing has gone "
+                                "wrong yet; this is the interval before it does."),
+            })
+
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.
     admitted = None if admission is None else set(admission)
@@ -787,6 +822,9 @@ def build(*, config, records, action: str, files: dict,
         # the mirror defect in the highest-stakes possible location.
         "complete": complete,
         "registered_not_admitting": registered_not_admitting,
+        # ⚠ Reported, never gating — see the block that computes it. The refusal lives at
+        # append, where the claim is made; this is the interval before it fires.
+        "stale_pins": stale_pins,
         "how_breakdown": how_counts,
         "rows": rows,
     }

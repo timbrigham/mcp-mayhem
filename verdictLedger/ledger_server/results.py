@@ -143,6 +143,11 @@ class InventoryResult(Result, total=False):
     not_applicable: int
     complete: bool
     registered_not_admitting: list[str]
+    # ⭐ Steps whose `approved_modules` no longer matches the module's blob in THIS tree.
+    # V16c refuses these at append; this names the interval BEFORE that, which is however
+    # long it takes the step to next record — measured 2026-09-07 at three commits for a
+    # step outside the precommit suite.
+    stale_pins: list[dict[str, Any]]
     how_breakdown: dict[str, Any]
     rows: list[dict[str, Any]]
     config_sha: str
