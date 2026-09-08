@@ -1977,6 +1977,23 @@ class GitRobot:
             return None
         return (time.time() - max(stamps)) / 3600.0
 
+    @staticmethod
+    def _porcelain_path(line: str) -> str:
+        """The path out of one `git status --porcelain` line.
+
+        ⛔⛔ `line[3:]` IS WRONG AND IT FAILED SILENTLY. Porcelain is `XY PATH` where X or Y
+        may be a SPACE — an unstaged edit is " M f.txt". But `git.run` strips the whole output,
+        which removes the leading space of THE FIRST LINE ONLY. So line 1 arrives as "M f.txt"
+        and line 2 as " M g.txt", and a fixed slice is off by one for exactly one of them.
+        Measured 2026-09-08: "f.txt" came back as ".txt".
+        ⚠ AND THE DIRTINESS CHECK STILL SAID True, because ".txt" is non-empty — so the bug was
+        invisible in every test that only asked IS it dirty. It surfaced the moment something
+        asked WHICH PATH, which is the whole argument for naming rather than counting.
+        ⚠ It also silently broke the `session_state` comparison: "ate_round.json" never equals
+        "gate_round.json", so a declared session-state file could still count as work.
+        """
+        return line[2:].strip()
+
     def _worktree_dirty_paths(self, path: Path, session_state: list) -> Optional[list]:
         """The paths that make a worktree dirty, EXCLUDING declared session state.
 
@@ -1994,7 +2011,7 @@ class GitRobot:
         ignore = set(session_state or [])
         out = []
         for line in (res.output or "").splitlines():
-            entry = line[3:].strip() if len(line) > 3 else ""
+            entry = self._porcelain_path(line)
             if entry and entry not in ignore:
                 out.append(entry)
         return out
@@ -2010,7 +2027,7 @@ class GitRobot:
             return None
         ignore = set(session_state or [])
         for line in (res.output or "").splitlines():
-            entry = line[3:].strip() if len(line) > 3 else ""
+            entry = self._porcelain_path(line)
             if entry and entry not in ignore:
                 return True
         return False
