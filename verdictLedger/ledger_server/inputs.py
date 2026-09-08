@@ -102,14 +102,36 @@ class Record(BaseModel):
     """
     model_config = ConfigDict(extra="allow")
 
+    # ⭐⭐ REQUIRED AT THE DOOR — Tim, 2026-09-08: *"both the shape and existence should be
+    # being tested."* Shape was declared 2026-09-06 and PRESENCE was not, so a record missing
+    # `step` entirely satisfied the published contract and was refused only downstream.
+    #
+    # ⛔⛔ THE SET WAS MEASURED, NOT CHOSEN, AND THE OBVIOUS METHOD IS WRONG. "Present on 100%
+    # of the stream" returns `id`, `run.started` and `run.config_sha` too — and `_prepare`
+    # STAMPS all three server-side, so requiring them would refuse every caller for omitting
+    # fields no caller has ever sent. The stream is post-normalisation; the door is not.
+    #
+    # ⭐ The right test is behavioural: DELETE THE FIELD AND SEE WHETHER THE RULES REJECT IT.
+    # Run 2026-09-08 against a known-good record:
+    #     rules reject absence : step, verdict, basis, subjects, run   -> required here
+    #     rules ACCEPT absence : schema, tier, decided, revision, cost, inputs -> stay optional
+    # `test_every_required_field_is_one_the_rules_also_demand` re-runs exactly that and fails
+    # if this list ever outgrows what V1-V21 enforce. The invariant is one-way and unchanged:
+    # anything this rejects, the rules would reject too — never the reverse.
+    #
+    # ⚠ `evidence` IS DELIBERATELY NOT HERE despite V21 requiring it. V21 rides the V16
+    # cutover switch, and a static schema cannot see a switch: under a relaxed migration the
+    # rules accept a blobless record and a required field here would refuse it — the model
+    # stricter than the rules, which is the one direction that breaks callers.
+
     schema_: Optional[str] = Field(default=None, alias="schema")
     id: Optional[str] = None
-    step: Optional[str] = None                       # ⚠ plain str — registry is config
+    step: str                                        # ⚠ plain str — registry is config
     tier: Optional[Literal[TIERS]] = None            # type: ignore[valid-type]
-    verdict: Optional[Literal[VERDICTS]] = None      # type: ignore[valid-type]
+    verdict: Literal[VERDICTS]                       # type: ignore[valid-type]
     reason: Optional[str] = None
-    basis: Optional[Basis] = None
-    subjects: list[Subject] = Field(default_factory=list)
+    basis: Basis
+    subjects: list[Subject]
     evidence: list[Subject] = Field(default_factory=list)
     outstanding: list[Any] = Field(default_factory=list)
     # ⚠⚠ OPTIONAL, STEP ONE OF TWO — see the module docstring. Absent means ALL subjects are
@@ -125,7 +147,7 @@ class Record(BaseModel):
     inputs: list[Any] = Field(default_factory=list)
     revision: Optional[int] = None
     cost: Optional[Cost] = None
-    run: Optional[Run] = None
+    run: Run
 
 
 # ⚠ The literal the schema field must carry, exported so a test can assert the model and

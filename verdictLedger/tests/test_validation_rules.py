@@ -278,7 +278,10 @@ def test_neuter_control_every_probe_depends_on_the_rules(ledger, monkeypatch):
 
 def _switched(config_dir, tmp_path, switches=("tools/verify/prose_baseline.txt",)):
     doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
-    doc["types"]["check_prose"] = {"family": "mechanical", "switches": list(switches)}
+    # ⚠ `module` carried deliberately: V20 (2026-09-08) refuses a step that declares no
+    # producer, and replacing the whole entry would otherwise drop the one the sample sets.
+    doc["types"]["check_prose"] = {"family": "mechanical", "switches": list(switches),
+                                   "module": "tools/verify/check_prose.py"}
     (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
     return Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
                   required_path=config_dir / "required.v2.json")
@@ -298,6 +301,8 @@ def test_v15_a_record_omitting_its_switch_is_refused(tmp_path, config_dir):
     led = _switched(config_dir, tmp_path)
     with pytest.raises(ValidationFailure) as exc:
         led.append(good(step="check_prose",
+                        evidence=[{"git_blob_id": "c" * 40,
+                                   "path": "tools/verify/check_prose.py"}],
                         subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"}]))
     assert "V15" in str(exc.value)
     assert "prose_baseline.txt" in str(exc.value)
@@ -305,8 +310,13 @@ def test_v15_a_record_omitting_its_switch_is_refused(tmp_path, config_dir):
 
 def test_v15_naming_the_switch_validates(tmp_path, config_dir):
     led = _switched(config_dir, tmp_path)
+    # ⚠ EVIDENCE NAMES THIS STEP'S OWN MODULE. The sample registry declares a `module`
+    # for every type as of 2026-09-08 (V20 requires one), which activates V16's STRICT
+    # form: a mechanical verdict must name the module the registry says implements it.
+    # The generic `good()` evidence points at check_invariants and no longer fits here.
     out = led.append(good(
         step="check_prose",
+        evidence=[{"git_blob_id": "c" * 40, "path": "tools/verify/check_prose.py"}],
         subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"},
                   {"git_blob_id": "c" * 40, "path": "tools/verify/prose_baseline.txt"}]))
     assert out["id"].startswith("check_prose@")
@@ -320,6 +330,7 @@ def test_v15_makes_editing_a_baseline_go_STALE(tmp_path, config_dir):
     led = _switched(config_dir, tmp_path)
     led.append(good(
         step="check_prose",
+        evidence=[{"git_blob_id": "c" * 40, "path": "tools/verify/check_prose.py"}],
         subjects=[{"git_blob_id": "b" * 40, "path": "docs/x.md"},
                   {"git_blob_id": "c" * 40, "path": "tools/verify/prose_baseline.txt"}]))
     recs = led.store.records()
@@ -388,6 +399,8 @@ def test_a_review_family_step_may_legitimately_record_mechanically(ledger):
     the four that do not exist yet."""
     assert ledger.config.requirements("push")["claim_review"]["family"] == "review"
     out = ledger.append(good(step="claim_review", tier="H", verdict="PASS",
+                             evidence=[{"git_blob_id": "c" * 40,
+                                        "path": ".claude/commands/claim-review.md"}],
                              decided={"how": "mechanical", "passes": 1, "agreed": 1,
                                       "who": None}))
     assert out["id"].startswith("claim_review@")

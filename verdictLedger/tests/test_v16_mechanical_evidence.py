@@ -143,16 +143,50 @@ def test_naming_the_declared_module_validates(tmp_path, config_dir):
     assert led.validate(good())["errors"] == []
 
 
-def test_declaring_a_module_is_optional_and_costs_no_reason(tmp_path, config_dir):
-    """⚠ `module` makes a type STRICTER, so it is priced like `switches` and not like
-    a narrowing. And it stays OPTIONAL on purpose: making it mandatory would refuse
-    every mechanical record until every type in a registry this server does not own
-    had been annotated — the correct implementation bricking the system."""
+def test_declaring_a_module_is_MANDATORY_as_of_v20(tmp_path, config_dir):
+    """⛔⛔ A DELIBERATE POLICY REVERSAL, RECORDED RATHER THAN DELETED.
+
+    This test previously asserted the opposite — that `module` "stays OPTIONAL on purpose:
+    making it mandatory would refuse every mechanical record until every type in a registry
+    this server does not own had been annotated — the correct implementation bricking the
+    system." That was a real argument and it held for two weeks.
+
+    ⭐ Tim reversed it 2026-09-08, told that a refusal would brick six gating steps:
+    *"bricking bad tooling until it's fixed is good."* And separately: *"everything is
+    supposed to have some kind of pin for marking scope."*
+
+    ⚠ WHAT MADE THE OLD ARGUMENT SAFE TO OVERTURN, and it is not that the objection was
+    wrong — the brick is real. It is that the remedy is LIVE: `server._ledger()` builds a
+    fresh `Ledger` per call *"so config edits take effect without a restart"*, so declaring
+    a producer in the working-tree registry takes effect on the next append with no commit
+    and no restart. Without that, V20 would deadlock the commit that fixes it, because
+    `build` and `pdf_coupling` gate commit.
+    """
+    from core.errors import ValidationFailure
+
     led = _with_module(config_dir, tmp_path)
-    reqs = led.config.requirements("commit")
-    assert reqs["check_invariants"]["required"] is True
-    assert reqs["check_invariants"]["module"] == MODULE
-    assert reqs["check_prose"]["module"] is None
+    assert led.config.requirements("commit")["check_invariants"]["module"] == MODULE
+
+    doc = json.loads((config_dir / "required.v2.json").read_text(encoding="utf-8"))
+    doc["types"]["check_prose"] = {"family": "mechanical"}          # producer removed
+    (config_dir / "required.v2.json").write_text(json.dumps(doc), encoding="utf-8")
+    led2 = Ledger(tmp_path / "r2.jsonl", policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json")
+
+    errs = [e for e in led2.validate(good(step="check_prose"))["errors"]
+            if e.startswith("V20")]
+    assert errs, "a step declaring no `module` must be refused, not merely disclosed"
+    assert "no producer can be pinned" in errs[0]
+    assert "live on the next append, no restart needed" in errs[0], (
+        "the refusal must name the remedy AND that it needs no restart — without that "
+        "escape this rule deadlocks the commit that would satisfy it")
+
+    # ⚠ VERIFIED BY MAKING IT FAIL: the append itself is refused, not just `validate`.
+    try:
+        led2.append(good(step="check_prose"))
+        raise AssertionError("append must refuse a step with no declared producer")
+    except ValidationFailure as exc:
+        assert any(v.startswith("V20") for v in exc.violations)
 
 
 # -- ⭐⭐ the half that is not forgeable: the record EXPIRES --------------------

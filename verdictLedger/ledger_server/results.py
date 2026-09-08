@@ -90,6 +90,14 @@ class PolicyResult(Result, total=False):
     genesis: Any
     defaulted: list[dict[str, Any]]
     unpinned_modules: list[dict[str, Any]]
+    # ⭐ Steps naming NO `module`, so there is nothing for a pin to pin — the blind spot in
+    # `unpinned_modules`, which only sees steps that HAVE a module. Measured 2026-09-08:
+    # 16 pinned, 4 reported unpinned, and 9 more reported by nobody, six of them admitted.
+    undeclared_producers: list[dict[str, Any]]
+    # ⭐ Harness loop-breaks past their `review_by`, STILL IN FORCE. Disclosed rather than
+    # auto-removed: dropping a carve on its date would re-block a gate at an arbitrary
+    # moment, which is an outage on a timer rather than a loud failure.
+    loop_breaks_expired: list[dict[str, Any]]
     # ⭐ Steps with no declared `min_coverage` — no bar on how much of their scope they must
     # examine. `coverage.require_complete` is ONE switch for every step: false leaves 823
     # in-scope paths under green rows, true blocks until a full sweep runs. This is the
@@ -154,6 +162,11 @@ class InventoryResult(Result, total=False):
     # long it takes the step to next record — measured 2026-09-07 at three commits for a
     # step outside the precommit suite.
     stale_pins: list[dict[str, Any]]
+    # ⭐ Steps that grade their OWN producer — editing it changes a subject the step owes a
+    # verdict for AND stales every verdict it produced. Reads BOTH producer routes: the
+    # registry `module` (mechanical steps) and the record `evidence` (agent steps). Measured
+    # 2026-09-08: registry-only returns 3 and misses `adversary`/`editorial`; the union is 5.
+    circular_gates: list[dict[str, Any]]
     # ⭐ The frozen convergence bar, beside `complete`. `complete: true` is a claim about a
     # SCOPE — if the registry moved since the run was frozen it is true about a different one.
     # Carried here because gitRobot's status() embeds an inventory, not a progress, so a

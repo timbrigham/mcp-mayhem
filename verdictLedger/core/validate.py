@@ -201,7 +201,7 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     # innocent blobs, including one that predated the bad file existing.
     #
     # ⛔ WHY THIS IS ENFORCED HERE AND NOT ONLY IN THE CLIENT. All three emitter routes now
-    # guarantee it — `common.py:781` makes FAIL ⟺ non-empty `bad` an IDENTITY, `agent_gate`
+    # guarantee it — `common.py`'s `verdict = 'FAIL' if bad else 'PASS'` IS that identity, `agent_gate`
     # inherits it, and `record.py`'s CLI refuses the flagless case as of `acbe1c7`. **But that
     # guarantee lives entirely in the consumer's repo**, in a file whose own header says
     # editing it "stales EVERY mechanical step at once" — so it will be edited again, and an
@@ -235,6 +235,83 @@ def rules(record: dict, *, config: Config, existing_ids: set,
             "made by omission. SATISFIED WHEN: `failing` lists the subset this verdict "
             "actually condemns; if it genuinely condemns all of them, pass the full subject "
             "list and say so explicitly. Absence is not a way to spell 'all'.")
+
+    # ⭐⭐ V21 — EVERY VERDICT MUST NAME THE BLOB IT WAS PRODUCED FROM. Landed 2026-09-08.
+    #
+    # Tim: *"every entry needed a blob."* This is the rule; V20 is only the registry half of it.
+    #
+    # ⛔ WHY `how` MUST NOT GATE THIS, WHICH IS THE DEFECT. V16 requires evidence only when
+    # `how == "mechanical"`. Measured 2026-09-08: `adversary` is 62/66 `delegated` and
+    # `editorial` 51/55 — so V16 never fires on either, and NINE records across the two carry
+    # no evidence at all. Those nine can never go STALE, because staleness is computed by
+    # watching a named blob move and they name none. They are permanent verdicts.
+    #
+    # ⭐ THE PROPERTY THIS PROTECTS IS THE ONE THAT MAKES SELF-ENTERED GRADES SAFE. Subagents
+    # record their own verdicts by design; what makes that sound is not review but EXPIRY —
+    # "a forged verdict expires the next time the code it lied about changes." Expiry is
+    # entirely a function of naming a blob. A record with no blob opts out of the only control
+    # that was ever holding it, and it does so silently, by omission.
+    #
+    # ⚠ 62 of 66 already comply. This is not new behaviour being imposed; it is a convention
+    # that four records quietly skipped being made unrepresentable.
+    # ⚠ TWO SCOPE LIMITS, BOTH DELIBERATE AND BOTH MEASURED.
+    # (1) `signature` and `override` ATTACH to a verdict somebody else produced — they are
+    #     attestations, not gradings, and have no producing artifact of their own. Live
+    #     ledger 2026-09-08: 4 signatures and 2 overrides carry no blob, correctly.
+    # (2) It rides the SAME cutover switch as V16 rather than inventing a second one. V21 is
+    #     V16's requirement generalised off `how`, so a registry mid-migration must be able
+    #     to stage both together; two levers for one cutover is how they drift apart. The
+    #     switch DEFAULTS STRICT, so the rule holds unless somebody explicitly relaxes it.
+    ev = record.get("evidence")
+    if (how not in ("signature", "override") and config.v16_required
+            and not (isinstance(ev, list)
+                     and any(isinstance(e, dict) and (e.get("git_blob_id") or "").strip()
+                             for e in ev))):
+        out.append(
+            "V21: this verdict names no blob, so it can never be shown stale — staleness is "
+            "computed by watching a named blob move. Satisfied when `evidence` carries at "
+            "least one entry with a `git_blob_id`: the checker for a mechanical step, the "
+            "brief for a delegated one — whatever produced this verdict.")
+
+    # ⭐⭐ V20 — A STEP MUST DECLARE ITS PRODUCER, OR IT CANNOT RECORD. Landed 2026-09-08.
+    #
+    # Tim, 2026-09-08: *"everything is supposed to have some kind of pin for marking scope"*
+    # and, on being told a refusal would brick six gating steps: *"bricking bad tooling until
+    # it's fixed is good."* That overrules the earlier disclosure-only stance, deliberately.
+    #
+    # WHAT IT COSTS TO BE WRONG THE OTHER WAY. Measured on the live registry 2026-09-08:
+    #     16 pinned · 4 declaring a module with no pin · 9 declaring NO module at all
+    # and `policy()` reported "4 unpinned", because `unpinned_modules` asks "has a module but
+    # no approved_modules" and is structurally blind to the nine. Six of those nine GATE —
+    # adversary, build, editorial, pdf_coupling gate commit or push; release_ready and rely
+    # gate tag. A verdict from a step with no declared producer cannot be tied to the code or
+    # brief that reached it, so its staleness can never be computed: it is a claim with no
+    # author that never expires.
+    #
+    # ⛔ THIS IS THE DECLARATION HALF ONLY, AND THE SPLIT IS DELIBERATE. Requiring
+    # `approved_modules` too would be the full pin, but it entangles with V16c — which
+    # compares the approved blob against the live tree — and every sample-config type would
+    # need a blob id that matches whatever a test happens to put in `files`. Declaration is
+    # checkable with no tree at all. `unpinned_modules` still discloses the build half, and
+    # that is the next ratchet, not a rule quietly dropped.
+    #
+    # ⚠ ESCAPABLE BY DESIGN, WHICH IS THE ONLY REASON IT IS SAFE TO BRICK COMMIT. `build` and
+    # `pdf_coupling` gate COMMIT, so a refusal here blocks the very commit that would fix the
+    # registry — the exact deadlock class this session spent the day removing. It is not one,
+    # because `server._ledger()` builds a fresh `Ledger` per call *"so config edits take
+    # effect without a restart"*: declaring the producer in the working-tree registry is live
+    # on the next append, with no commit and no restart. If that factory is ever made to
+    # cache, THIS RULE BECOMES A DEADLOCK and must be revisited with it.
+    if isinstance(step_name, str) and config.is_registered(step_name):
+        _raw = ((config.required or {}).get("types") or {}).get(step_name) or {}
+        _module = _raw.get("module")
+        if not (isinstance(_module, str) and _module.strip()):
+            out.append(
+                f"V20: step {step_name!r} declares no `module`, so no producer can be pinned "
+                f"and this verdict could never be shown stale. Satisfied when "
+                f"`required.v2.json` gives {step_name!r} a `module` naming the file that "
+                f"produces its verdicts (the checker for a mechanical step, the brief for a "
+                f"review step); the edit is live on the next append, no restart needed.")
 
     if declared:
         named = {s.get("path") for s in (record.get("subjects") or [])

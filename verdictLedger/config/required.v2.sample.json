@@ -9,14 +9,16 @@
     "genesis": {
       "family": "review",
       "actions": [],
-      "reason": "the recording floor itself; it is not a gate on any action"
+      "reason": "the recording floor itself; it is not a gate on any action",
+      "module": ".claude/commands/genesis.md"
     },
     "build": {
       "family": "mechanical",
       "actions": [
         "tag"
       ],
-      "reason": "stub-first commits sorry-stubbed files on purpose, and CI at the PR owns build state; only a release asserts the corpus builds"
+      "reason": "stub-first commits sorry-stubbed files on purpose, and CI at the PR owns build state; only a release asserts the corpus builds",
+      "module": "tools/verify/build.py"
     },
     "check_encoding": {
       "family": "mechanical",
@@ -31,13 +33,15 @@
         "*.pdf",
         "*.ttf"
       ],
-      "reason": "its property is tracked TEXT files; a BOM test on a font or a published PDF is meaningless. Stated as an exclusion rather than an extension allow-list on purpose: a new text extension must NOT silently fall out of scope, which is the direction an allow-list fails in"
+      "reason": "its property is tracked TEXT files; a BOM test on a font or a published PDF is meaningless. Stated as an exclusion rather than an extension allow-list on purpose: a new text extension must NOT silently fall out of scope, which is the direction an allow-list fails in",
+      "module": "tools/verify/check_encoding.py"
     },
     "check_paths": {
       "family": "mechanical",
       "switches": [
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_paths.py"
     },
     "check_frozen": {
       "family": "mechanical",
@@ -58,38 +62,44 @@
         "tools/verify/prose_baseline.txt"
       ],
       "reason": "superseded by the independent-git-spaces rewrite; the frozen baselines describe a topology that no longer exists, so the freeze comparison cannot succeed and never will. STILL REGISTERED on purpose -- Tim, 2026-08-23: 'I have no problem if you want to still allow it to be submitted, it just shouldn't be required in order to pass.' Recording stays valid; gating stops.",
-      "actions": []
+      "actions": [],
+      "module": "tools/verify/check_frozen.py"
     },
     "check_prose": {
       "family": "mechanical",
       "switches": [
         "tools/verify/prose_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_prose.py"
     },
     "check_pov": {
       "family": "mechanical",
       "switches": [
         "tools/verify/pov_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_pov.py"
     },
     "check_modal": {
       "family": "mechanical",
       "switches": [
         "tools/verify/modal_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_modal.py"
     },
     "check_classes": {
       "family": "mechanical",
       "switches": [
         "tools/verify/class_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_classes.py"
     },
     "check_invariants": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "module": "tools/verify/check_invariants.py"
     },
     "check_hashes": {
       "family": "mechanical",
@@ -106,27 +116,31 @@
       ],
       "switches": [
         "tools/verify/shared_build_baseline.txt"
-      ]
+      ],
+      "module": "tools/verify/check_hashes.py"
     },
     "check_moved": {
       "family": "mechanical",
       "switches": [
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_moved.py"
     },
     "check_negatives": {
       "family": "mechanical",
       "switches": [
         "tools/verify/negatives_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_negatives.py"
     },
     "check_figures": {
       "family": "mechanical",
       "switches": [
         "tools/verify/figures_baseline.txt",
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_figures.py"
     },
     "check_checkers": {
       "family": "mechanical",
@@ -140,21 +154,25 @@
       "reason": "audits the 19 checker modules, not the tooling directory; stays dynamic because a checker added later matches check_*.py on its own",
       "switches": [
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/check_checkers.py"
     },
     "guards": {
       "family": "mechanical",
       "switches": [
         "tools/verify/vendored_files.txt"
-      ]
+      ],
+      "module": "tools/verify/guards.py"
     },
     "decls": {
-      "family": "mechanical"
+      "family": "mechanical",
+      "module": "tools/verify/decls.py"
     },
     "pdf_coupling": {
       "family": "mechanical",
       "when": "*.pdf",
-      "reason": "only meaningful when a PDF changed. WAS '**/*.pdf' until 2026-08-25, which under fnmatch requires at least one / and so matched NONE of the 40 root-level PDFs -- the gate could never fire and rendered a benign NOT_APPLICABLE. Filed as PDFC-1."
+      "reason": "only meaningful when a PDF changed. WAS '**/*.pdf' until 2026-08-25, which under fnmatch requires at least one / and so matched NONE of the 40 root-level PDFs -- the gate could never fire and rendered a benign NOT_APPLICABLE. Filed as PDFC-1.",
+      "module": "tools/verify/pdf_coupling.py"
     },
     "editorial": {
       "family": "review",
@@ -173,7 +191,8 @@
         "tools/*.md",
         ".claude/*.md",
         ".github/*.md"
-      ]
+      ],
+      "module": ".claude/commands/editorial.md"
     },
     "adversary": {
       "family": "review",
@@ -192,20 +211,23 @@
         "tools/*.md",
         ".claude/*.md",
         ".github/*.md"
-      ]
+      ],
+      "module": ".claude/commands/adversary.md"
     },
     "prior_art": {
       "family": "review",
       "actions": [],
       "reason": "scoped to synthesis and bridge CLAIMS, not to files. Its trigger surface (ZeroParadox/*.lean, 218 files) is not its review surface, so no glob expresses what a run actually covers and a file-keyed record would overclaim. Narrowed 2026-08-23 by Tim's decision as ACKNOWLEDGED DEBT, not as a solved problem: re-engaged when .lean files are next touched, or as a dedicated batch. The gate is NOT retired and the type is NOT removed -- records remain valid and the type stays registered, so promoting it later costs one line.",
-      "_debt_not_closure_2026_08_23": "TWO FENCES, because a narrowing is a weakening and this one must not travel. (1) It does NOT retire trigger 5: a new .lean file or >=50 inserted .lean lines still owes a prior-art search under CLAUDE.md. What changed is that the obligation stops being enforced by a per-push key it cannot express -- DISCIPLINE where it was briefly a gate, and this project's own record is that discipline leaks. (2) It is NOT precedent for rely / editorial / adversary, which are file-shaped, now scoped to 56/59/59, and stay blocking. The distinguishing test is CAN A GLOB EXPRESS WHAT THE REVIEWER READ -- yes for those three, no for this one. That is a property of the gate, not a shortage of effort."
+      "_debt_not_closure_2026_08_23": "TWO FENCES, because a narrowing is a weakening and this one must not travel. (1) It does NOT retire trigger 5: a new .lean file or >=50 inserted .lean lines still owes a prior-art search under CLAUDE.md. What changed is that the obligation stops being enforced by a per-push key it cannot express -- DISCIPLINE where it was briefly a gate, and this project's own record is that discipline leaks. (2) It is NOT precedent for rely / editorial / adversary, which are file-shaped, now scoped to 56/59/59, and stay blocking. The distinguishing test is CAN A GLOB EXPRESS WHAT THE REVIEWER READ -- yes for those three, no for this one. That is a property of the gate, not a shortage of effort.",
+      "module": ".claude/commands/prior-art.md"
     },
     "release_ready": {
       "family": "review",
       "actions": [
         "tag"
       ],
-      "reason": "release-only by construction"
+      "reason": "release-only by construction",
+      "module": ".claude/commands/release-ready.md"
     },
     "rely": {
       "family": "review",
@@ -213,7 +235,8 @@
       "scope": [
         "tools/verify/*"
       ],
-      "reason": "governs the verification tooling. Its own brief FORBIDS running at full breadth -- rely.md step 1: 'SCOPE IT ... Do not run it at full' -- so with no scope the admission set demanded 477 paths from a gate that is not permitted to examine them. It was unsatisfiable by construction, not merely expensive."
+      "reason": "governs the verification tooling. Its own brief FORBIDS running at full breadth -- rely.md step 1: 'SCOPE IT ... Do not run it at full' -- so with no scope the admission set demanded 477 paths from a gate that is not permitted to examine them. It was unsatisfiable by construction, not merely expensive.",
+      "module": ".claude/commands/rely.md"
     },
     "claim_review": {
       "family": "review",
@@ -227,7 +250,8 @@
         "tools/verify/pov_baseline.txt",
         "tools/verify/prose_baseline.txt"
       ],
-      "reason": "a removal is a removal FROM those baselines"
+      "reason": "a removal is a removal FROM those baselines",
+      "module": ".claude/commands/claim-review.md"
     }
   },
   "_switches_v15": "A subject set is everything the verdict DEPENDS ON, not merely everything the checker read. Found by ZeroParadox 2026-08-23: check_pov recorded 291 subjects and NOT pov_baseline.txt, so grandfathering a violation into that baseline left the record reading SATISFIED -- every file it named was unchanged. V15 refuses a record that omits a declared switch, which turns a convention into a contract: with the switch as a subject, editing a baseline moves a blob the record names, the key goes STALE, and the checker re-runs. Declaring switches is NOT a narrowing and costs no reason -- it makes a type stricter.",

@@ -1,7 +1,14 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-# The record stream is per-run process state that churns on every push.
-# Runtime state: the stream, and the durable counters beside it.
-data/*.jsonl
-data/*.counters.json
+# ⛔ WHITELIST, NOT A DENYLIST — measured 2026-09-07, and this file is why.
+# It read `data/*.jsonl` plus `data/*.counters.json`: one pattern per sidecar, enumerated
+# by name. Adding the refusals sidecar (`5ebd805`) created a THIRD name matching neither,
+# so `records.jsonl.refusals.json` was tracked and rode into SIX consecutive commits of a
+# PUBLIC repo, bumping its counter in each. Nothing private escaped — the step was a probe
+# named "nope" — but a refusal records the CONSUMER's step name, and the next real one
+# would have published it. A denylist of runtime state is wrong the moment state is added,
+# and it fails silently, in the direction that publishes.
+# `sjv` already had this right; this is that pattern adopted rather than reinvented.
+data/*
+!data/.gitkeep

@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
-data/*.jsonl
+# ⛔ WHITELIST, NOT A DENYLIST. This read `data/*.jsonl` — the same enumerate-each-name
+# shape that let verdictLedger's refusals sidecar into six public commits on 2026-09-07.
+# No sidecar exists here yet; that is exactly when the rule is cheap to fix.
+data/*
+!data/.gitkeep

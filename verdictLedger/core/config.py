@@ -82,6 +82,13 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+# ⭐ The opening review cadence for a harness loop break, in days. Tim, 2026-09-08:
+# "one month increments at least to start". A constant here and NOT in policy.v1.json on
+# purpose — that file lives in the CONSUMER's tree, and the gated party must not be able to
+# widen the window on its own exemptions.
+MAX_CARVE_DAYS = 31
+
+
 class Config:
     """Both config files plus the sha that identifies them together.
 
@@ -110,9 +117,28 @@ class Config:
         self.required_path = Path(required_path)
         self.policy = _read(self.policy_path, "policy")
         self.required = _read(self.required_path, "required")
+        # ⭐⭐ HARNESS-OWNED, AND DELIBERATELY NOT BESIDE THE OTHER TWO. `policy` and
+        # `required` live in the CONSUMER's tree (ZPLEDGER_CONFIG). This file lives in THIS
+        # repo, resolved from `__file__` so no env var can point it at the gated party's
+        # checkout. Tim, 2026-09-08: circular-gate management leaves the consumer's hands.
+        # ⚠ A break NARROWS a gate, so it is the one thing the gated party must not author —
+        # `scope_exclude` is already the harness's call in the tenancy contract *because
+        # carving is deciding*. Written in their registry it is a rule they can edit; written
+        # here it is unrepresentable from that side.
+        self.loopbreaks_path = Path(
+            os.environ.get("ZPLEDGER_LOOPBREAKS")
+            or Path(__file__).resolve().parents[1] / "config" / "loopbreaks.v1.json")
+        self.loopbreaks = (_read(self.loopbreaks_path, "loopbreaks")
+                           if self.loopbreaks_path.is_file() else {"breaks": {}})
+        self._validate_loopbreaks()
         self._validate()
         self.config_sha = hashlib.sha256(
-            (_sha(self.policy_path) + _sha(self.required_path)).encode()).hexdigest()
+            # ⚠ THE LOOP-BREAK FILE IS IN THE HASH. A carve changes what every gate
+            # examines; leaving it out would let the bar move while `config_sha` swore
+            # nothing had, and every record pins that sha as its provenance.
+            (_sha(self.policy_path) + _sha(self.required_path)
+             + (_sha(self.loopbreaks_path) if self.loopbreaks_path.is_file() else "")
+             ).encode()).hexdigest()
 
     # -- schema checks, because a malformed policy must not half-apply ---------
 
@@ -447,6 +473,143 @@ class Config:
                             "risk": "any build of this file can record for this step"})
         return out
 
+    def _validate_loopbreaks(self) -> None:
+        """Every carve must be attributed AND dated. Refused at load, not disclosed later.
+
+        ⚠⚠ THE FIELD THAT KEEPS A CARVE HONEST IS `review_by`. Tim, 2026-09-08, on being
+        offered it: *"I like the idea of having review date?"* A loop break is an EXEMPTION —
+        it makes a gate examine less — and an exemption with no expiry stops being a decision
+        and becomes scenery. Six months on, nobody remembers which carves are still load-
+        bearing and which are scar tissue, and the register reads as "this is how it works"
+        rather than "this is what we suspended and why".
+
+        ⛔ REQUIRED, NOT DEFAULTED. An absent `review_by` is refused, because the loose
+        direction here is the undated carve — exactly the shape `push.bar` had when a missing
+        key fell back to the more permissive answer for three days.
+        """
+        breaks = (self.loopbreaks or {}).get("breaks") or {}
+        if not isinstance(breaks, dict):
+            raise ConfigError(
+                f"{self.loopbreaks_path}: `breaks` must be an object keyed by step. "
+                f"Satisfied when it maps each step name to its carve.")
+        for step, brk in sorted(breaks.items()):
+            if not isinstance(brk, dict):
+                raise ConfigError(f"{self.loopbreaks_path}: break {step!r} must be an object. "
+                                  f"Satisfied when it carries exclude/reason/decided_by/review_by.")
+            missing = [k for k in ("exclude", "reason", "decided_by", "review_by")
+                       if not (brk.get(k) or (isinstance(brk.get(k), list) and brk[k]))]
+            if missing:
+                raise ConfigError(
+                    f"{self.loopbreaks_path}: break {step!r} is missing {', '.join(missing)}. "
+                    f"A carve makes a gate examine LESS, so it must name what it excludes, why, "
+                    f"who decided it, and the date it gets looked at again. Satisfied when all "
+                    f"four are present; `review_by` is an ISO date (YYYY-MM-DD).")
+            rb = str(brk.get("review_by"))
+            if not (len(rb) == 10 and rb[4] == "-" and rb[7] == "-"
+                    and rb.replace("-", "").isdigit()):
+                raise ConfigError(
+                    f"{self.loopbreaks_path}: break {step!r} has review_by={rb!r}. "
+                    f"Satisfied when it is an ISO date, YYYY-MM-DD.")
+            # ⭐⭐ THE CADENCE IS ENFORCED, NOT REMEMBERED. Tim, 2026-09-08: *"let's do their
+            # reviews in one month increments at least to start."* Written here rather than
+            # held as a habit, because a rule agreed in conversation binds only the people in
+            # the conversation — and the person who writes the next carve is a fresh session
+            # that never had it. A far-future date is how a dated exemption becomes an
+            # undated one while still passing the field check: `review_by: 2099-01-01`
+            # satisfies every rule above and expires after everyone who wrote it is gone.
+            # ⚠ "AT LEAST TO START" — this is the opening cadence, not a permanent ceiling.
+            # Widening it is a deliberate edit here, which is the point: the window gets
+            # longer when someone decides it should, not when someone forgets to look.
+            dec = str(brk.get("decided") or "")
+            if len(dec) == 10 and dec[4] == "-":
+                import datetime
+                try:
+                    span = (datetime.date.fromisoformat(rb)
+                            - datetime.date.fromisoformat(dec)).days
+                except ValueError:
+                    span = None
+                if span is not None and span > MAX_CARVE_DAYS:
+                    raise ConfigError(
+                        f"{self.loopbreaks_path}: break {step!r} runs {span} days "
+                        f"({dec} -> {rb}), past the {MAX_CARVE_DAYS}-day review cadence. "
+                        f"Satisfied when `review_by` is at most {MAX_CARVE_DAYS} days after "
+                        f"`decided`; re-date the carve when it is next looked at rather than "
+                        f"dating it far enough out that nobody has to.")
+
+    @property
+    def loop_breaks_expired(self) -> list:
+        """Carves whose `review_by` has passed. **Disclosed, never auto-removed.**
+
+        ⛔ AND THAT ASYMMETRY IS THE WHOLE DESIGN. Dropping a carve on its date would
+        re-introduce a deadlock at an arbitrary moment — a gate that passed at 23:59 blocking
+        at 00:01 with nothing in the history to explain it. That is an outage on a timer, not
+        a loud failure, and it is the one shape this file's own header calls worse than the
+        defect. So the break KEEPS APPLYING and says loudly that it is overdue.
+
+        ⚠ The enforcement that IS safe happens at load: an undated carve cannot be written at
+        all. The date is required; acting on it is a decision, and decisions are Tim's.
+        """
+        import datetime
+        today = datetime.date.today().isoformat()
+        out = []
+        for step, brk in sorted(((self.loopbreaks or {}).get("breaks") or {}).items()):
+            if not isinstance(brk, dict):
+                continue
+            if str(brk.get("review_by") or "") < today:
+                out.append({"step": step, "review_by": brk.get("review_by"),
+                            "decided": brk.get("decided"),
+                            "decided_by": brk.get("decided_by"),
+                            "reason": brk.get("reason"),
+                            "exclude": list(brk.get("exclude") or []),
+                            "risk": ("this carve is past its review date and is STILL IN "
+                                     "FORCE — the gate is still examining less")})
+        return out
+
+    @property
+    def undeclared_producers(self) -> list:
+        """Steps that name NO `module` at all — so there is nothing for a pin to pin.
+
+        ⚠⚠ THE BLIND SPOT IN `unpinned_modules`, AND IT IS THE LARGER POPULATION. That property
+        asks "declares a module but no approved_modules", so a step declaring NO module is not
+        unpinned in its eyes — it is invisible. Measured 2026-09-08 on the live registry:
+
+            pinned (module + approved_modules)   16
+            unpinned, REPORTED by that property   4
+            no module at all, reported by NOBODY  9   <- of which SIX are admitted
+
+        So `policy()` read "4 unpinned" while 13 of 29 steps had no enforceable producer pin
+        and six of those gated an action. Tim, 2026-09-08: *"everything is supposed to have
+        some kind of pin for marking scope."* This is the half that was never enumerated.
+
+        ⛔ THE SAME SHAPE AS THE DEFECT IT DISCLOSES, WHICH IS WHY IT IS A SEPARATE PROPERTY
+        AND NOT A WIDER FILTER. A check that reads one of two declaration routes does not
+        report a smaller number — it CERTIFIES THE OTHER ROUTE CLEAN. That happened three
+        times on 2026-09-08 alone: here; in `circular_gates`, whose first draft read the
+        registry route and missed `adversary` and `editorial` entirely; and in the consumer's
+        own `SH-3` (*"fixed ONE OF TWO routes to the same property"*). The remedy differs too,
+        which is why the two lists stay distinct: an unpinned step needs its BUILD approved, a
+        step here needs a PRODUCER DECLARED before a pin can exist at all.
+
+        ⚠ DISCLOSURE, NEVER A GATE — the same rule as its companion. Refusing these would
+        brick six gating steps on the day it shipped, which is an outage, not a loud failure.
+        """
+        types = (self.required or {}).get("types") or self.required or {}
+        if not isinstance(types, dict):
+            return []
+        out = []
+        for step, spec in sorted(types.items()):
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("module"):
+                continue          # has a producer; `unpinned_modules` owns that question
+            out.append({
+                "step": step,
+                "family": spec.get("family"),
+                "risk": ("no producer is declared, so no build can be pinned and a verdict "
+                         "cannot be tied to the code or brief that reached it"),
+            })
+        return out
+
     @property
     def defaulted(self) -> list:
         """Every policy setting whose key is ABSENT, so a built-in constant is in force.
@@ -681,6 +844,30 @@ class Config:
                 entry["narrowed"] = True
                 entry["reason"] = reason
             out[name] = entry
+        # ⭐⭐ HARNESS LOOP-BREAKS, APPLIED LAST AND OVER EVERY ENTRY. Deliberately a final
+        # pass rather than a branch inside the narrowing logic above: that logic has an early
+        # `continue` for reason-less registry narrowing, and a break routed through it would
+        # be silently dropped for a step whose REGISTRY happened to lack a reason. A carve the
+        # harness decided must not depend on the gated party's paperwork.
+        #
+        # ⚠ It only ever ADDS exclusions. A break can never widen a gate, so a malformed or
+        # over-broad entry cannot make a step examine LESS than the registry asked minus what
+        # Tim carved — and `circular_gates` still reports the underlying intersection, so a
+        # break silences the deadlock, never the measurement.
+        for _name, _entry in out.items():
+            _brk = (self.loopbreaks.get("breaks") or {}).get(_name)
+            if not isinstance(_brk, dict):
+                continue
+            _paths = [p for p in (_brk.get("exclude") or []) if isinstance(p, str) and p.strip()]
+            if not _paths:
+                continue
+            _entry["scope_exclude"] = sorted(
+                set(_entry.get("scope_exclude") or []) | set(_paths))
+            _entry["loop_break"] = {"exclude": sorted(set(_paths)),
+                                    "reason": _brk.get("reason"),
+                                    "decided": _brk.get("decided"),
+                                    "decided_by": _brk.get("decided_by")}
+
         return out
 
 

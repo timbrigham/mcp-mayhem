@@ -149,3 +149,45 @@ def test_the_agent_signature_hole_is_what_this_replaces(ledger):
         "still open — LED-8; the point is that `delegated` now exists as the honest "
         "alternative")
     assert errs(ledger, review()) == []
+
+
+# -- ⭐⭐ V21: a grade with no blob cannot expire ------------------------------
+
+def test_a_delegated_review_with_no_blob_is_REFUSED(ledger):
+    """⛔⛔ VERIFIED BY MAKING IT FAIL, because 410 green proves nothing on its own — an
+    inert rule and a working one pass the same suite.
+
+    Tim, 2026-09-08: *"every entry needed a blob."*
+
+    ⚠⚠ WHY V16 NEVER CAUGHT THIS. V16 fires only on `how == "mechanical"`. Measured on the
+    live ledger 2026-09-08: `adversary` is 62/66 `delegated`, `editorial` 51/55 — so V16 has
+    never once applied to either, and NINE records across the two carry no evidence at all.
+    Those nine can never go STALE: staleness is computed by watching a named blob move, and
+    they name none. They are permanent verdicts, and they became permanent by OMISSION.
+
+    ⭐ THIS IS WHAT MAKES SELF-ENTERED GRADES SOUND. Subagents record their own verdicts by
+    design; the control is not review, it is EXPIRY — a forged verdict dies the next time the
+    thing it lied about changes. A record with no blob opts out of the only control holding
+    it, silently.
+    """
+    found = [e for e in errs(ledger, review(evidence=[])) if e.startswith("V21")]
+    assert found, "a delegated grade naming no blob must be refused, not merely disclosed"
+    assert "can never be shown stale" in found[0]
+    assert "git_blob_id" in found[0], "the refusal must name the success condition"
+
+    with pytest.raises(ValidationFailure):
+        ledger.append(review(evidence=[]))
+
+    # ⚠ and the compliant form still appends — the rule must not brick the 62 that comply
+    assert ledger.append(review())["appended"] is True
+
+
+def test_v21_does_not_fire_on_an_attestation(ledger):
+    """⚠ A `signature` ATTACHES to a verdict somebody else produced. It has no producing
+    artifact of its own, so demanding a blob would refuse the one record type that is
+    honestly blobless. Live ledger 2026-09-08: 4 signatures and 2 overrides, correctly
+    carrying none. Scoping a rule is not weakening it — refusing what cannot comply is how
+    a control gets switched off wholesale a week later."""
+    rec = review(evidence=[], decided={"how": "signature", "passes": 1, "agreed": 1,
+                                       "who": "tim"})
+    assert [e for e in errs(ledger, rec) if e.startswith("V21")] == []

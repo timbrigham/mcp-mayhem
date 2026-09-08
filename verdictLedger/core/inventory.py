@@ -784,6 +784,75 @@ def build(*, config, records, action: str, files: dict,
                                 "wrong yet; this is the interval before it does."),
             })
 
+    # ⭐⭐ CIRCULAR GATES — a step that grades its OWN PRODUCER. Added 2026-09-08 after Tim
+    # called the fifth consecutive round on one blob "a failure of the gate itself" and said
+    # "it should not have been possible."
+    #
+    # THE SHAPE. Two rules, each correct alone. (1) A verdict goes STALE when the code or
+    # brief that PRODUCED it moves — a verdict cannot outlive its producer. (2) A step's scope
+    # says what it must examine. When a step's own producer sits INSIDE its own scope, editing
+    # that producer does two things at once: it changes a SUBJECT the step owes a verdict for,
+    # AND it invalidates the step as producer of every verdict it has ever reached. If the step
+    # is also ADMITTED for the action that would carry the fix, the fix cannot land while the
+    # finding it fixes is what blocks it. Measured on `adversary`: nine FAIL in ten rounds, the
+    # last two on identical subject counts, unmoved.
+    #
+    # ⚠⚠ IT MUST READ BOTH PRODUCER ROUTES OR IT REPORTS THE SMALLER NUMBER. Mechanical steps
+    # declare their producer in the REGISTRY (`module`); agent steps declare it in the RECORD
+    # (`evidence`). Measured 2026-09-08: the registry route alone returns 3 and MISSES
+    # `adversary` and `editorial` entirely — the two that motivated the check. The union is 5.
+    # A detector that reads one route is a detector that certifies the other route clean.
+    #
+    # ⚠ DISCLOSURE, NEVER A GATE — the same rule as `stale_pins` above. A gate that refuses
+    # because a gate is circular is one more thing that can deadlock, and the remedy is a
+    # policy choice (pin the producer, or narrow the scope) that belongs to the admission set
+    # and to Tim, not to a row status invented here.
+    _latest_evidence = {}
+    for _rec in records:
+        _s = _rec.get("step")
+        if _s and _rec.get("evidence"):
+            _latest_evidence[_s] = {e.get("path") for e in _rec["evidence"] if e.get("path")}
+    circular_gates = []
+    #
+    # ⛔⛔ TWO MEASURED TRAPS, BOTH HIT WHILE BUILDING THIS, both caught by the negative leg.
+    # (1) READ SCOPE FROM `reqs`, NOT FROM THE RAW REGISTRY. `_scope_paths` above is built
+    #     from `config.requirements(action)`, and `requirements()` DISCARDS a narrowing that
+    #     carries no `reason`. The raw registry therefore shows a scope that the resolved
+    #     requirement does not have, and intersecting one against the other compares two
+    #     different questions. The first draft did exactly that.
+    # (2) A STEP THAT DECLARES NO SCOPE IS NOT IN SCOPE FOR EVERYTHING HERE. The scope
+    #     resolver treats empty globs as "every path" (`not globs or ...`), which is right
+    #     for coverage and WRONG for this: it makes every unscoped step's producer trivially
+    #     self-graded, and the disclosure fills with steps that have no scope problem at all.
+    #     An undeclared scope is a different finding, and `unscoped` already reports it.
+    _raw_types = (config.required.get("types") or {})
+    for _step, _spec in sorted(reqs.items()):
+        if not _spec.get("required"):
+            continue
+        if not (_spec.get("scope") or _spec.get("when")):
+            continue          # no declared scope — see trap (2) above
+        _own_scope = set(_scope_paths.get(_step) or ())
+        if not _own_scope:
+            continue          # nothing in scope in this tree; nothing to be circular about
+        _producers = set()
+        _module = _spec.get("module") or (_raw_types.get(_step) or {}).get("module")
+        if _module:
+            _producers.add(_module)
+        _producers |= _latest_evidence.get(_step, set())
+        _self_graded = sorted(_producers & _own_scope)
+        if not _self_graded:
+            continue
+        circular_gates.append({
+            "step": _step,
+            "producers_in_own_scope": _self_graded,
+            "route": sorted({("registry" if p == _module else "evidence")
+                             for p in _self_graded}),
+            "admitted": admission is not None and _step in set(admission),
+            "consequence": ("editing this producer changes a subject this step must pass AND "
+                            "stales every verdict it produced. Blocking only where the step is "
+                            "also admitted for this action."),
+        })
+
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.
     admitted = None if admission is None else set(admission)
@@ -942,6 +1011,7 @@ def build(*, config, records, action: str, files: dict,
         # ⚠ Reported, never gating — see the block that computes it. The refusal lives at
         # append, where the claim is made; this is the interval before it fires.
         "stale_pins": stale_pins,
+        "circular_gates": circular_gates,
         "how_breakdown": how_counts,
         "rows": rows,
     }

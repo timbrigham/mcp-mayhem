@@ -373,7 +373,7 @@ def test_promoting_it_does_not_claim_the_cap_is_enforced():
     """⚠⚠ WHAT A GREEN ROW DOES *NOT* SAY, pinned because the argument for promoting
     it was that R-NOTINLIB reached 36 lines against a 12-line cap and nothing noticed.
 
-    Measured at the source: `cap` is a WARN leg, and `check_claude_md.py:257` says
+    Measured at the source: `cap` is a WARN leg, and `check_claude_md.py` says
     "THE VERDICT IS THE BLOCKING LEGS ONLY." So an over-cap entry still records a
     PASS, and promoting this does NOT fix the case that motivated promoting it. There
     are exactly two blocking legs — rooted paths resolve, named checkers exist — plus

@@ -1013,11 +1013,23 @@ def test_the_review_gates_are_scoped_to_what_they_govern(ledger):
     reqs = ledger.config.requirements("push")
     assert reqs["rely"]["scope"] == ["tools/verify/*"]
     assert "FORBIDS running at full breadth" in reqs["rely"]["reason"]
+    registry_exclusions = {"ZeroParadox/*.md", "tools/*.md", ".claude/*.md", ".github/*.md"}
     for step in ("editorial", "adversary"):
         assert reqs[step]["scope"] == ["*.md", "scripts/build_*.py",
                                        "scripts/PDF_Rendering_Standards.md"]
-        assert reqs[step]["scope_exclude"] == ["ZeroParadox/*.md", "tools/*.md",
-                                               ".claude/*.md", ".github/*.md"]
+        # ⭐ 2026-09-08: `adversary` carries a HARNESS LOOP BREAK excluding its own brief —
+        # the gate was grading the document telling it how to grade (9 FAIL in 10 rounds).
+        # `editorial` is measured circular and deliberately NOT carved, so it is the control
+        # that shows whether cross-review alone suffices. Asserted as registry UNION carve so
+        # the carve stays VISIBLE here: if it is ever silently dropped or widened, this fails.
+        carve = set(((ledger.config.loopbreaks.get("breaks") or {}).get(step) or {}).get(
+            "exclude") or [])
+        assert set(reqs[step]["scope_exclude"]) == registry_exclusions | carve
+        if step == "adversary":
+            assert carve == {".claude/commands/adversary-review.md"}, (
+                "the adversary carve is load-bearing and named here on purpose")
+        else:
+            assert carve == set(), "editorial is deliberately uncarved — it is the control"
 
 
 def test_prior_art_is_never_scoped_by_a_glob(ledger):
@@ -1566,3 +1578,349 @@ def test_one_implementation_of_the_freeze_check_not_two(ledger):
     assert inv["bar"] == prog["bar"], (
         "inventory and progress must report the SAME bar — they call one helper, and if this "
         "ever differs someone has reintroduced a second implementation")
+
+# -- ⭐⭐ a gate that grades its own producer -----------------------------------
+
+def _inv_with(config_dir, ledger, step, *, scope, files, records=(), module=None,
+              drop_module=False, admission=None):
+    """Build an inventory over a registry edited for one step. Returns the inventory."""
+    import json
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    types = doc.get("types") or doc
+    # ⚠ `reason` IS LOAD-BEARING, not decoration: `config.requirements()` DISCARDS a scope
+    # narrowing that carries no reason, so a test that omits it silently gets NO scope — and
+    # an empty scope resolves to every path. Measured 2026-09-08; it made the negative leg
+    # below fail for a reason that had nothing to do with what it was testing.
+    types[step]["scope"] = list(scope)
+    types[step].setdefault("reason", "probe: scope pinned by the test")
+    if drop_module:
+        types[step].pop("module", None)
+        types[step].pop("approved_modules", None)
+    elif module:
+        types[step]["module"] = module
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+    led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path)
+    return inv_mod.build(config=led.config, records=list(records), action="commit",
+                         files=dict(files), ref="a" * 40,
+                         admission=list(admission) if admission else [step])
+
+
+def test_a_step_whose_registry_module_sits_in_its_own_scope_is_named(ledger, config_dir):
+    """The REGISTRY route: a mechanical step declares its producer as `module`.
+
+    ⚠ Two rules that are each correct alone. A verdict goes STALE when its producer moves;
+    a scope says what a step must examine. Put the producer INSIDE the scope and one edit
+    both changes a subject the step owes a verdict for and invalidates every verdict it
+    reached. Measured 2026-09-08 on the live registry: `guards`, `check_checkers` and
+    `check_encoding` all sit in this state, admitted at push.
+    """
+    inv = _inv_with(config_dir, ledger, "check_invariants",
+                    scope=["tools/verify/*"],
+                    module="tools/verify/check_invariants.py",
+                    files={"tools/verify/check_invariants.py": "e" * 40})
+    found = {c["step"]: c for c in inv["circular_gates"]}
+    assert "check_invariants" in found, (
+        "a step whose own module is inside its own scope must be named — that is the "
+        "double-bind, and nothing else reports it")
+    assert found["check_invariants"]["producers_in_own_scope"] == [
+        "tools/verify/check_invariants.py"]
+    assert "registry" in found["check_invariants"]["route"]
+    assert found["check_invariants"]["admitted"] is True
+
+
+def test_a_step_whose_producer_is_only_in_its_EVIDENCE_is_still_named(ledger, config_dir):
+    """⛔⛔ THE RATCHET, AND THE REASON THIS TEST EXISTS SEPARATELY.
+
+    An agent step declares NO `module`. Its producer is named in the RECORD, as `evidence` —
+    for `adversary` that is `.claude/commands/adversary-review.md`, its own brief, which the
+    registry puts in scope deliberately (R-EXEMPT publishes the briefs).
+
+    ⚠⚠ MEASURED 2026-09-08, AND THIS IS THE WHOLE POINT: a detector reading only the registry
+    route returns THREE on the live configs and misses `adversary` and `editorial` entirely —
+    the two steps that motivated building it. The union is five. **A detector that reads one
+    of two declaration routes does not report a smaller number; it certifies the other route
+    clean.** If someone reimplements this off `module` alone, this test is what fails.
+    """
+    brief = ".claude/commands/adversary-review.md"
+    inv = _inv_with(config_dir, ledger, "check_invariants",
+                    scope=[".claude/commands/*"],
+                    drop_module=True,
+                    files={brief: "f" * 40},
+                    records=[{"step": "check_invariants", "verdict": "PASS",
+                              "evidence": [{"path": brief, "git_blob_id": "f" * 40}]}])
+    found = {c["step"]: c for c in inv["circular_gates"]}
+    assert "check_invariants" in found, (
+        "a producer named only in the record evidence must be caught too — registry-only "
+        "detection is how adversary and editorial went unreported")
+    assert found["check_invariants"]["producers_in_own_scope"] == [brief]
+    assert found["check_invariants"]["route"] == ["evidence"]
+
+
+def test_a_step_whose_producer_is_outside_its_scope_is_silent(ledger, config_dir):
+    """The negative leg. Most steps are fine and must stay quiet, or the disclosure is noise."""
+    inv = _inv_with(config_dir, ledger, "check_invariants",
+                    scope=["ZeroParadox/*.lean"],
+                    module="tools/verify/check_invariants.py",
+                    files={"ZeroParadox/A.lean": "b" * 40,
+                           "tools/verify/check_invariants.py": "e" * 40})
+    assert [c for c in inv["circular_gates"] if c["step"] == "check_invariants"] == []
+
+
+def test_a_step_with_no_module_is_disclosed_not_counted_as_pinned(ledger, config_dir):
+    """⛔⛔ THE BLIND SPOT, PINNED. `unpinned_modules` asks "declares a module but no
+    approved_modules" — so a step declaring NO module is not unpinned in its eyes, it is
+    INVISIBLE.
+
+    Measured 2026-09-08 on the live registry: 16 pinned, 4 reported unpinned, and NINE more
+    with no module at all — six of them admitted, therefore gating an action. `policy()` read
+    "4 unpinned" while 13 of 29 steps had no enforceable producer pin.
+
+    ⚠ Tim, 2026-09-08: "everything is supposed to have some kind of pin for marking scope."
+    The two lists stay separate because the REMEDY differs: an unpinned step needs its build
+    approved; a step here needs a producer declared before a pin can exist at all.
+    """
+    import json
+    from core.ledger import Ledger
+
+    path = config_dir / "required.v2.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    types = doc.get("types") or doc
+    types["check_invariants"] = {"family": "mechanical",
+                                 "module": "tools/verify/check_invariants.py"}   # no pin
+    types["check_prose"] = {"family": "review"}                                  # no module
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    cfg = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path).config
+
+    unpinned = {u["step"] for u in cfg.unpinned_modules}
+    undeclared = {u["step"] for u in cfg.undeclared_producers}
+
+    assert "check_invariants" in unpinned, "module without a pin is the OLD disclosure"
+    assert "check_invariants" not in undeclared, "it declares a producer; wrong list"
+    assert "check_prose" in undeclared, (
+        "a step with no module has nothing to pin and must still be named — being invisible "
+        "to unpinned_modules is exactly the finding")
+    assert "check_prose" not in unpinned, "no module means unpinned_modules cannot see it"
+    entry = next(u for u in cfg.undeclared_producers if u["step"] == "check_prose")
+    assert "no producer is declared" in entry["risk"]
+
+
+# -- ⭐⭐ harness-owned loop breaks --------------------------------------------
+
+def _carve_dates(days=30):
+    """⚠ RELATIVE, NEVER HARD-CODED. A fixture pinned to a literal future date is a test with
+    an expiry: it asserts "in date" until that day arrives and then fails for a reason that
+    has nothing to do with the code. The first draft of these used `2099-01-01`, which the
+    cadence guard then correctly refused — two time bombs in one line."""
+    import datetime
+    today = datetime.date.today()
+    return today.isoformat(), (today + datetime.timedelta(days=days)).isoformat()
+
+
+def _breaks(tmp_path, monkeypatch, payload):
+    f = tmp_path / "loopbreaks.v1.json"
+    f.write_text(json.dumps({"schema": "zp.loopbreaks.v1", "breaks": payload}),
+                 encoding="utf-8")
+    monkeypatch.setenv("ZPLEDGER_LOOPBREAKS", str(f))
+    return f
+
+
+def test_a_harness_loop_break_clears_the_circular_gate(ledger, config_dir, tmp_path,
+                                                       monkeypatch):
+    """⭐⭐ THE MECHANISM, EXERCISED END TO END. It ships with an EMPTY register, so the
+    suite passing says nothing about whether it works — this declares a break and watches
+    the gate come clean.
+
+    ⚠ Tim, 2026-09-08: circular-gate management leaves the consumer's hands entirely.
+    `scope_exclude` was already the harness's call in the tenancy contract *because carving
+    is deciding*; this is that made enforceable rather than agreed. A break written in the
+    consumer's registry is a rule the gated party can edit.
+    """
+    import json as _json
+    from core.ledger import Ledger
+    from core import inventory as inv_mod
+
+    _d, _r = _carve_dates()
+    brief = ".claude/commands/adversary-review.md"
+    path = config_dir / "required.v2.json"
+    doc = _json.loads(path.read_text(encoding="utf-8"))
+    (doc.get("types") or doc)["check_invariants"] = {
+        "family": "review", "scope": [".claude/commands/*"], "module": brief,
+        "reason": "probe"}
+    path.write_text(_json.dumps(doc, indent=2), encoding="utf-8")
+
+    def inv():
+        led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                     required_path=path)
+        return inv_mod.build(config=led.config, records=[], action="commit",
+                             files={brief: "f" * 40}, ref="a" * 40,
+                             admission=["check_invariants"])
+
+    before = {c["step"] for c in inv()["circular_gates"]}
+    assert "check_invariants" in before, "baseline must be circular or the test proves nothing"
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": [brief], "reason": "probe carve", "decided": _d,
+        "decided_by": "tim", "review_by": _r}})
+    after = inv()
+    assert "check_invariants" not in {c["step"] for c in after["circular_gates"]}, (
+        "a declared break must carve the producer out of the gate's own scope")
+
+
+def test_a_break_applies_even_when_the_registry_narrowing_has_no_reason(ledger, config_dir,
+                                                                       tmp_path, monkeypatch):
+    """⛔ THE EARLY-`continue` TRAP, PINNED. `requirements()` DISCARDS a registry narrowing
+    that carries no `reason` — and a break routed through that branch would be silently
+    dropped for a step whose REGISTRY happened to lack one. A carve the harness decided must
+    never depend on the gated party's paperwork, so breaks are applied as a final pass over
+    every entry. This is the test that fails if anyone moves them back inline."""
+    import json as _json
+    from core.ledger import Ledger
+
+    path = config_dir / "required.v2.json"
+    doc = _json.loads(path.read_text(encoding="utf-8"))
+    # narrowing WITHOUT a reason -> requirements() ignores the registry's own scope
+    (doc.get("types") or doc)["check_invariants"] = {"family": "mechanical",
+                                                     "scope": ["docs/*"]}
+    path.write_text(_json.dumps(doc, indent=2), encoding="utf-8")
+
+    _d, _r = _carve_dates()
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/carved.md"], "reason": "r", "decided": _d,
+        "decided_by": "tim", "review_by": _r}})
+    led = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=path)
+    entry = led.config.requirements("commit")["check_invariants"]
+    assert "docs/carved.md" in (entry.get("scope_exclude") or []), (
+        "the break was dropped because the REGISTRY lacked a reason — the harness decision "
+        "must not be contingent on the consumer's file")
+    assert entry["loop_break"]["decided_by"] == "tim", "a carve must carry its attribution"
+
+
+def test_the_break_file_is_in_config_sha(ledger, config_dir, tmp_path, monkeypatch):
+    """⚠ A carve changes what every gate examines. If it were outside `config_sha`, the bar
+    could move while the sha every record pins as its provenance swore nothing had."""
+    from core.ledger import Ledger
+
+    def sha():
+        return Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                      required_path=config_dir / "required.v2.json").config.config_sha
+
+    _breaks(tmp_path, monkeypatch, {})
+    a = sha()
+    _d, _r = _carve_dates()
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided": _d,
+        "decided_by": "tim", "review_by": _r}})
+    assert sha() != a, "declaring a loop break must move config_sha"
+
+
+def test_an_undated_carve_is_REFUSED_at_load(ledger, config_dir, tmp_path, monkeypatch):
+    """⛔⛔ VERIFIED BY MAKING IT FAIL. Tim, 2026-09-08: *"I like the idea of having review
+    date?"* — so it is a required field, not a convention.
+
+    ⚠ A carve makes a gate examine LESS. An exemption with no expiry stops being a decision
+    and becomes scenery: six months on, nobody can tell which carves are load-bearing and
+    which are scar tissue. The loose direction here is the UNDATED one, which is why absence
+    is refused rather than defaulted — the same shape as `push.bar` falling back to the more
+    permissive answer for three days because a key was missing.
+    """
+    from core.ledger import Ledger
+
+    # ⚠⚠ THE REFUSAL IS A SERVED STATE, NOT A RAISE, and asserting the wrong mechanism is how
+    # this test first passed for the wrong reason. `Ledger.__init__` CATCHES ConfigError and
+    # sets `config = None` + `config_error` on purpose — an unloadable config must make every
+    # gated action refuse with a reason, not crash the process into a restart loop the
+    # supervisor cannot fix. So the control checks the served state.
+    def load():
+        return Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                      required_path=config_dir / "required.v2.json")
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim"}})   # no review_by
+    led = load()
+    assert led.config is None, "an undated carve must refuse the whole config"
+    assert "review_by" in led.config_error
+    assert "Satisfied when" in led.config_error, "a refusal must name the success condition"
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "review_by": "next quarter"}})
+    led2 = load()
+    assert led2.config is None, "a non-ISO review date must refuse"
+    assert "YYYY-MM-DD" in led2.config_error
+
+
+def test_an_expired_carve_is_DISCLOSED_and_still_applies(ledger, config_dir, tmp_path,
+                                                         monkeypatch):
+    """⛔ THE ASYMMETRY, PINNED. An overdue carve keeps working and says so loudly.
+
+    Dropping it on its date would re-introduce the deadlock at an arbitrary moment — a gate
+    that passed at 23:59 blocking at 00:01 with nothing in the history explaining it. That is
+    an outage on a timer, not a loud failure. The enforcement that IS safe happens at load:
+    an undated carve cannot be written at all."""
+    from core.ledger import Ledger
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "review_by": "2020-01-01"}})
+    cfg = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json").config
+
+    expired = {e["step"]: e for e in cfg.loop_breaks_expired}
+    assert "check_invariants" in expired, "an overdue carve must be named"
+    assert "STILL IN FORCE" in expired["check_invariants"]["risk"]
+    assert "docs/x.md" in (
+        cfg.requirements("commit")["check_invariants"].get("scope_exclude") or []), (
+        "the carve must KEEP applying — expiry discloses, it does not silently re-block")
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "review_by": _carve_dates()[1]}})
+    cfg2 = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json").config
+    assert cfg2.loop_breaks_expired == [], "an in-date carve must be silent"
+
+
+def test_a_carve_dated_past_the_cadence_is_REFUSED(ledger, config_dir, tmp_path, monkeypatch):
+    """⭐⭐ THE CADENCE, ENFORCED RATHER THAN REMEMBERED. Tim, 2026-09-08: *"let's do their
+    reviews in one month increments at least to start."*
+
+    ⛔ THE HOLE THIS CLOSES IS THE FAR-FUTURE DATE. `review_by: "2099-01-01"` satisfies every
+    other check — present, ISO, well-formed — and expires after everyone who wrote it is gone.
+    A dated exemption that outlives its authors is an undated one wearing a date. So the
+    window is bounded, and re-dating a carve is a deliberate act somebody has to perform.
+
+    ⚠ The constant lives in THIS repo, not in `policy.v1.json`, because that file sits in the
+    consumer's tree and the gated party must not be able to widen the window on its own
+    exemptions."""
+    from core.ledger import Ledger
+    from core.config import MAX_CARVE_DAYS
+
+    def load():
+        return Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                      required_path=config_dir / "required.v2.json")
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "decided": _carve_dates()[0], "review_by": "2099-01-01"}})
+    led = load()
+    assert led.config is None, "a carve dated beyond the cadence must refuse"
+    assert str(MAX_CARVE_DAYS) in led.config_error
+    assert "Satisfied when" in led.config_error
+
+    # one month out is exactly what the cadence is for
+    _d, _r = _carve_dates()
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "decided": _d, "review_by": _r}})
+    ok = load()
+    assert ok.config is not None, "a one-month carve is the intended shape and must load"
+    assert "docs/x.md" in (
+        ok.config.requirements("commit")["check_invariants"].get("scope_exclude") or [])

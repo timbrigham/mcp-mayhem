@@ -179,11 +179,29 @@ def test_the_refusal_body_stays_pure_json():
 
 
 def test_a_validation_refusal_keeps_every_violation(tools):
-    """A caller fixing one rule per round trip gives up and works around the server."""
-    result, text = _call("append", {"record": {"totally": "malformed"}})
+    """A caller fixing one rule per round trip gives up and works around the server.
+
+    ⚠⚠ THE PROBE CHANGED 2026-09-08 AND THE REASON IS THE POINT. It used to send
+    `{"totally": "malformed"}` and expect `error_type: "validation"`. Now that `step`,
+    `verdict`, `basis`, `subjects` and `run` are REQUIRED at the door, that record never
+    reaches the V-rules — it is refused as `usage`, naming the missing fields.
+
+    ⭐ Both refusals are correct and they answer different questions, so this test now needs
+    a record that SATISFIES the shape and still breaks several rules. Otherwise it would be
+    asserting "many violations" about a payload the rule engine never sees, which is a
+    control measuring the wrong layer — the exact substitution this file exists to catch.
+    """
+    result, text = _call("append", {"record": {
+        "step": "definitely_not_registered", "verdict": "PASS", "tier": "M",
+        "basis": {"kind": "tree", "value": "a" * 40},
+        "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}],
+        "run": {},                       # no id -> V9; no config_sha -> V10
+        "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
+    }})
     payload = json.loads(text)
     assert result.isError is True
-    assert payload["error_type"] == "validation"
+    assert payload["error_type"] == "validation", (
+        "a well-SHAPED record that breaks rules must be a validation refusal, not usage")
     assert len(payload["errors"]) > 1, "V-rules must all be reported at once"
 
 
@@ -470,10 +488,17 @@ def test_the_served_exclusions_are_the_declared_ones_not_merely_present():
         declared = spec.get("scope_exclude")
         if not declared:
             continue
-        want = [declared] if isinstance(declared, str) else list(declared)
-        assert (served.get(step) or {}).get("scope_exclude") == want, (
-            f"{step}: served exclusions differ from the registry. The consumer would carve out a "
-            f"different set than the file declares, and neither side would see the disagreement.")
+        want = set([declared] if isinstance(declared, str) else list(declared))
+        # ⭐ SECOND SOURCE, ADDED 2026-09-08: a harness loop break also excludes paths, and it
+        # is deliberately NOT in the consumer's registry — carving is the harness's decision.
+        # So the invariant tightens rather than relaxes: served must equal the registry's
+        # declaration UNION this step's carve, and NOTHING ELSE. A path appearing in neither
+        # is still exactly the silent divergence this control was written for.
+        carve = set(((cfg.loopbreaks.get("breaks") or {}).get(step) or {}).get("exclude") or [])
+        assert set((served.get(step) or {}).get("scope_exclude") or []) == want | carve, (
+            f"{step}: served exclusions are neither the registry's declaration nor the "
+            f"harness carve. The consumer would carve out a different set than either file "
+            f"declares, and neither side would see the disagreement.")
 
 
 # -- ⭐⭐ the input contract, and the control that keeps it honest --------------
@@ -519,11 +544,25 @@ def test_the_input_model_accepts_every_record_in_the_stream():
                  "env": {}}},
         # ⚠ `failing` as a list of STRINGS — the shape the first draft of the model got wrong
         {"step": "s", "verdict": "FAIL", "tier": "A",
+         "basis": {"kind": "tree", "value": "a" * 40},
+         "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}], "run": {"id": "r"},
          "failing": ["tools/verify/x.py", "tools/verify/(roster)"]},
-        # a minimal record: almost everything absent, which must remain legal
-        {"step": "s", "verdict": "UNDECIDED"},
+        # ⛔ WAS "a minimal record: almost everything absent, which must remain legal", and
+        # that is no longer the contract. Tim, 2026-09-08: *"both the shape and existence
+        # should be being tested."* `step`+`verdict` alone was legal AT THE DOOR while V1-V21
+        # rejected it three ways over (missing basis, subjects, run.id) — a published contract
+        # admitting traffic the server always refused. The minimum is now the measured set.
+        # ⚠ It is still MINIMAL: schema, tier, decided, revision, cost, inputs and evidence
+        # stay absent here on purpose, because the rules accept their absence and the model
+        # must never outrun the rules.
+        {"step": "s", "verdict": "UNDECIDED",
+         "basis": {"kind": "tree", "value": "a" * 40},
+         "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}], "run": {"id": "r"}},
         # ⚠ the pre-2026-08-25 run key, which V10 names rather than the schema rejecting
-        {"step": "s", "verdict": "PASS", "run": {"policy_sha": "e" * 64}},
+        {"step": "s", "verdict": "PASS",
+         "basis": {"kind": "tree", "value": "a" * 40},
+         "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}],
+         "run": {"policy_sha": "e" * 64}},
     ]
     records = list(fixture)
 
@@ -565,4 +604,93 @@ def test_failing_is_still_optional_because_the_emitter_is_not_at_a_hundred():
 
     assert Record.model_fields["failing"].default is None, (
         "`failing` must remain OPTIONAL until the consumer's emitter reaches 100%")
-    Record.model_validate({"step": "check_prose", "verdict": "FAIL"})   # must not raise
+    # ⚠ carries the fields required at the door since 2026-09-08; `failing` is still absent,
+    # which is the only thing this test is about.
+    Record.model_validate({"step": "check_prose", "verdict": "FAIL",
+                           "basis": {"kind": "tree", "value": "a" * 40},
+                           "subjects": [{"path": "a.md", "git_blob_id": "b" * 40}],
+                           "run": {"id": "r"}})                        # must not raise
+
+
+def test_the_model_declares_every_field_the_RULES_read():
+    """⭐⭐ THE CONVERSE RATCHET, AND THE REASON IT EXISTS SEPARATELY.
+
+    `test_the_input_model_accepts_every_record_in_the_stream` pins ONE direction: the model
+    must not be stricter than reality. Nothing pinned the other — that the model KNOWS about
+    every field the rules actually depend on.
+
+    ⚠⚠ Tim, 2026-09-08: *"both the shape and existence should be being tested."* A model can
+    be perfectly correct about the SHAPE of what it declares and silently blind to a field it
+    never declared at all: `extra="allow"` absorbs it, the published `inputSchema` never
+    mentions it, and a caller reading the contract cannot discover a key the server will judge
+    them on. That is the contract migrating back into prose, one field at a time — the exact
+    defect this whole file exists to have closed.
+
+    ⛔ IT IS THE ONE-OF-TWO-ROUTES SHAPE AGAIN, which is why it earns a test rather than a
+    habit. Three instances on 2026-09-08 alone: `unpinned_modules` read the `module` route and
+    certified the no-module route clean; `circular_gates`' first draft read the registry route
+    and missed `adversary`/`editorial` entirely; and V16 read only `how == "mechanical"` and so
+    never once applied to the two steps that record most often. **A check that reads one of two
+    routes does not report a smaller number — it certifies the other route clean.**
+
+    Measured 2026-09-08: 14 keys read by the rules, all 14 declared. The gap is ZERO today and
+    this test exists to keep it there.
+    """
+    import re
+    from pathlib import Path
+    from ledger_server.inputs import Record
+
+    src = Path(__file__).resolve().parents[1] / "core" / "validate.py"
+    read_by_rules = set(re.findall(r'record\.get\(\s*["\']([a-zA-Z_]+)["\']',
+                                   src.read_text(encoding="utf-8")))
+    assert read_by_rules, "the scrape found nothing — the pattern broke, not the code"
+
+    declared = set()
+    for name, f in Record.model_fields.items():
+        declared.add(f.alias or name)
+        declared.add(name.rstrip("_"))          # schema_ -> schema
+
+    gap = sorted(k for k in read_by_rules if k not in declared)
+    assert gap == [], (
+        "these keys are judged by V-rules but absent from the published inputSchema, so a "
+        "caller cannot discover them from the contract: %s" % gap)
+
+
+def test_every_required_field_is_one_the_rules_also_demand(ledger):
+    """⭐⭐ THE EXISTENCE HALF OF THE CONTRACT, MEASURED RATHER THAN ASSERTED.
+
+    Tim, 2026-09-08: *"both the shape and existence should be being tested."* The sibling
+    control pins that the model admits every record the stream holds. This pins the other
+    edge of the same invariant: **every field the model REQUIRES must be one the V-rules
+    would reject the absence of.** A required field the rules do not demand is the model
+    outrunning the judge — it refuses callers for something nothing would have judged.
+
+    ⛔ AND THE OBVIOUS WAY TO PICK THAT SET IS WRONG, which is why this runs rather than
+    trusting a list. "Present on 100% of the stream" also returns `id`, `run.started` and
+    `run.config_sha` — all three STAMPED by `_prepare` server-side. Requiring them would
+    refuse every caller for omitting fields no caller has ever sent. The stream is
+    post-normalisation; the door is not. So the test deletes each required field from a
+    known-good record and asks the rule engine directly.
+    """
+    from ledger_server.inputs import Record
+    from conftest import good
+
+    base = good()
+    base["evidence"] = [{"path": "tools/verify/check_invariants.py", "git_blob_id": "c" * 40}]
+    assert ledger.validate(dict(base))["errors"] == [], (
+        "the baseline must be clean or every deletion below proves nothing")
+
+    required = sorted(n for n, f in Record.model_fields.items() if f.is_required())
+    assert required, "no required fields — the door is not gating existence at all"
+
+    unjudged = []
+    for name in required:
+        key = Record.model_fields[name].alias or name
+        probe = dict(base)
+        probe.pop(key, None)
+        if not ledger.validate(probe)["errors"]:
+            unjudged.append(key)
+
+    assert unjudged == [], (
+        "these are REQUIRED at the door but the rules accept their absence, so the model is "
+        "stricter than the judge and refuses callers nothing would have judged: %s" % unjudged)

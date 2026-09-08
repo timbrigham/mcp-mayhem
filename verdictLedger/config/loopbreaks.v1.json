@@ -1,0 +1,18 @@
+{
+  "schema": "zp.loopbreaks.v1",
+  "_why": "HARNESS-OWNED. Tim, 2026-09-08: circular-gate management comes out of the consumer's hands entirely \u2014 'that's something that you and I should be addressing specifically inside of this context if and when we need to break a loop.' A gate deadlocks when a step's SUBJECT set intersects its PRODUCER set: editing the file both changes something it must judge and invalidates every verdict it reached. Breaking that loop means carving a path out of a gate's scope, and the tenancy contract already assigns that here \u2014 scope_exclude is the harness's call BECAUSE CARVING IS DECIDING. The party being gated does not get to narrow the gate.",
+  "_why_not_in_the_registry": "required.v2.json lives in the consumer's tree and is read live. A break written there is a break the gated party can edit, which is a rule with one copy and no enforcement. Here it is unrepresentable from that side.",
+  "_contract": "Each entry: step -> {exclude: [paths], reason: str, decided: ISO date, decided_by: str, review_by: ISO date}. `exclude`, `reason`, `decided_by` and `review_by` are REQUIRED and an entry missing any of them REFUSES THE WHOLE CONFIG at load \u2014 a carve makes a gate examine less, and the loose direction is the unattributed, undated one. `review_by` past today is DISCLOSED on policy() as loop_breaks_expired and the carve KEEPS APPLYING: dropping it on its date would re-block a gate at an arbitrary moment, which is an outage on a timer rather than a loud failure. Absence of an entry is NOT a claim that a step is loop-free; circular_gates on inventory() is what measures that.",
+  "breaks": {
+    "adversary": {
+      "exclude": [
+        ".claude/commands/adversary-review.md"
+      ],
+      "reason": "the gate grades the brief that tells it how to grade. Subject set intersects producer set, so editing the brief both changes a subject it owes a verdict for and stales every verdict it reached \u2014 measured 9 FAIL in 10 rounds, the last two on identical subject counts, unmoved. Cross-review is RETAINED: editorial still grades this brief, and adversary still grades editorial's, so R-EXEMPT's requirement that every brief stays gated by a prose gate holds. PRICE: a defect visible only through adversary's own lens on its own brief is no longer caught.",
+      "decided": "2026-09-08",
+      "decided_by": "tim",
+      "review_by": "2026-10-08"
+    }
+  },
+  "_first_carve": "adversary carved 2026-09-08. editorial is MEASURED circular and deliberately NOT carved: it returned a capped PASS while adversary failed nine rounds in ten, so leaving it uncarved is the control that tells us whether cross-review alone is enough. Carving both would have removed the evidence along with the deadlock."
+}
