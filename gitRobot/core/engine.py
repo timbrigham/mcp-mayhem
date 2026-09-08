@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import os
 import shutil
 import tempfile
@@ -1944,6 +1945,106 @@ class GitRobot:
 
     # -- the sanctioned escape from Tier 1 -------------------------------------
 
+    def _reaper_policy(self) -> dict:
+        """Harness-owned. Lives in THIS repo, not the gated party's, for the same reason the
+        loop-break register does: the party whose worktrees are being reaped does not set the
+        horizon."""
+        path = Path(__file__).resolve().parents[1] / "config" / "worktree_reaper.v1.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            # ⚠ ABSENT CONFIG DISABLES THE REAPER, it does not default one. A built-in
+            # horizon would be a second copy of the policy, and the direction it would be
+            # wrong in is DELETION.
+            return {}
+
+    def _worktree_age_hours(self, path: Path) -> Optional[float]:
+        """Newest touch on the worktree, in hours. None when it cannot be determined.
+
+        ⚠ Windows does not bump a directory's mtime for an IN-PLACE file edit, so a tree
+        someone is actively editing can look stale by this measure. That is why the two
+        horizons matter rather than being a nicety: an actively-worked tree is DIRTY, and
+        dirty gets seven days, not forty-eight hours. A CLEAN tree untouched for two days
+        holds nothing to lose — its commits are in the shared object store either way.
+        """
+        stamps = []
+        for candidate in (path, path / ".git"):
+            try:
+                stamps.append(candidate.stat().st_mtime)
+            except OSError:
+                pass
+        if not stamps:
+            return None
+        return (time.time() - max(stamps)) / 3600.0
+
+    def _worktree_is_dirty(self, path: Path, session_state: list) -> Optional[bool]:
+        """Dirty IGNORING session-state paths. None when git cannot answer.
+
+        ⛔ `None` IS NOT `False`. A worktree whose status cannot be read is treated as
+        dirty by the caller — absence of an answer must never render as "safe to delete".
+        """
+        res = self.git.run(["-C", str(path), "status", "--porcelain"], timeout=120)
+        if not res.ok:
+            return None
+        ignore = set(session_state or [])
+        for line in (res.output or "").splitlines():
+            entry = line[3:].strip() if len(line) > 3 else ""
+            if entry and entry not in ignore:
+                return True
+        return False
+
+    def _reap_worktrees(self) -> dict:
+        """Remove worktrees nobody has touched inside their horizon.
+
+        ⭐ It removes via `worktree(action='remove')` rather than deleting directly, so it
+        INHERITS that path's refusals — the junction guard above is the reason. `git worktree
+        remove` follows junctions and deletes what they point at while returning 0, measured
+        2026-08-30. A reaper with its own delete would have to re-implement that guard, and
+        the copy would be the one that goes stale.
+        """
+        policy = self._reaper_policy()
+        if not policy:
+            return self._receipt("worktree.reap", {}, "skipped",
+                                 detail="no reaper policy configured; nothing was removed",
+                                 extra={"removed": [], "kept": [], "configured": False})
+        clean_h = float(policy.get("clean_after_hours") or 0) or None
+        dirty_h = float(policy.get("dirty_after_hours") or 0) or None
+        session_state = policy.get("session_state") or []
+        main = Path(self.git.repo).resolve()
+
+        removed, kept = [], []
+        for raw in sorted(self._worktree_paths()):
+            path = Path(raw)
+            if path.resolve() == main:
+                continue                      # ⛔ never the main checkout
+            age = self._worktree_age_hours(path)
+            dirty = self._worktree_is_dirty(path, session_state)
+            # ⚠ unreadable status counts as DIRTY — see `_worktree_is_dirty`
+            treat_dirty = True if dirty is None else dirty
+            horizon = dirty_h if treat_dirty else clean_h
+            row = {"path": str(path), "age_hours": None if age is None else round(age, 1),
+                   "dirty": dirty, "horizon_hours": horizon}
+            if age is None or horizon is None or age < horizon:
+                row["kept_because"] = ("age unknown" if age is None else
+                                       "no horizon configured" if horizon is None else
+                                       "inside its horizon")
+                kept.append(row)
+                continue
+            try:
+                self.worktree("remove", name=str(path))
+                removed.append(row)
+            except GitRobotError as exc:
+                # ⭐ A REFUSED REMOVE IS REPORTED, NEVER FORCED. The junction guard exists
+                # because forcing it destroyed a pinned Mathlib checkout once.
+                row["kept_because"] = "remove refused: %s" % exc
+                kept.append(row)
+        return self._receipt(
+            "worktree.reap", {"clean_after_hours": clean_h, "dirty_after_hours": dirty_h},
+            "allowed",
+            detail="reaped %d worktree(s), kept %d" % (len(removed), len(kept)),
+            extra={"removed": removed, "kept": kept, "configured": True,
+                   "session_state_ignored": list(session_state)})
+
     def worktree(self, action: str, *, ref: Optional[str] = None,
                  name: Optional[str] = None) -> dict:
         """Private throwaway checkouts — the alternative every Tier 1 refusal names.
@@ -2041,6 +2142,8 @@ class GitRobot:
                                             "of '../..'; V16 is where that surfaces, and it "
                                             "reads as a config problem rather than a cwd one."
                                         )})
+        if action == "reap":
+            return self._reap_worktrees()
         if action == "prune":
             result = self.git.run(["worktree", "prune", "-v"], timeout=120)
             return self._receipt("worktree.prune", {}, "allowed" if result.ok else "failed",

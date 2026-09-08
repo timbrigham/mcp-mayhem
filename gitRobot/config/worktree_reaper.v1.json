@@ -1,0 +1,10 @@
+{
+  "schema": "zp.worktree_reaper.v1",
+  "_why": "Tim, 2026-09-08: 'if there isn't something to reap old work trees, that's definitely something that we can add to the MCP server... it's already a long-lived process.. just remove anything more than 48 hours old.' The server is the thing that can do it without anyone remembering to, which is the point — a teardown step in a brief is a step that will eventually not happen, and D1 (a reviewer authors its fix in its own worktree) turns the leak from incidental into one per review round. Measured that day: three orphans already, one from a dead session and two from probe runs that did not tear down.",
+  "_two_horizons": "Tim, 2026-09-08, asked for clean at 48h and DIRTY AT 7 DAYS. A dirty worktree may hold uncommitted work, and destroying uncommitted work while reporting success is this project's archetypal failure — the reason reset --hard, clean and stash are refused outright. Commits survive reaping (a detached worktree's objects live in the shared store), so the exposure is narrow and specific: a reviewer that authored a fix and never committed it. Seven days is the grace that makes it discoverable instead of gone.",
+  "_session_state_is_not_work": "⛔ THE FIELD THAT MAKES THE 48h HORIZON REACHABLE AT ALL. Tim, 2026-09-08: gate_round.json is 'a session State tracking variable' — tracked in git at {round: 0} and rewritten at runtime with arc_base/targets/reset_from, so it is dirty essentially always. Counting it would mark EVERY worktree dirty and nothing would ever take the 48h path. This is not a tolerance for a file we allow to be dirty: the reaper's question is 'does this tree hold work someone would lose', and session state is not work. A path listed here has its dirtiness treated as carrying no information.",
+  "_not_hardcoded": "Config rather than a literal because session-state-in-a-tracked-file is a PATTERN, not one file. The next one must not need a code change.",
+  "clean_after_hours": 48,
+  "dirty_after_hours": 168,
+  "session_state": ["gate_round.json"]
+}

@@ -26,6 +26,7 @@ seen fail is a hypothesis.
 from __future__ import annotations
 
 import os
+import time
 import functools
 import sys
 from pathlib import Path
@@ -496,6 +497,16 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
     add tears one down. This is the answer whenever you want a clean slate — it is why
     reset --hard, checkout -- ., clean and stash are refused rather than merely discouraged.
 
+    action='reap' sweeps ABANDONED worktrees and runs hourly on its own — the server is a
+    long-lived process, so nobody has to remember. CLEAN worktrees go at 48h; DIRTY ones get
+    seven days, because destroying uncommitted work while reporting success is the failure
+    the refused verbs above exist to prevent, and a timer doing it is the same act unwatched.
+    Commits survive either way — a detached worktree's objects live in the shared store — so
+    only uncommitted state is ever at risk. The main checkout is excluded structurally, a
+    refused remove is reported rather than forced, and paths named as SESSION STATE in the
+    policy do not count toward dirtiness: the question is whether a tree holds work someone
+    would lose, and a round counter is not work.
+
     ⭐⭐ A VERDICT RECORDED FROM IN HERE IS A REAL VERDICT, AND THAT IS THE DESIGN WORKING —
     NOT A LEAK AND NOT A GAP. A verdict binds to `(step, path, git_blob_id)`: the CONTENT is
     what it is about, and where the agent stood when it looked is not part of the claim. A
@@ -558,6 +569,32 @@ async def history(limit: int = 20, full: bool = False, op: Optional[str] = None,
                         decision=decision)
 
 
+def _start_worktree_reaper() -> None:
+    """Sweep abandoned worktrees on a timer.
+
+    ⭐ Tim, 2026-09-08: *"it's already a long-lived process.. just remove anything more than
+    48 hours old."* That is the whole argument — a teardown step in a brief is a step that
+    will eventually not happen, and D1 (a reviewer authors its fix in its own worktree) turns
+    the leak from incidental into one per review round.
+
+    ⚠ STARTED FROM `main()` ONLY, never from `GitRobot.__init__`. A thread that deletes
+    directories must not come along for the ride when a test or a script constructs an engine.
+    """
+    import threading
+
+    def _sweep() -> None:
+        while True:
+            try:
+                GitRobot(REPO, data_path=DATA, actor="reaper").worktree("reap")
+            except Exception:
+                # ⚠ NEVER let the sweep kill the server. A reaper that takes the git surface
+                # down with it has done more damage than the leak it was cleaning.
+                pass
+            time.sleep(3600)
+
+    threading.Thread(target=_sweep, name="worktree-reaper", daemon=True).start()
+
+
 def main() -> None:
     # Fail loudly at startup if the configured repository is not there, rather
     # than mysteriously on the first call.
@@ -566,6 +603,7 @@ def main() -> None:
     # starts uvicorn in one call with no seam to install middleware; `serve` does the
     # same two steps with the HTTP call log wrapped around the app. Behaviour with
     # ZPLOG_ENABLED=0 is identical to the old line.
+    _start_worktree_reaper()
     _serve_with_call_log(mcp, "gitRobot")
 
 
