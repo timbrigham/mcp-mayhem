@@ -39,26 +39,17 @@ ROOT_CONFIG = Path(__file__).resolve().parents[1] / "config"
 # checking asserts only that the code equals itself.
 WRITERS = {"append", "sign", "override", "narrow", "genesis"}
 
-# ⚠⚠ THE KNOWN DEBT, NAMED. These four parameters publish `{"type":"object",
-# "additionalProperties": true}` — "any object at all" — so `step`, `verdict`, `subjects`,
-# `basis`, `run.id` and `failing` are invisible to the protocol and the real contract lives
-# in a 50-line docstring on `append`. Replacing them with a Pydantic model is agreed work,
-# blocked as of 2026-09-06 on the consumer's client landing `--failing-file` first: 118 of
-# 118 tier-A blocking records carry no `failing`, so requiring it before that CLI exists
-# would refuse every review gate on its next FAIL.
+# ⭐⭐ THE DEBT IS PAID. 2026-09-07: every parameter on this server declares a real shape.
+# `append`/`validate` take a `Record` model and `sign`/`override` take a `Basis` — so `step`,
+# `verdict`, `subjects`, `basis`, `run.id` and `failing` are visible to the protocol instead
+# of living in a fifty-line docstring a direct caller never reads.
 #
-# ⛔ DO NOT ADD TO THIS SET TO MAKE A TEST PASS. Adding a line here is declaring new debt.
-# ⭐ 2026-09-07: `append` and `validate` now take a declared `Record` model
-# (`ledger_server/inputs.py`), so `step`, `verdict`, `subjects`, `basis`, `run.id` and
-# `failing` are visible to the protocol instead of living in a 50-line docstring. Tim:
-# *"the terms of how we accept input into the mcp servers.. that should be an immediate
-# gate."* The ratchet below FAILS on this being fixed without the list shrinking, which is
-# why it shrank in the same change.
-# ⚠ `sign`/`override` `basis` remain — a smaller, separate shape, not yet modelled.
-UNCONSTRAINED_DEBT = {
-    ("sign", "basis"),
-    ("override", "basis"),
-}
+# ⚠ THE SET IS KEPT, EMPTY, RATHER THAN DELETED WITH ITS TESTS. The ratchet below fails when
+# NEW debt appears, and that is the half that still has work to do — an empty allowlist is a
+# working control, not a finished one. The exit condition the old comment stated ("both this
+# test and the ratchet can be deleted") was written when the set could only shrink to zero
+# once; deleting the ratchet would let the next `dict` parameter arrive unremarked.
+UNCONSTRAINED_DEBT = set()
 
 
 @pytest.fixture(scope="module")
@@ -134,10 +125,10 @@ def test_the_debt_is_shrinking_not_load_bearing(tools):
     Pins the count so it appears in the failure message of any change, and states the
     exit condition in the assertion rather than only in a comment.
     """
-    assert len(UNCONSTRAINED_DEBT) <= 2, (
-        "unconstrained parameters must not grow past the 2026-09-07 baseline of 2. "
-        "SATISFIED WHEN: `record` and `basis` take Pydantic models, at which point this "
-        "set is empty and both this test and the ratchet above can be deleted.")
+    assert not UNCONSTRAINED_DEBT, (
+        f"unconstrained-parameter debt has been RE-DECLARED: {sorted(UNCONSTRAINED_DEBT)}. "
+        f"The set reached empty on 2026-09-07 and adding a line here is declaring new debt, "
+        f"not recording an inconvenience. SATISFIED WHEN: the parameter takes a real shape.")
 
 
 def _call(name, arguments):

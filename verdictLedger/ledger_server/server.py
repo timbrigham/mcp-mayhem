@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mcpcommon.calllog import serve as _serve_with_call_log  # noqa: E402
 from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
-from ledger_server.inputs import Record as RecordIn  # noqa: E402
+from ledger_server.inputs import Basis as BasisIn, Record as RecordIn  # noqa: E402
 from ledger_server.results import (  # noqa: E402
     AppendResult, CanPushResult, CoverageGapResult, CoverageResult, CrossrefResult,
     FindResult, GenesisResult, GetResult, HealPlanResult, InventoryResult,
@@ -241,23 +241,37 @@ async def append(record: RecordIn) -> AppendResult:
     return await _guard(_ledger().append, _as_record(record))
 
 
+
+def _as_basis(basis) -> dict:
+    """The declared basis back to the dict the ledger judges — see `_as_record`.
+
+    ⚠ `exclude_unset=True` for the same reason: `sign` and `override` build a record from
+    these fields, and inventing `resolved_from: None` for a caller who never sent it would
+    make V1 fire on a key nobody wrote. V1 refuses an UNSTATED resolution deliberately, so
+    the difference between "absent" and "explicitly null" is the rule's whole subject.
+    """
+    if isinstance(basis, dict):
+        return basis
+    return basis.model_dump(by_alias=True, exclude_unset=True)
+
+
 @mcp.tool(title='Sign off a verdict',
           annotations=ToolAnnotations(title='Sign off a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def sign(step: str, subjects: list[dict], who: str, reason: str,
-               basis: dict, tier: str = "H") -> AppendResult:
+               basis: BasisIn, tier: str = "H") -> AppendResult:
     """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt.
 
     `who` is REQUIRED and is NEVER verified. A signature is an ATTRIBUTION, not an
     authentication: it makes a decision attributable after the fact, which is the
     whole and only claim being made."""
     return await _guard(_ledger().sign, step=step, subjects=subjects, who=who,
-                        reason=reason, basis=basis, tier=tier)
+                        reason=reason, basis=_as_basis(basis), tier=tier)
 
 
 @mcp.tool(title='Regrade a verdict',
           annotations=ToolAnnotations(title='Regrade a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def override(step: str, subjects: list[dict], who: str, reason: str,
-                   basis: dict, tier: str = "H") -> AppendResult:
+                   basis: BasisIn, tier: str = "H") -> AppendResult:
     """REGRADE — "you are wrong, the gate erred".
 
     Feeds the OPPOSITE signal to `sign` and shares no code path with it: an accept
@@ -267,7 +281,7 @@ async def override(step: str, subjects: list[dict], who: str, reason: str,
     the revision it replaces — otherwise a finding is sudo-ed away by the person it
     was raised against, which is the one move that could unmake every other rule."""
     return await _guard(_ledger().override, step=step, subjects=subjects, who=who,
-                        reason=reason, basis=basis, tier=tier)
+                        reason=reason, basis=_as_basis(basis), tier=tier)
 
 
 @mcp.tool(title='Narrow an indictment',
