@@ -540,20 +540,25 @@ def _bar(config_dir, step, value):
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
-def test_a_step_below_its_declared_bar_is_unvalidated_and_blocks(tmp_path, config_dir):
-    """⭐⭐ ONE SWITCH FOR EVERY STEP IS THE WRONG SHAPE, AND BOTH OF ITS POSITIONS ARE WRONG.
+def test_the_bar_prices_what_this_commit_changed_not_the_whole_scope(tmp_path, config_dir):
+    """⛔⛔ THE CORRECTION, AND TIM CAUGHT IT BEFORE A SINGLE BAR WAS SET.
 
-    Measured 2026-09-07 against the live tree: `coverage.require_complete: false` left **9
-    gating steps reading SATISFIED over 823 in-scope paths they had never examined**; setting
-    it `true` blocks essentially everything until a full sweep runs.
+    His sanity check: *"all of these gates only turn red and block something if we've actually
+    touched it, right?? I just don't want to end up in that same damn boat of some random
+    unrelated file getting included in scope that continually grows."*
 
-    ⚠ The spread is the reason neither answer fits: `check_classes` sat at 220/220 and could be
-    barred at 1.0 that day for nothing, while `check_pov` was at 305/522 and plainly could not.
-    So the bar is PER STEP and declared, and the flip becomes a ratchet that advances as sweeps
-    land.
+    ⚠⚠ THE FIRST VERSION BARRED AGAINST THE WHOLE SCOPE AND HE WAS RIGHT. Measured:
 
-    ⚠ It is NOT a finding about the corpus — the paths the step DID examine passed. The row
-    text has to say that, or a reader goes hunting for a defect in the mathematics.
+        check_prose 1.0, scope *.md, record covers a.md
+          {a.md}                   SATISFIED    1/1
+          {a.md, unrelated.md}     UNVALIDATED  1/2   <- NOBODY TOUCHED a.md
+
+    A green row earned honestly went red because the DENOMINATOR grew without anyone deciding
+    it should. That is the convergence-freeze defect one field over: *"8 of 12 green steps had
+    earned their green under a registry that no longer existed."*
+
+    ⭐ So the bar asks **did you examine the in-scope paths THIS COMMIT CHANGED** — incremental
+    and ratcheting, which is the only way a bar can be adopted one step at a time.
     """
     from core import inventory as inv_mod
     from core.ledger import Ledger
@@ -561,21 +566,56 @@ def test_a_step_below_its_declared_bar_is_unvalidated_and_blocks(tmp_path, confi
     _bar(config_dir, "check_prose", 1.0)
     led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
                  required_path=config_dir / "required.v2.json")
-
-    files = {"a.md": "1" * 40, "b.md": "2" * 40}
     rec = {"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
            "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
-           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],      # one of two
+           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],
            "basis": {"kind": "tree", "value": "t"}}
+    files = {"a.md": "1" * 40, "unrelated.md": "9" * 40}
 
-    inv = inv_mod.build(config=led.config, records=[rec], action="commit",
-                        files=files, ref="t", admission=["check_prose"])
-    row = next(r for r in inv["rows"] if r["step"] == "check_prose")
-    assert row["status"] == "UNVALIDATED", (
-        "a step below its OWN declared bar must not read SATISFIED")
-    assert "below the 100% bar" in row["why"]
-    assert "Not a finding about the corpus" in row["why"]
+    def row(changed):
+        inv = inv_mod.build(config=led.config, records=[rec], action="commit", files=files,
+                            ref="t", admission=["check_prose"], changed=changed)
+        return next(r for r in inv["rows"] if r["step"] == "check_prose"), inv
+
+    # ⭐ THE CASE TIM ASKED ABOUT: someone else's file is in scope and unexamined, but THIS
+    # commit did not touch it. The row must stay green.
+    r, inv = row({"a.md"})
+    assert r["status"] == "SATISFIED", (
+        "a file this commit did not change must NEVER break a barred step — that is the "
+        "growing-scope boat this bar exists to stay out of")
+    assert inv["complete"] is True
+
+    # ⛔ and the case it must catch: the commit brought the unexamined path in
+    r, inv = row({"a.md", "unrelated.md"})
+    assert r["status"] == "UNVALIDATED"
+    assert "unrelated.md" in r["why"]
+    assert "Not a finding about the corpus" in r["why"]
     assert inv["complete"] is False
+
+
+def test_a_ref_answer_declares_the_bar_but_does_not_evaluate_it(tmp_path, config_dir):
+    """⚠ `changed is None` MEANS THE CALLER ASKED ABOUT A REF, NOT A RANGE.
+
+    "Did you examine what you changed" has no answer at a single ref. The bar is DECLARED and
+    explicitly NOT EVALUATED rather than passing silently — absence rendering as unknown, not
+    as pass, which is the rule this whole layer is built on."""
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    _bar(config_dir, "check_prose", 1.0)
+    led = Ledger(tmp_path / "r.jsonl", policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json")
+    rec = {"id": "check_prose@t#0", "step": "check_prose", "verdict": "PASS", "revision": 0,
+           "decided": {"how": "signature", "who": "t", "passes": 1, "agreed": 1},
+           "subjects": [{"path": "a.md", "git_blob_id": "1" * 40}],
+           "basis": {"kind": "tree", "value": "t"}}
+    inv = inv_mod.build(config=led.config, records=[rec], action="commit",
+                        files={"a.md": "1" * 40, "unrelated.md": "9" * 40},
+                        ref="t", admission=["check_prose"])          # no `changed`
+    r = next(x for x in inv["rows"] if x["step"] == "check_prose")
+    assert r["bar"] == 1.0
+    assert r["bar_evaluated"] is False
+    assert "NOT evaluated" in r["bar_note"]
 
 
 def test_a_step_meeting_its_bar_is_satisfied(tmp_path, config_dir):

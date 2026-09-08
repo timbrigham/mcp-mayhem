@@ -200,7 +200,8 @@ def convergence_bar(config) -> dict:
 
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None,
-          refusals: Optional[dict] = None) -> dict:
+          refusals: Optional[dict] = None,
+          changed: Optional[set] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
 
     ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
@@ -229,6 +230,7 @@ def build(*, config, records, action: str, files: dict,
      ev_content) = _subject_index(records)
 
     rows = []
+    _scope_paths, _unexamined_paths = {}, {}
     how_counts: dict = {}
     for step, spec in sorted(reqs.items()):
         family = spec["family"]
@@ -303,9 +305,15 @@ def build(*, config, records, action: str, files: dict,
         scope = [p for p in files
                  if (not globs or any(fnmatch.fnmatch(p, g) for g in globs))
                  and not any(fnmatch.fnmatch(p, g) for g in drop)]
-        unexamined = sum(1 for p in scope
-                         if (step, p, files[p]) not in by_content
-                         and (step, p) not in by_path)
+        unexamined_paths = [p for p in scope
+                            if (step, p, files[p]) not in by_content
+                            and (step, p) not in by_path]
+        unexamined = len(unexamined_paths)
+        # ⚠ Kept LOCAL, not on the row. The per-step bar needs the actual paths to intersect
+        # with what a commit changed, and putting 522 of them on every row for twenty steps
+        # would bloat every response for a field almost nobody reads.
+        _scope_paths[step] = set(scope)
+        _unexamined_paths[step] = set(unexamined_paths)
 
         # ⭐ THE SYMMETRIC NUMBER. `subjects_unexamined` finds a scope wider than the
         # property; this finds one NARROWER than what the checker actually examined --
@@ -829,22 +837,60 @@ def build(*, config, records, action: str, files: dict,
         # into a RATCHET: bar the steps that are already complete, and advance as sweeps land.
         # An absent bar is DISCLOSED on `policy()` as `coverage_unbarred`, never silent —
         # requiring every step to declare one would brick the corpus the day it shipped.
+        # ⛔⛔ THE BAR PRICES WHAT THIS COMMIT CHANGED, NOT THE WHOLE SCOPE — corrected
+        # 2026-09-07, hours after shipping the wrong version, on Tim's sanity check:
+        # *"I just don't want to end up in that same damn boat of some random unrelated file
+        # getting included in scope that continually grows."*
+        #
+        # ⚠⚠ HE WAS RIGHT AND I MEASURED IT. Barred against the WHOLE scope, a step at 1.0
+        # broke the moment ANYONE added a file matching its glob:
+        #
+        #     check_prose 1.0, scope *.md, record covers a.md
+        #       {a.md}                      SATISFIED    1/1
+        #       {a.md, unrelated.md}        UNVALIDATED  1/2   <- nobody touched a.md
+        #
+        # A green row earned honestly went red because the DENOMINATOR grew without anyone
+        # deciding it should. That is the convergence-freeze defect one field over — "8 of 12
+        # green steps had earned their green under a registry that no longer existed."
+        #
+        # ⭐ So the bar asks: **did you examine the in-scope paths THIS COMMIT CHANGED?** A
+        # file someone adds later cannot retroactively break a row you earned; a file you add
+        # into a barred step's scope must be examined in the same push. Incremental and
+        # ratcheting, which is the only way a bar can be adopted one step at a time.
+        #
+        # ⚠ `changed is None` means the caller asked about a REF, not a RANGE — "what did you
+        # change" has no answer there. The bar is NOT evaluated and the row says so, rather
+        # than passing silently. Absence rendering as unknown, not as pass.
         bars = config.min_coverage
         if bars:
             under = []
             for r in gating:
                 bar = bars.get(r["step"])
-                if bar is None or not r["scope"]:
+                if bar is None:
                     continue
-                seen = r["scope"] - r["subjects_unexamined"]
-                if (seen / r["scope"]) < bar:
+                r["bar"] = bar
+                if changed is None:
+                    r["bar_evaluated"] = False
+                    r["bar_note"] = ("declared, NOT evaluated: this answer is about a ref, and "
+                                     "the bar prices the paths a RANGE changed. can_push "
+                                     "evaluates it.")
+                    continue
+                in_scope_changed = _scope_paths.get(r["step"], set()) & changed
+                r["bar_evaluated"] = True
+                if not in_scope_changed:
+                    continue          # this commit touched nothing this step owns
+                unex = _unexamined_paths.get(r["step"], set())
+                missed = sorted(in_scope_changed & unex)
+                seen = len(in_scope_changed) - len(missed)
+                if (seen / len(in_scope_changed)) < bar:
                     under.append(r["step"])
                     r["status"] = "UNVALIDATED"
                     r["why"] = (
-                        f"examined {seen}/{r['scope']} of its declared scope, below the "
-                        f"{bar:.0%} bar this step declares. Not a finding about the corpus — "
-                        f"the paths it DID examine passed. Run it over the rest, or lower "
-                        f"`min_coverage` deliberately.")
+                        f"this commit changed {len(in_scope_changed)} path(s) in this step's "
+                        f"scope and it examined {seen} of them, below the {bar:.0%} bar the "
+                        f"step declares. Unexamined: {missed[:3]}"
+                        f"{' …' if len(missed) > 3 else ''}. Not a finding about the corpus — "
+                        f"what it DID examine passed. Run it over the changed paths.")
             if under:
                 complete = False
 

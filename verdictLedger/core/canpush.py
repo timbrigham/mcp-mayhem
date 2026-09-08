@@ -191,6 +191,7 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
 
     admitted = sorted(admission) if admission is not None else None
     rows = []
+    prev_files = None
     for i, commit in enumerate(commits):
         is_tip = (i == len(commits) - 1)
         # ⚠ The tip is what the world will see as the published state, so it carries
@@ -199,8 +200,25 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         this_action = action if is_tip else "commit"
         this_admission = admission if is_tip else commit_admission
         files = _files_at(repo, commit)
+        # ⭐ WHAT THIS COMMIT CHANGED, so a declared `min_coverage` prices the paths it
+        # TOUCHED rather than its whole scope. Barred against the scope, a step at 1.0 broke
+        # the moment anyone added a matching file — measured 2026-09-07, and Tim caught it
+        # before a single bar was set: *"I don't want to end up in that same damn boat of
+        # some random unrelated file getting included in scope that continually grows."*
+        #
+        # ⚠ The PARENT's tree, taken from the previous iteration where the range is linear,
+        # so this costs ONE extra `ls-tree` for the first commit and none after it.
+        if prev_files is None:
+            try:
+                prev_files = _files_at(repo, commit + "^")
+            except ValueError:
+                prev_files = {}          # a root commit: everything in it is changed
+        changed = {p for p in set(prev_files) | set(files)
+                   if prev_files.get(p) != files.get(p)}
         inv = inventory_mod.build(config=config, records=records, action=this_action,
-                                  files=files, ref=commit, admission=this_admission)
+                                  files=files, ref=commit, admission=this_admission,
+                                  changed=changed)
+        prev_files = files
         if is_tip:
             tip_files = files
         rows.append({
