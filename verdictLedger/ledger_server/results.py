@@ -148,6 +148,11 @@ class InventoryResult(Result, total=False):
     # long it takes the step to next record — measured 2026-09-07 at three commits for a
     # step outside the precommit suite.
     stale_pins: list[dict[str, Any]]
+    # ⭐ The frozen convergence bar, beside `complete`. `complete: true` is a claim about a
+    # SCOPE — if the registry moved since the run was frozen it is true about a different one.
+    # Carried here because gitRobot's status() embeds an inventory, not a progress, so a
+    # broken bar reached nobody: 19/19 green with `held: false` unmentioned.
+    bar: dict[str, Any]
     how_breakdown: dict[str, Any]
     rows: list[dict[str, Any]]
     config_sha: str

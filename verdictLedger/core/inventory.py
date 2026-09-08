@@ -162,6 +162,42 @@ def _dead_pattern(glob: str, files, field: str):
             "kind": "dead" if not now else "narrowing"}
 
 
+def convergence_bar(config) -> dict:
+    """Has the SCOPE moved since this run was frozen? `{frozen, held, registry_sha, note}`.
+
+    ⚠⚠ A frozen bar that is merely AGREED is a convention; one recorded as a sha is checked on
+    every call. Scope lives in the registry, so the freeze is keyed on the registry sha alone —
+    a threshold change must not read as a scope change and make the freeze cry wolf.
+
+    ⭐ LIFTED OUT OF `progress()` 2026-09-07 so `inventory()` can carry it too, and lifted
+    rather than copied. ZeroParadox measured why it matters: `progress()` reported
+    `complete: true, satisfied 19/19` beside `bar.held: false` — and gitRobot's `status()`,
+    which embeds an inventory rather than a progress, surfaced the 19/19 and not the broken
+    bar. **A reader of the gate's own status saw green.**
+
+    ⚠⚠ AND THAT IS THE SHAPE THIS WHOLE MODULE EXISTS TO REMOVE: `complete` is a TRUE value
+    against a scope the caller has not been told moved. Complete against WHICH registry? The
+    two facts belong on the same answer or the first one is a claim about an unnamed object.
+    """
+    frozen = config.frozen_registry_sha
+    now = config.registry_sha
+    if not frozen:
+        return {"frozen": False, "registry_sha": now, "note": (
+            "NO FROZEN BAR. Scope may widen mid-run and a widened scope does NOT "
+            "re-open a green row, so progress can be reset invisibly. Set "
+            "policy.convergence.frozen_registry_sha to the current registry_sha "
+            "before starting a convergence run.")}
+    if frozen == now:
+        return {"frozen": True, "held": True, "registry_sha": now,
+                "note": "the registry is unchanged since this run was frozen"}
+    return {"frozen": True, "held": False, "registry_sha": now, "frozen_at": frozen,
+            "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
+                     "this convergence run was frozen, so any step that went green earlier "
+                     "was judged against a different scope and will NOT re-open on its own. "
+                     "Either revert the registry, or re-freeze deliberately and expect the "
+                     "numbers to mean less than they did.")}
+
+
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None,
           refusals: Optional[dict] = None) -> dict:
@@ -822,6 +858,11 @@ def build(*, config, records, action: str, files: dict,
         # the mirror defect in the highest-stakes possible location.
         "complete": complete,
         "registered_not_admitting": registered_not_admitting,
+        # ⚠⚠ BESIDE `complete`, AND THAT PLACEMENT IS THE POINT. `complete: true` is a claim
+        # about a SCOPE; if the registry moved since the run was frozen, it is true about a
+        # different one than the reader assumes. gitRobot's status() embeds this block, so a
+        # broken bar reached nobody until it was carried here.
+        "bar": convergence_bar(config),
         # ⚠ Reported, never gating — see the block that computes it. The refusal lives at
         # append, where the claim is made; this is the interval before it fires.
         "stale_pins": stale_pins,
@@ -987,30 +1028,7 @@ def progress(*, config, records, action: str, files: dict, admission: list,
         else:
             converging.append(step)
 
-    # ⚠⚠ HAS THE SCOPE MOVED SINCE THIS RUN STARTED? A frozen bar that is merely
-    # AGREED is a convention; one recorded as a sha is checked on every call. Scope
-    # lives in the registry, so the freeze is keyed on the registry sha alone —
-    # a threshold change must not read as a scope change.
-    frozen = config.frozen_registry_sha
-    now = config.registry_sha
-    if not frozen:
-        freeze = {"frozen": False, "note": (
-            "NO FROZEN BAR. Scope may widen mid-run and a widened scope does NOT "
-            "re-open a green row, so progress can be reset invisibly. Set "
-            "policy.convergence.frozen_registry_sha to the current registry_sha "
-            "before starting a convergence run."), "registry_sha": now}
-    elif frozen == now:
-        freeze = {"frozen": True, "held": True, "registry_sha": now,
-                  "note": "the registry is unchanged since this run was frozen"}
-    else:
-        freeze = {"frozen": True, "held": False, "registry_sha": now,
-                  "frozen_at": frozen,
-                  "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
-                           "this convergence run was frozen, so any step that went "
-                           "green earlier was judged against a different scope and "
-                           "will NOT re-open on its own. Either revert the registry, "
-                           "or re-freeze deliberately and expect the numbers below to "
-                           "mean less than they did.")}
+    freeze = convergence_bar(config)
 
     return {
         "action": action, "complete": inv["complete"],

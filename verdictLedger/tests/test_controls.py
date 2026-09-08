@@ -1509,3 +1509,60 @@ def test_a_module_absent_from_the_tree_is_not_called_stale(ledger, config_dir):
                         files={"docs/x.md": "b" * 40},          # module not in this tree
                         ref="a" * 40, admission=["check_invariants"])
     assert inv["stale_pins"] == []
+
+
+def test_inventory_carries_the_frozen_bar_beside_complete(ledger, config_dir):
+    """⭐⭐ `complete` IS A CLAIM ABOUT A SCOPE, AND THE SCOPE CAN MOVE.
+
+    Measured 2026-09-07 by ZeroParadox, on the live servers, at the moment of a real push:
+
+        progress(push)      complete: true   satisfied: 19/19   bar.held: FALSE
+        gitRobot status()   embeds an INVENTORY, not a progress -> the bar reached nobody
+
+    **A reader of the gate's own status saw green.** The registry had moved at `4efa051` the
+    day before, so every step that went green earlier was judged against a different scope —
+    and the number that says so was computed in a function nothing on the push path called.
+
+    ⚠ The fix is placement, not a new fact: `progress()` had it all along. Lifted into
+    `convergence_bar()` and carried on `inventory` too — LIFTED rather than copied, because a
+    second implementation of the freeze check is the drift this project keeps paying for.
+    """
+    import json
+    from core import inventory as inv_mod
+    from core.ledger import Ledger
+
+    inv = inv_mod.build(config=ledger.config, records=[], action="commit",
+                        files={"docs/x.md": "b" * 40}, ref="a" * 40, admission=[])
+    assert "bar" in inv, "the frozen bar must ride beside `complete`, not only on progress()"
+
+    # freeze the bar at a sha the registry does not have
+    path = config_dir / "policy.v1.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.setdefault("convergence", {})["frozen_registry_sha"] = "f" * 64
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    moved = Ledger(ledger.data_path, policy_path=path,
+                   required_path=config_dir / "required.v2.json")
+
+    inv2 = inv_mod.build(config=moved.config, records=[], action="commit",
+                         files={"docs/x.md": "b" * 40}, ref="a" * 40, admission=[])
+    assert inv2["bar"]["frozen"] is True
+    assert inv2["bar"]["held"] is False, "a moved registry must break the bar"
+    assert "MOVED MID-RUN" in inv2["bar"]["note"]
+
+
+def test_one_implementation_of_the_freeze_check_not_two(ledger):
+    """⚠ `progress()` AND `inventory()` MUST ANSWER FROM THE SAME FUNCTION.
+
+    Two copies of a freeze check would drift the way `record.py` drifted 386 lines apart, and
+    the disagreement would be between two answers about whether the bar still holds — which is
+    the one question a reader consults it to settle."""
+    from core import inventory as inv_mod
+
+    inv = inv_mod.build(config=ledger.config, records=[], action="commit",
+                        files={"docs/x.md": "b" * 40}, ref="a" * 40, admission=[])
+    prog = inv_mod.progress(config=ledger.config, records=[],
+                            files={"docs/x.md": "b" * 40},
+                            action="commit", admission=[])
+    assert inv["bar"] == prog["bar"], (
+        "inventory and progress must report the SAME bar — they call one helper, and if this "
+        "ever differs someone has reintroduced a second implementation")
