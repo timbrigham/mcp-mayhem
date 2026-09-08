@@ -397,10 +397,12 @@ class GitRobot:
             # still staged as a path and never re-read as one.
             result = target.run(["add", "--", *paths])
         if not result.ok:
-            return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "failed",
+            return self._receipt("stage", {"paths": paths, "repo": repo_mode,
+                                "worktree": worktree}, "failed",
                                  detail=result.output, extra={"error": result.output},
                                  target=target)
-        return self._receipt("stage", {"paths": paths, "repo": repo_mode}, "allowed",
+        return self._receipt("stage", {"paths": paths, "repo": repo_mode,
+                                      "worktree": worktree}, "allowed",
                              extra={"staged": paths}, target=target)
 
     def unstage(self, paths, reason=None, repo_mode: str = "main",
@@ -473,7 +475,7 @@ class GitRobot:
         result = target.run(["restore", "--staged", "--", *paths], timeout=120)
         decision = "allowed" if result.ok else "failed"
         return self._receipt(
-            "unstage", {"paths": paths, "repo": repo_mode}, decision,
+            "unstage", {"paths": paths, "repo": repo_mode, "worktree": worktree}, decision,
             reason=reason, detail=result.output,
             extra={"paths": paths, "output": result.output, "ok": result.ok},
             target=target)
@@ -504,7 +506,8 @@ class GitRobot:
         target = self._target(repo_mode, worktree)
         if not target.run(["diff", "--cached", "--quiet"]).exit_code:
             raise self._refuse(
-                "commit", {"message_file": str(path), "repo": repo_mode},
+                "commit", {"message_file": str(path), "repo": repo_mode,
+                           "worktree": worktree},
                 "nothing is staged, so this commit would be empty.",
                 "stage(paths=[…]) the files you changed first; read(op='status') shows them.",
                 reason=reason, target=target,
@@ -541,7 +544,8 @@ class GitRobot:
             # concludes the guard is stale is a caller looking for a way around it.
             where = f"{repo_mode or 'main'}:{self._ARC_STATE}"
             raise self._refuse(
-                "commit", {"message_file": str(path), "repo": repo_mode},
+                "commit", {"message_file": str(path), "repo": repo_mode,
+                           "worktree": worktree},
                 (f"the index copy of {where} carries round={staged_round}, and the tracked copy "
                  f"must stay at 0. ⚠ This is read from the INDEX, so it fires whether or not you "
                  f"staged anything — a tracked file already at a non-zero round reads the same "
@@ -608,7 +612,8 @@ class GitRobot:
         result = target.run(["commit", "--file", str(path)], timeout=600)
         decision = "allowed" if result.ok else "failed"
         return self._receipt(
-            "commit", {"message_file": str(path), "repo": repo_mode}, decision,
+            "commit", {"message_file": str(path), "repo": repo_mode,
+                           "worktree": worktree}, decision,
             gates=gate_records, reason=reason, detail=result.output,
             extra={"output": result.output, "ok": result.ok}, target=target,
         )

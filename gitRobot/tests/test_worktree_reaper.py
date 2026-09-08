@@ -182,3 +182,52 @@ def test_a_kept_dirty_worktree_NAMES_what_made_it_dirty(repo, tmp_path, policy):
     assert "gate_round.json" not in row["dirty_paths"], (
         "a declared session-state path must not appear — it carries no information about "
         "whether this tree holds work")
+
+
+def test_every_tree_aware_mutation_RECORDS_which_tree(repo, tmp_path):
+    """⭐⭐ THE AUDIT LOG MUST SAY WHERE A MUTATION HAPPENED, NOT JUST THAT IT DID.
+
+    Found 2026-09-08, the day D1 landed. `gitRobot` audits mutations and its receipts carried
+    `repo` — which is `repo_mode`, and is NOT the worktree. So a commit made in an isolated
+    reviewer worktree and a commit made in the shared checkout produced IDENTICAL receipts.
+
+    ⛔ AND IT COST A WRONG CONCLUSION BEFORE IT COST ANYTHING ELSE. Reading `repo: "main"` off
+    the log, I was about to report that D1's first live round had NOT authored in a worktree.
+    It had — the git parentage proves it, two lines from one parent joined by a merge that a
+    branch commit would never have needed. The instrument did not measure the thing, and the
+    field's absence read as evidence of absence.
+
+    ⚠ D1 makes this routine: reviewers now commit in worktrees as the normal path. An audit
+    trail that cannot distinguish isolated from shared authorship cannot answer the question
+    the workflow exists to make answerable.
+
+    This is a RATCHET: it walks the engine for every method taking a `worktree` parameter and
+    fails if one does not put it in its receipt. The next tree-aware mutation cannot ship
+    without it.
+    """
+    import inspect
+    from core.engine import GitRobot as Engine
+
+    tree_aware = []
+    for name, fn in inspect.getmembers(Engine, inspect.isfunction):
+        if name.startswith("_"):
+            continue
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            continue
+        if "worktree" in sig.parameters:
+            tree_aware.append(name)
+    assert tree_aware, "the scrape found no worktree-aware methods — the check broke, not the code"
+
+    src = inspect.getsource(Engine)
+    missing = []
+    for name in tree_aware:
+        body = inspect.getsource(getattr(Engine, name))
+        if "read" == name:
+            continue                       # read is not a mutation and writes no receipt
+        if '"worktree": worktree' not in body:
+            missing.append(name)
+    assert not missing, (
+        "these mutations accept a worktree but do not record it, so their receipts cannot say "
+        "WHICH TREE the change landed in: %s" % missing)
