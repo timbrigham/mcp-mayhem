@@ -129,6 +129,65 @@ Every tool on every server here:
   parameters: it fails when new debt appears *and* when listed debt is fixed without
   updating the list. A one-directional check lets debt sit forever.
 
+## The resource surface — a contract written BEFORE anything is built
+
+⚠⚠ THIS SECTION EXISTS BECAUSE THE CONCEPT WAS FLOATED IN CONVERSATION AND DIED THERE.
+Measured 2026-09-08: **0 mentions of "resource" in this file, 0 in any commit message, 0 in the
+conformance suite, 0 `@mcp.resource` declarations — and every server advertising a `resources`
+capability.** The 2026-09-05 sweep that found "84 tools, zero annotations, zero outputSchema"
+never looked, because the contract it checked against had four clauses and none of them were
+about resources. ⭐ Tim, 2026-09-08: *"we need to have a standing contract for exactly what we
+need to do so that we properly build the resources definition."* A rule agreed in conversation
+binds only the participants. This is the copy that binds.
+
+⛔ **THE CAPABILITY IS ALREADY A LIE AND THAT IS THE FIRST THING TO FIX.** FastMCP advertises
+`resources` by default. Serving none while advertising it is the same untrue-contract class as
+`validate` advertising V1-V18 while running V21, and `merge` naming its parameter `branch` while
+accepting any commit-ish. **An understated or absent contract costs more than a wrong one,
+because nothing ever fails.** Either serve resources or stop advertising the capability; the one
+thing forbidden is the present state.
+
+**WHAT A RESOURCE IS HERE, and the line against tools.** A tool is an ACTION — it has
+annotations because it may change something, and a caller decides whether to invoke it. A
+resource is a DOCUMENT the server publishes and a caller reads. If it takes arguments, branches
+on them, or has a side effect, it is a tool. **The test: could two callers read it a thousand
+times and observe the same bytes? Then it is a resource.**
+
+**WHAT EVERY RESOURCE MUST DO**
+
+- **Be GENERATED from the constants the code imports, never hand-authored.** This is the whole
+  point and everything else is detail. A hand-written dictionary is the FOURTH copy, not the
+  replacement for three. `schema.VERDICTS` is the model: `ledger.py` imports it, `inputs.py`
+  derives its `Literal` from it, and the wire enum comes from the same tuple — so the code would
+  BREAK if it disagreed. A resource that merely describes what the code happens to do is the
+  defect `control.md` is currently demonstrating at 20 assertions and three rounds.
+- **Carry value AND meaning.** An enum publishes `["PASS","FAIL","UNDECIDED"]` and cannot say
+  what UNDECIDED denotes or when it is the honest answer. That meaning currently lives in prose
+  that drifts. Value, meaning, and — where one exists — the remedy.
+- **Declare `uri`, `name`, `description`, `mimeType`.** Same argument as `inputSchema`: a shape
+  you FETCH cannot go stale the way a shape you INSTALL does.
+- **STRUCTURAL FACTS ONLY, the same line the input models hold.** The VALUE SET and what each
+  value denotes may be published. Registered step names, thresholds, and anything editable
+  without a restart stay in config and are served by `requirements()`/`policy()`. Publishing a
+  threshold here would be the second-copy-of-the-policy `config.py` forbids.
+- **Be IDENTICAL across every server that serves it.** The vocabularies live in `mcpcommon`,
+  imported — never restated per server. ⚠ Measured 2026-09-08, this has ALREADY happened:
+  `error_type` is defined in two `errors.py` files with only `usage` in common
+  (verdictLedger: config/ledger/unavailable/usage/validation; gitRobot:
+  gate/gitrobot/refusal/repo/usage), while `mcpcommon/iserror.py` READS that field on every
+  refusal from every server and owns none of it.
+
+**CONFORMANCE MUST EXTEND PAST TOOLS.** All 22 checks in `test_mcp_conformance.py` audit tools.
+The advertised-but-empty capability sat one layer above everything they look at. The suite must
+also fail when: a capability is advertised and unserved; two servers render the same vocabulary
+differently; or a vocabulary gains a value that no resource publishes. ⚠ That last one is the
+ratchet — `UNVALIDATED` was added to the row statuses on 2026-09-07 and appears in no list, so
+nothing can enumerate the statuses a caller may receive.
+
+⛔ **NOTHING IS BUILT YET, AND THE ORDER IS NOT NEGOTIABLE.** Consolidate the vocabularies into
+`mcpcommon` first — that is a live defect today, independent of any resource. Then publish. A
+resource built over four scattered definitions would publish the divergence.
+
 ## HTTP call logging — an instrument, never evidence
 
 `mcpcommon/calllog.py`, imported by every server. **One implementation at the repo root —
