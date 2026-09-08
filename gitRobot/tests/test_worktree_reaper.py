@@ -37,13 +37,22 @@ def repo(tmp_path):
 
 @pytest.fixture
 def policy():
-    """Swap the harness policy for the duration of one test, then put it back."""
-    original = CONFIG.read_text(encoding="utf-8")
+    """Swap the harness policy for the duration of one test, then put it back.
+
+    ⛔⛔ BYTES, NOT `write_text`. On Windows `Path.write_text` translates LF to CRLF, so a
+    fixture that reads a tracked config and writes it back does not RESTORE it — it rewrites
+    every line ending. Measured 2026-09-08: this fixture put 10 CRLF into
+    `worktree_reaper.v1.json` and verdictLedger's cross-server hygiene control caught it in a
+    suite this file is not even part of. A teardown that corrupts what it was protecting is
+    worse than no teardown, because the damage looks like someone else's commit.
+    """
+    original = CONFIG.read_bytes()
 
     def apply(doc):
-        CONFIG.write_text(json.dumps(doc) if isinstance(doc, dict) else doc, encoding="utf-8")
+        body = json.dumps(doc) if isinstance(doc, dict) else doc
+        CONFIG.write_bytes(body.encode("utf-8"))
     yield apply
-    CONFIG.write_text(original, encoding="utf-8")
+    CONFIG.write_bytes(original)
 
 
 def _bot(repo, tmp_path):
