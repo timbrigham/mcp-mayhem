@@ -177,6 +177,29 @@ times and observe the same bytes? Then it is a resource.**
   gate/gitrobot/refusal/repo/usage), while `mcpcommon/iserror.py` READS that field on every
   refusal from every server and owns none of it.
 
+⛔⛔ **A RESOURCE IS UNREACHABLE FROM A SPAWNED SUBAGENT, AND THAT CHANGES WHO IT IS FOR.**
+Measured by the consumer 2026-09-09: a subagent spawned via the Agent tool receives MCP TOOLS
+but not the MCP RESOURCE surface — `ToolSearch("select:ReadMcpResourceTool,ListMcpResourcesTool")`
+returns *"No matching deferred tools found"*, and neither appears in the 150+ deferred-tool
+manifest handed to it at spawn. That is a harness boundary; nothing here can change it.
+
+⚠ THE CONSEQUENCE IS A DESIGN RULE, NOT A CAVEAT. **Every gate brief is executed by a spawned
+agent.** So for that entire class of document a URI is not a pointer the reader can follow — it
+is decoration. Replacing a hand-maintained assertion with a URI in a brief swaps a stale copy
+for an unfollowable one, and both read as authoritative.
+
+⭐ THE SHAPE THAT WORKS: **state the one rule the reader needs, and cite the URI as PROVENANCE
+FOR A HUMAN**, not as an instruction to the agent. The agent gets the rule; the auditor gets the
+trail back to the authority; nobody holds a copy that can drift silently. ⛔ And do NOT paste
+the vocabulary into the spawned prompt instead — that makes the caller the copier, which is the
+same defect with an extra hop. ⛔ Nor name the HTTP fallback (`127.0.0.1:8010/mcp`): it works,
+and it is a hand-maintained copy of deployment state in a file that cannot see the port change.
+
+⚠ SO RESOURCES SERVE AGENTS THAT HOLD A SESSION AND HUMANS READING THE SURFACE — not spawned
+reviewers. Publishing to an audience that cannot fetch is the same error as documenting in a
+file nobody opens, which is the defect `verdictLedger/client/record.py` already exists to warn
+about.
+
 **CONFORMANCE MUST EXTEND PAST TOOLS.** All 22 checks in `test_mcp_conformance.py` audit tools.
 The advertised-but-empty capability sat one layer above everything they look at. The suite must
 also fail when: a capability is advertised and unserved; two servers render the same vocabulary

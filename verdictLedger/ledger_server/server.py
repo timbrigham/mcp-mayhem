@@ -864,7 +864,7 @@ def _writing_guide() -> str:
 @mcp.resource(
     "docs://verdictledger/readme",
     name="verdictledger README",
-    title="verdictLedger — the append-only verdict stream",
+    title="verdictLedger - the append-only verdict stream",
     description=("Why a verdict binds (step, path, git_blob_id), what each V-rule refuses and the measured incident behind it, and how the admission set divides between this ledger and gitRobot. Served from the repository so a caller never has to find it by "
                  "another route."),
     mime_type="text/markdown",

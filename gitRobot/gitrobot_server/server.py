@@ -664,7 +664,7 @@ def _start_worktree_reaper() -> None:
 @mcp.resource(
     "docs://gitrobot/readme",
     name="gitrobot README",
-    title="gitRobot — mediated git, and what it refuses",
+    title="gitRobot - mediated git, and what it refuses",
     description=("The tier model and threat model, why preflight is split from push, why reset --hard / clean / stash are not exposed, and the measured incident behind each rule. Served from the repository so a caller never has to find it by "
                  "another route."),
     mime_type="text/markdown",

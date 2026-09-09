@@ -758,7 +758,7 @@ def apply_store(op: str, params: dict) -> WriteResult:
 @mcp.resource(
     "docs://sjv/readme",
     name="sjv README",
-    title="structured-json-validator — the validated JSON store",
+    title="structured-json-validator - the validated JSON store",
     description=("Collections, schema validation, content addressing, integrity verification and history. Served from the repository so a caller never has to find it by "
                  "another route."),
     mime_type="text/markdown",
