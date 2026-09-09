@@ -893,6 +893,20 @@ def build(*, config, records, action: str, files: dict,
     #     Testing membership there would report every deleted file as an out-of-scope
     #     claim — a true value read against the wrong object, in the field written to catch
     #     exactly that. `evidence_moved` is where a moved subject belongs.
+    # (4) ⛔⛔ EXCLUDE DECLARED `switches`, BECAUSE V15 *REQUIRES* THEM AS SUBJECTS AND THEY
+    #     ARE DELIBERATELY OUTSIDE THE CONTENT SCOPE. V15: "step X declares switches Y that
+    #     are not among its subjects — a verdict that depends on an exemption list must NAME
+    #     it, or editing that list cannot make the key stale and a suppression lands
+    #     unverified." So a baseline or whitelist is MANDATED in `subjects` and will never
+    #     match the scope globs.
+    #     ⚠⚠ MEASURED ON THE FIRST LIVE RUN, BEFORE THIS EXCLUSION: ten steps reported, and
+    #     `check_checkers`, `check_classes` and `check_hashes` were explained ENTIRELY by
+    #     their own declared switches — three phantom steps and 320 phantom records, all of
+    #     them a control doing exactly what another control demands. Shipping that would
+    #     have sent the consumer chasing compliance with V15 as though it were a defect.
+    #     ⭐ THIS IS THE FOURTH TRAP IN A FIELD WHOSE FIRST THREE ARE DOCUMENTED ABOVE, and
+    #     it is the same shape as all of them: the path really is outside the globs, and
+    #     "outside the globs" is not what the field claims to mean.
     _raw_types_s2 = (config.required.get("types") or {})
     subjects_outside_scope = []
     for _step, _spec in sorted(reqs.items()):
@@ -901,6 +915,8 @@ def build(*, config, records, action: str, files: dict,
         if not _globs:
             continue          # no declared fence — see trap (2)
         _drop = _spec.get("scope_exclude") or []
+        # trap (4): V15 mandates these as subjects; they are not an over-claim.
+        _switches = set(_spec.get("switches") or ())
         _outside, _record_ids = {}, []
         for _rec in records:
             if _rec.get("step") != _step:
@@ -908,6 +924,7 @@ def build(*, config, records, action: str, files: dict,
             _bad = sorted({
                 _sub.get("path") for _sub in (_rec.get("subjects") or [])
                 if _sub.get("path")
+                and _sub["path"] not in _switches
                 and (not any(fnmatch.fnmatch(_sub["path"], _g) for _g in _globs)
                      or any(fnmatch.fnmatch(_sub["path"], _g) for _g in _drop))
             })
