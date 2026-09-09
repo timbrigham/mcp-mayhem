@@ -114,3 +114,44 @@ def test_non_string_fields_are_left_alone():
     assert out["output"] is None
     assert out["removed"] == ["a", "b"]
     assert "output_bytes" not in out, "do not price a field that is not text"
+
+
+# -- preflight_status bypasses _receipt entirely ------------------------------
+# ⛔⛔ THE FIX IN d6b3bdb CLAIMED TO BOUND "CENTRALLY IN _receipt", AND `preflight` /
+# `preflight_status` DO NOT CALL `_receipt`. They build a plain dict. So the path the
+# consumer exercises before EVERY push was the one path the central fix did not reach —
+# the same shape as the defect it was fixing, two hours later, and mine.
+
+def test_a_passed_preflight_narrows_its_gate_output():
+    """On a pass the transcript answers a question nobody asked: `passed` and `exit_code`
+    already answer the one the caller had. Measured 2026-09-09: this returned 8000
+    characters of "ok … ok … ok" per gate to say the pipeline passed."""
+    from core.engine import _narrow_passing_output
+    assert len(_narrow_passing_output(_HUGE)) < _MAX_OUTPUT
+
+
+def test_a_narrowed_pass_keeps_the_tail_and_says_what_it_dropped():
+    """⚠ The marker is the whole reason narrowing is safe. A clipped output that renders
+    like a complete one is this project's recurring defect."""
+    from core.engine import _narrow_passing_output
+    out = _narrow_passing_output(_HUGE)
+    assert out.endswith("TAIL MARKER LINE")
+    assert "elided by gitRobot" in out
+    assert "PASSED" in out
+
+
+def test_a_short_passing_output_gets_no_marker():
+    """A marker on text that was never elided is its own small lie."""
+    from core.engine import _narrow_passing_output
+    assert _narrow_passing_output("ok\n") == "ok\n"
+
+
+def test_the_two_narrowing_call_sites_agree():
+    """⛔ TWO COPIES OF A NARROWING POLICY IS HOW THE RECEIPT CLIP CAME TO GUARD THE AUDIT
+    LOG AND NOT THE WIRE. `_bound_receipt_output` and `preflight_status` must narrow
+    identically or they will drift, and the drift would be invisible: both would look
+    bounded, at different budgets, and nobody compares them."""
+    from core.engine import _narrow_passing_output
+    receipt = _bound_receipt_output(
+        {"decision": "allowed", "ok": True, "output": _HUGE})["output"]
+    assert len(receipt) == len(_narrow_passing_output(_HUGE))

@@ -135,22 +135,35 @@ def _bound_receipt_output(out: dict) -> dict:
         if not isinstance(text, str):
             continue
         full = len(text)
-        if succeeded and full > _OK_TAIL_KEEP:
-            # Tail, not head: git prints its own result lines AFTER the hook transcript.
-            marker = (
-                "... [" + str(full - _OK_TAIL_KEEP) + " characters elided by gitRobot -- "
-                "this operation SUCCEEDED, so the passing transcript is dropped and the "
-                "tail kept. `output_bytes` prices the whole of it.] ...\n\n"
-            )
-            kept = marker + text[-_OK_TAIL_KEEP:]
-        elif succeeded:
-            kept = text
-        else:
-            kept = _clip_output(text)
+        kept = _narrow_passing_output(text) if succeeded else _clip_output(text)
         out[field] = kept
         out[field + "_bytes"] = full
         out[field + "_truncated"] = len(kept) != full
     return out
+
+
+def _narrow_passing_output(text: str) -> str:
+    """Keep the TAIL of a transcript whose run SUCCEEDED, and say what was dropped.
+
+    Tail, not head: git prints its own result lines -- `[branch sha] subject`,
+    `N files changed` -- AFTER the hook's transcript, and those are what a caller reads
+    back. `_clip_output` keeps head AND tail because a FAILING gate states its reason at
+    the end and the plan at the start; on a pass, neither end is interesting except the
+    last few lines.
+
+    SHARED BY TWO CALL SITES ON PURPOSE. `_bound_receipt_output` covers everything that
+    goes through `_receipt`; `preflight_status` does NOT go through `_receipt` and needs
+    the identical rule. Two copies of a narrowing policy is how the receipt clip came to
+    guard the audit log and not the wire in the first place.
+    """
+    if len(text) <= _OK_TAIL_KEEP:
+        return text
+    marker = (
+        "... [" + str(len(text) - _OK_TAIL_KEEP) + " characters elided by gitRobot -- "
+        "this run PASSED, so the passing transcript is dropped and the tail kept. "
+        "The `_bytes` field beside this prices the whole of it.] ...\n\n"
+    )
+    return marker + text[-_OK_TAIL_KEEP:]
 
 
 class GitRobot:
@@ -821,6 +834,32 @@ class GitRobot:
                             f"CONSTANT in gitRobot's core/gates.py — not policy, not "
                             f"configurable, and reported here so a caller can tell "
                             f"'timed out' from 'still going' without reading source.")
+                # ⛔⛔ THE SAME DEFECT AS THE RECEIPT CLIP, ONE PATH OVER, AND IT WAS MINE
+                # FOR TWO HOURS. `_bound_receipt_output` bounds everything that goes
+                # through `_receipt` -- and `preflight` and `preflight_status` do NOT call
+                # `_receipt`. They build a plain dict, so `d6b3bdb`'s "bounded centrally"
+                # claim did not reach the one path the consumer actually exercises before
+                # every push.
+                #
+                # ⚠ MEASURED 2026-09-09: on a PASSED preflight this returned each gate's
+                # `output` at the full `_clip` budget -- 8000 characters of "ok … ok … ok"
+                # per gate, to say the pipeline passed. Bounded, so not the 147,922-byte
+                # class, but the same argument: on a pass the transcript answers a question
+                # nobody asked, and `passed` / `exit_code` already answer the one they did.
+                #
+                # ⭐ NARROWED ONLY WHEN THE STATE IS `passed`. A failure keeps the full
+                # head+tail clip, because that is when the text is the entire point -- and
+                # a TIMEOUT keeps it too, since `failure_kind` distinguishes them and the
+                # gate output is how a reader tells a slow gate from a stuck one.
+                if out["state"] == "passed":
+                    out["gates"] = [
+                        dict(g, output=_narrow_passing_output(g["output"]),
+                             output_bytes=len(g["output"]),
+                             output_truncated=len(_narrow_passing_output(g["output"]))
+                                              != len(g["output"]))
+                        if isinstance(g.get("output"), str) else g
+                        for g in (gates or [])
+                    ]
                 return out
         # ⭐⭐ THREE STATES, AND THE OLD `or` COLLAPSED TWO OF THEM. This read
         # `if alive or started.get("pid") == os.getpid(): running`, so once the audit row had
