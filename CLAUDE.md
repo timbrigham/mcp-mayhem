@@ -245,6 +245,44 @@ only because the session that saw it was staggered against a session that did no
 text, START A SESSION.** Do not reason about whether a reconnect gave you one, and do not
 publish anything urgent expecting live sessions to see it.
 
+⭐⭐ **AND AS OF 2026-09-09 16:22 UTC THE STALENESS HAS A BOUNDARY: IT IS THE DESCRIPTOR LAYER,
+NOT THE SERVER.** Measured on both sides at once, which is the only reason it counts — neither
+half concludes anything alone:
+
+    RESPONSE BODIES ARE CURRENT.   V9's refusal text changed in `ceac023` (live 16:15:41Z).
+                                   The consumer's LIVE session read the NEW text at 16:21:39Z,
+                                   six minutes later. They also hold the OLD text from ~15:5x
+                                   on a different channel, so it is a real before/after.
+    DESCRIPTORS ARE NOT.           `find`'s description gained its ORDERING paragraph in
+                                   `3ca550d` (12:03:22Z). The SAME live session re-fetched it
+                                   at 16:22Z and got the old terse one. FOUR HOURS NINETEEN
+                                   MINUTES. That is not deploy lag.
+    AND FROM THIS SIDE             `tools/list` on the running server returns the new
+                                   description — 1431 chars, `OLDEST FIRST` and `since=` both
+                                   present — and has since the 15:33:57Z restart at the latest.
+
+⛔ THE OBVIOUS OBJECTION IS THE ONE THAT MAKES IT STRONGER, NOT WEAKER. The consumer could not
+prove their connection had not silently re-established. It does not matter: **either branch lands
+in the same place.** No reconnect → descriptors are cached for the session. A reconnect at
+16:15:41Z → `find` is STILL stale at 16:22Z, six minutes AFTER it, so descriptors survive a
+reconnect. Nothing short of a NEW SESSION refreshes a descriptor.
+
+⚠ WHY THIS IS WORTH THE INK, given the advice above does not change: it tells a mid-session
+reader WHICH of the two things in front of them to believe. **A refusal you just received is
+current. The docstring you just read may be four hours old.** So a caller who reasons from a tool
+description about behaviour that recently changed is reasoning from a cache — and the refusal
+that contradicts it is the one telling the truth.
+
+⚠ ONE CLIENT, ONE SESSION, ONE OBSERVATION OF EACH. It narrows `DC-48`; it does not close it, and
+the mechanism is still unknown. What changed is that the question is now "why are descriptors
+pinned" rather than "does anything ever refresh".
+
+⭐ AND THE PROBE DESIGN IS THE REUSABLE PART: every earlier attempt read a DESCRIPTOR — a tool
+description, an `instructions` block, a resource — all of which are handed over at connect and
+plausibly cached. A REFUSAL STRING is computed per call, on the server, from the code on disk, so
+it cannot be cached by any mechanism either of us can name. **When you next need to know whether a
+live session sees your change, change a response body, not a docstring.**
+
 ⛔⛔ **A RESOURCE IS UNREACHABLE FROM A SPAWNED SUBAGENT, AND THAT CHANGES WHO IT IS FOR.**
 Measured by the consumer 2026-09-09: a subagent spawned via the Agent tool receives MCP TOOLS
 but not the MCP RESOURCE surface — `ToolSearch("select:ReadMcpResourceTool,ListMcpResourcesTool")`
