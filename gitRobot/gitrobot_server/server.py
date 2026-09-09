@@ -75,7 +75,8 @@ worktree(action='add') - a private detached checkout where nothing you do can re
 caller's files. Recording a verdict from inside one is SUPPORTED and correct.
 
 A worktree from add is DETACHED, so it has no branch name. Carry its commit SHA back:
-merge() accepts any commit-ish, despite the parameter being called 'branch'.""",
+merge(branch=<the sha>, reason=...) accepts any commit-ish, despite that parameter being
+called 'branch'.""",
     host=os.environ.get("GITROBOT_HOST", "127.0.0.1"),
     port=int(os.environ.get("GITROBOT_PORT", "8010")),
 )

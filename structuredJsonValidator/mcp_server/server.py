@@ -59,13 +59,15 @@ mcp = FastMCP(
     instructions="""A validated JSON store: schema-checked collections with integrity
 verification, content addressing and history.
 
-START HERE: view() for what collections exist, then validate(collection=...) before trusting
-anything in one.
+START HERE: validate() — whole-store, takes NO arguments — then view(kind='status') for a
+summary of one collection. To learn which collections exist, call find with a collection
+that does not exist: the refusal names them all.
 
 THE FIVE THAT MATTER: view - find - get - validate - verify_integrity.
 
 THE MISTAKE THAT WILL BITE YOU: assuming every response carries ok:true. It does NOT on this
-server - find(count_only=True) returns {count}, validate returns {valid, violations}. Read
+server - find(filters={}, count_only=True) returns {count}, validate returns
+{valid, violations}. Read
 the tool's own outputSchema rather than assuming a fleet-wide shape. A REFUSAL carries
 isError:true and a JSON body, never structuredContent.""",
     host=os.environ.get("SJV_HOST", "127.0.0.1"),

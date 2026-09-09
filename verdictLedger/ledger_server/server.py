@@ -69,8 +69,9 @@ mcp = FastMCP(
     instructions="""Append-only verdict stream. It answers one question: may this action
 proceed, and on what evidence.
 
-START HERE: status() for health and config provenance, then inventory(ref=...) for the
-per-step picture. can_push(rev_range=...) is the gate answer.
+START HERE: status() for health and config provenance, then
+inventory(action='push', ref=...) for the per-step picture — `action` is REQUIRED and
+selects which admission set applies. can_push(rev_range=...) is the gate answer.
 
 THE FIVE THAT MATTER: status - inventory - can_push - append - validate.
 
