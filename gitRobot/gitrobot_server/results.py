@@ -116,6 +116,21 @@ class PushStatusResult(Result, total=False):
     output: str | None
 
 
+class AdmissionResult(Result, total=False):
+    """The admission set alone. ~400 bytes against requirements()' 11,904.
+
+    MEASURED 2026-09-08: of requirements(action='push'), `exclusion_rationale` is 9,463 bytes
+    (79%) and `admitted` is 303 (2.5%). The consumer read only `admitted`, ~99 times, and had
+    no way to ask for less. This is the field, plus a POINTER to where the rest lives rather
+    than a copy of it.
+    """
+    action: str
+    admitted: list[str]
+    count: int
+    registered_not_admitted: list[str]
+    full_detail: str
+
+
 class RequirementsResult(Result, total=False):
     """⚠ This is the ADMISSION SET (what must be GREEN), never the registry (what may be
     RECORDED). The two differ deliberately and by the same count — see the tool docstring."""

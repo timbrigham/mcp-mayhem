@@ -2370,6 +2370,44 @@ class GitRobot:
             "records": shown,
         }
 
+    def admission(self, action: str = "push") -> dict:
+        """JUST the admission set for `action` — the one field callers actually wanted.
+
+        MEASURED 2026-09-08, and this is the whole reason it exists. `requirements()` returns
+        11,904 bytes for `push`, of which `exclusion_rationale` is 9,463 (79%) and `admitted`
+        is 303 (2.5%). The consumer, asked what it was after across ~99 calls, answered: "ONE
+        FIELD, EVERY TIME: `admitted`. Nothing else in that payload was ever read by me."
+        A 39x overhead on the only field anybody wanted, and `requirements` takes no parameter
+        but `action`, so there was no way to ask for less.
+
+        AND IT IS WHY THE CHEAP TOOLS WENT UNUSED. verdictLedger's `progress` and
+        `coverage_gap` REFUSE without an admission set — correctly; "nobody said" and "nothing
+        gates this" must stay different answers. But that made a 3.9 KB tool cost 3.9 KB plus
+        an 11.9 KB prerequisite, while `inventory` answers ungated at 57.9 KB. An agent that
+        just wants an answer takes the tool that does not refuse. Measured over one night:
+        `progress` 6 calls, `inventory` and `status` 60 between them for 6.3 MB.
+
+        A cheap tool with a mandatory expensive prerequisite is not a cheap tool. This makes
+        the prerequisite cheap so the routing advice can actually be followed.
+
+        A NAMED TOOL RATHER THAN A FLAG ON `requirements`, deliberately. Under deferred tool
+        loading an agent picks from bare names and descriptions and has no schema, so a
+        parameter is invisible until it spends a load. That was measured too: an outside
+        auditor received ~200 tool names with no schemas and found the routing map on
+        `requirements` BY ACCIDENT.
+        """
+        full = self.requirements(action)
+        return {
+            "action": action,
+            "admitted": full.get("admitted") or [],
+            "count": len(full.get("admitted") or []),
+            "registered_not_admitted": full.get("registered_not_admitted") or [],
+            # A pointer, not a copy. The rationale is 9 KB and belongs where it already is.
+            "full_detail": ("requirements(action=%r) carries the exclusion rationale, the "
+                            "preconditions, the order of operations and which_tool_answers_what"
+                            % action),
+        }
+
     def requirements(self, action: str = "push") -> dict:
         """⭐⭐ THE SUCCESS CONDITIONS FOR `action`, SERVED FROM THE CONFIG THAT ACTUALLY GATES.
 

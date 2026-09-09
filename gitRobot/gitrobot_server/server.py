@@ -48,7 +48,7 @@ from mcpcommon.iserror import install as _install_is_error  # noqa: E402
 
 from gitrobot_server.results import (  # noqa: E402
     ExplainResult, HistoryResult, PreflightStatusResult, PushStatusResult,
-    ReadResult, ReceiptResult, RequirementsResult, StatusResult)
+    AdmissionResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult)
 
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError
@@ -63,9 +63,11 @@ mcp = FastMCP(
 history-rewriting and working-tree-destroying operations are not exposed, because an agent
 that can reset --hard can destroy uncommitted work and then correctly report the tree clean.
 
-START HERE: requirements(action='push'). It also carries a which_tool_answers_what routing
-map and is the fastest way to learn this surface. status() is comprehensive and LARGE
-(~57KB of inventory) - prefer requirements() and read(op=...) first.
+START HERE: admission(action='push') - ~400 bytes, and it is what verdictLedger's progress(),
+coverage_gap() and can_push() refuse without. Then requirements(action='push') ONCE if you
+want the which_tool_answers_what routing map and the exclusion rationale: it is ~12KB and 79%
+of that is prose you probably do not need twice. status() is comprehensive and LARGE (~57KB
+of embedded inventory) - prefer read(op='status', args=['--short']) for the everyday answer.
 
 THE FIVE THAT MATTER: requirements - read - status - commit - worktree.
 
@@ -274,6 +276,29 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResu
     record of why a publication happened."""
     return await _guard(_robot().push, branch, reason=reason, repo_mode=repo_mode,
                         wait=False)
+
+
+@mcp.tool(title='The admission set, and nothing else',
+          annotations=ToolAnnotations(title='The admission set, and nothing else', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def admission(action: str = "push") -> AdmissionResult:
+    """THE ADMISSION SET ALONE — the steps that must be GREEN for `action`. ~400 bytes.
+
+    CALL THIS BEFORE verdictLedger's progress(), coverage_gap() or can_push(). They refuse
+    without an admission set, and this is the cheap way to satisfy them: pass the `admitted`
+    array straight through as their `admission` parameter.
+
+    WHY IT EXISTS. requirements(action='push') is 11,904 bytes, of which the exclusion
+    rationale is 9,463 and `admitted` is 303. Asked what it wanted across ~99 calls, the
+    consumer answered "ONE FIELD, EVERY TIME: admitted." This is that field.
+
+    It made the cheap tools unreachable. progress() answers "can I proceed" in 3.9 KB but
+    REFUSES without the set, so its real cost was 3.9 + 11.9 KB, while inventory() answers
+    ungated at 57.9 KB. An agent that wants an answer takes the tool that does not refuse:
+    measured over one night, progress 6 calls against 60 for inventory and status.
+
+    Use requirements() when you need WHY a step is excluded, the preconditions, the order of
+    operations, or the which_tool_answers_what routing map. Use this when you need the set."""
+    return await _guard(_robot().admission, action)
 
 
 @mcp.tool(title='Required gates for an action',

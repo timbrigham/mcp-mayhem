@@ -69,9 +69,12 @@ mcp = FastMCP(
     instructions="""Append-only verdict stream. It answers one question: may this action
 proceed, and on what evidence.
 
-START HERE: status() for health and config provenance, then
-inventory(action='push', ref=...) for the per-step picture — `action` is REQUIRED and
-selects which admission set applies. can_push(rev_range=...) is the gate answer.
+START HERE: status() for health, then gitRobot admission(action='push') for the set the
+next call needs, then progress(action='push', ref=..., admission=[...]) which answers 'can I
+proceed' in ~4KB. can_push(rev_range=..., admission=[...]) is the gate answer. Reach for
+inventory(action='push', ref=...) only when you need FULL per-step detail: it is ~58KB, and it ANSWERS UNGATED
+while the cheap tools refuse without an admission set - which is why agents take it by
+accident.
 
 THE FIVE THAT MATTER: status - inventory - can_push - append - validate.
 
@@ -572,7 +575,7 @@ def _sync_progress(action, ref, admission, rounds) -> dict:
         from core.errors import UsageError
         raise UsageError(
             "progress requires an admission set — which steps gate this action. Omitting it is not an empty set; it means nobody said, and a convergence report over nothing would read as convergence",
-            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='push') returns it — or 'commit'/'tag' for those actions, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
+            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: admission(action='push') returns JUST the array in ~400 bytes - use 'commit' or 'tag' for those actions - and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.progress(config=cfg, records=led.store.records(),
                                  action=action, files=_files(ref),
                                  admission=admission, rounds=rounds)
@@ -613,7 +616,7 @@ def _sync_coverage_gap(action, ref, admission, step, limit) -> dict:
         from core.errors import UsageError
         raise UsageError(
             "coverage_gap requires an admission set — which steps gate this action. Omitting it is not an empty set; it means nobody said, and answering anyway would report a work order that gates nothing",
-            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='push') returns it — or 'commit'/'tag' for those actions, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
+            "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: admission(action='push') returns JUST the array in ~400 bytes - use 'commit' or 'tag' for those actions - and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.coverage_gap(config=cfg, records=led.store.records(),
                                      action=action, files=_files(ref),
                                      admission=admission, step=step, limit=limit)
