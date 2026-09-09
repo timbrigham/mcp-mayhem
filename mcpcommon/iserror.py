@@ -257,3 +257,101 @@ def install_resource_classification(mcp) -> None:
                           message=json.dumps(payload))) from exc
 
     handlers[types.ReadResourceRequest] = _classified
+
+
+class SessionErrorClassifier:
+    """Middleware: make a stale-session response say it is RETRYABLE.
+
+    ⛔⛔ I TOLD THE CONSUMER THIS WAS NOT FIXABLE FROM HERE AND I WAS WRONG. My words were
+    "when the connection dies there is no response to classify". Measured 2026-09-09 by
+    driving the actual case instead of reasoning about it — the server answers cleanly:
+
+        stale session id  ->  HTTP 404  {"code": -32600, "message": "Session not found"}
+        no session id     ->  HTTP 400  {"code": -32600, "message": "Bad Request: Missing
+                                         session ID"}
+
+    Nothing dies. The client tears the connection down on the 404 and surfaces it as
+    "Connection closed", so the transport-looking error is the CLIENT's rendering of a clean
+    server answer that carried no classification.
+
+    ⚠⚠ AND IT IS DETERMINISTIC, NOT FLAKY. The consumer measured three for three: every first
+    resource read in the ~90 minutes after a restart failed and every retry succeeded. That is
+    not a blip to tolerate, it is a documented state — a client holding a session from a dead
+    pid — and it has exactly one correct remedy: retry once.
+
+    ⭐ WHICH IS THE SPLIT THIS FLEET ALREADY OWNS. `vocabulary.ERROR_TYPES` says `unavailable`
+    is retryable and `validation` is terminal, "and conflating the two is how a rule gets
+    retried past." Here the cost runs the other way: an unclassified retryable error makes a
+    caller give up on a real presence. The consumer nearly reported a shipped resource as
+    never having shipped, twice.
+
+    ⚠ SCOPE: this classifies the RESPONSE. Whether a given client surfaces the body or
+    collapses it to a transport message is the client's to decide and not reachable from here.
+    What changes is that the answer now carries `error_type` and `retryable`, so a client that
+    reads it CAN tell "reconnect and retry" from "this genuinely does not exist".
+    """
+
+    NOTE = ("Your session belongs to a process that is gone - almost always a server restart. "
+            "RETRY ONCE: re-initialize and repeat the call. This is NOT 'the resource does not "
+            "exist'; an absent resource answers with error_type 'usage' and retryable false.")
+
+    def __init__(self, app):
+        self.app = app
+
+    @classmethod
+    def _reclassify(cls, body):
+        """The rewritten body, or None to leave the response untouched."""
+        if b"Session not found" not in body and b"Missing session ID" not in body:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except Exception:
+            return None
+        err = payload.get("error")
+        if not isinstance(err, dict):
+            return None
+        err["error_type"] = "unavailable"
+        err["retryable"] = True
+        err["note"] = cls.NOTE
+        payload["error"] = err
+        return json.dumps(payload).encode("utf-8")
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # ⛔⛔ THE START MESSAGE IS HELD, AND THAT IS THE WHOLE CORRECTNESS ARGUMENT. The first
+        # draft rewrote the body and forwarded the original headers, so `Content-Length` still
+        # claimed the OLD size and the client raised IncompleteRead(0 bytes read, 91 more
+        # expected). A clean 404 became a truncated read — strictly worse than the
+        # unclassified error it was fixing. Caught by driving the case rather than reasoning
+        # about it, which is the only reason it is not shipped.
+        start = {"msg": None}
+
+        async def _send(message):
+            kind = message.get("type")
+            if kind == "http.response.start":
+                start["msg"] = message           # hold it; length is not known yet
+                return
+            if kind == "http.response.body":
+                body = message.get("body") or b""
+                rewritten = self._reclassify(body)
+                head = start["msg"]
+                start["msg"] = None
+                if head is not None:
+                    if rewritten is not None:
+                        headers = [(k, v) for (k, v) in head.get("headers") or []
+                                   if k.lower() != b"content-length"]
+                        headers.append((b"content-length", str(len(rewritten)).encode()))
+                        head = dict(head, headers=headers)
+                        message = dict(message, body=rewritten)
+                    await send(head)
+                await send(message)
+                return
+            if start["msg"] is not None:         # anything else: flush the held head first
+                head, start["msg"] = start["msg"], None
+                await send(head)
+            await send(message)
+
+        await self.app(scope, receive, _send)

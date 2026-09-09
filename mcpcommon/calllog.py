@@ -444,6 +444,12 @@ def serve(mcp, server_name: str) -> None:
     import uvicorn
 
     app = mcp.streamable_http_app()
+    # ⚠ A stale session answers HTTP 404 'Session not found' with no error_type, and a
+    # client renders that as a dead connection. Deterministic after every restart —
+    # measured 3/3 by the consumer. Classified here as `unavailable`/retryable so a
+    # caller can tell 'reconnect and retry' from 'this does not exist'.
+    from mcpcommon.iserror import SessionErrorClassifier
+    app.add_middleware(SessionErrorClassifier)
     if _truthy(os.environ.get("ZPLOG_ENABLED"), True):
         logger, path = build_logger(server_name)
         selftest(logger, path)
