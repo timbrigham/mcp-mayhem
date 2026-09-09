@@ -59,6 +59,23 @@ ACTOR = os.environ.get("GITROBOT_ACTOR", "mcp")
 
 mcp = FastMCP(
     "gitRobot",
+    instructions="""Mediated git for one fixed repository. Its value is what it REFUSES:
+history-rewriting and working-tree-destroying operations are not exposed, because an agent
+that can reset --hard can destroy uncommitted work and then correctly report the tree clean.
+
+START HERE: requirements(action='push'). It also carries a which_tool_answers_what routing
+map and is the fastest way to learn this surface. status() is comprehensive and LARGE
+(~57KB of inventory) - prefer requirements() and read(op=...) first.
+
+THE FIVE THAT MATTER: requirements - read - status - commit - worktree.
+
+THE MISTAKE THAT WILL BITE YOU: reaching for a destructive verb and reading the refusal as a
+dead end. Every refusal names the sanctioned alternative, and it is almost always
+worktree(action='add') - a private detached checkout where nothing you do can reach the
+caller's files. Recording a verdict from inside one is SUPPORTED and correct.
+
+A worktree from add is DETACHED, so it has no branch name. Carry its commit SHA back:
+merge() accepts any commit-ish, despite the parameter being called 'branch'.""",
     host=os.environ.get("GITROBOT_HOST", "127.0.0.1"),
     port=int(os.environ.get("GITROBOT_PORT", "8010")),
 )

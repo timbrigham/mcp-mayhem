@@ -22,12 +22,30 @@ from typing import Optional
 def compute(*, records: list, config, family: Optional[str] = None,
             step: Optional[str] = None) -> dict:
     rows = [r for r in records if r.get("step") != "genesis"]
+    # ⛔⛔ `coverage_gap` IS COMPUTED ON THE UNFILTERED STREAM, DELIBERATELY.
+    #
+    # It asks "which registered types have NEVER recorded anything", and that is a question
+    # about the whole ledger. Computing it on a step-filtered view compares 29 registered
+    # types against the records of ONE of them, so every other step reads as never having
+    # run. Found by an outside cold-read audit 2026-09-08:
+    #
+    #     signals()                     -> never_recorded 3   (copy_editor genesis release_ready)
+    #     signals(step='check_frozen')  -> never_recorded 28  (adversary, build, guards, ...)
+    #
+    # Twenty-eight steps with hundreds of records each, reported as never run. That is the
+    # JUDGED-CLEAN vs NEVER-RAN conflation this ledger exists to prevent, produced by the
+    # ledger itself, and a caller cannot tell the two answers apart from the payload.
+    #
+    # ⚠ The auditor attributed it to a 50-record window. That is `never_fired`, a different
+    # family with its own `threshold_runs`. The stated cause was wrong and the finding was
+    # real — which is why it was reproduced from the other direction before being fixed.
+    unfiltered = rows
     if step:
         rows = [r for r in rows if r.get("step") == step]
 
     thresholds = config.signals if config else {}
     families = {
-        "coverage_gap": _coverage_gap(rows, config),
+        "coverage_gap": _coverage_gap(unfiltered, config),
         "never_fired": _never_fired(rows, thresholds.get("never_fired_runs", 50)),
         "repeat_subject": _repeat_subject(rows, thresholds.get("repeat_subject_rounds", 3)),
         "basis_drift": _basis_drift(rows),
@@ -58,7 +76,9 @@ def _coverage_gap(rows, config) -> dict:
     missing = sorted(registered - seen)
     return {"basis_count": len(registered), "count": len(missing),
             "never_recorded": missing,
-            "why": "a registered type with no record has never run, or ran and did not report"}
+            "why": ("a registered type with no record has never run, or ran and did not "
+                    "report. Computed over the WHOLE stream, never a filtered view: a "
+                    "step-filtered basis would report every other step as never run.")}
 
 
 def _never_fired(rows, threshold: int) -> dict:

@@ -1933,3 +1933,45 @@ def test_a_carve_dated_past_the_cadence_is_REFUSED(ledger, config_dir, tmp_path,
     assert ok.config is not None, "a one-month carve is the intended shape and must load"
     assert "docs/x.md" in (
         ok.config.requirements("commit")["check_invariants"].get("scope_exclude") or [])
+
+
+def test_a_filtered_signals_call_does_not_report_every_OTHER_step_as_never_run(ledger,
+                                                                              config_dir):
+    """⛔⛔ THE JUDGED-CLEAN vs NEVER-RAN CONFLATION, PRODUCED BY THE LEDGER ITSELF.
+
+    Found by an outside cold-read audit 2026-09-08, from a session with no knowledge of this
+    project. `coverage_gap.never_recorded` asks which registered types have NEVER recorded
+    anything — a question about the WHOLE stream. Computed on a step-filtered view it compares
+    29 registered types against the records of ONE, so every other step reads as never having
+    run:
+
+        signals()                    -> never_recorded 3
+        signals(step='check_frozen') -> never_recorded 28, each with hundreds of records
+
+    ⚠ The auditor attributed it to a 50-record window. That is `never_fired`, a different
+    family with its own threshold. **The stated cause was wrong and the finding was real** —
+    caught only by reproducing it from the other direction instead of checking the claim as
+    written.
+    """
+    from core import signals as signals_mod
+
+    recs = [
+        {"step": "check_prose", "verdict": "PASS", "decided": {"how": "mechanical"}},
+        {"step": "check_prose", "verdict": "PASS", "decided": {"how": "mechanical"}},
+        {"step": "check_invariants", "verdict": "PASS", "decided": {"how": "mechanical"}},
+    ]
+    whole = signals_mod.compute(records=recs, config=ledger.config)
+    narrowed = signals_mod.compute(records=recs, config=ledger.config, step="check_prose")
+
+    def gap(out):
+        return set((out["families"]["coverage_gap"] or {}).get("never_recorded") or [])
+
+    assert "check_invariants" not in gap(narrowed), (
+        "filtering to check_prose must not make check_invariants — which HAS records — read "
+        "as never recorded")
+    assert gap(whole) == gap(narrowed), (
+        "never_recorded is a claim about the whole stream and must not move when the caller "
+        "narrows the view")
+    assert narrowed["records_considered"] < whole["records_considered"], (
+        "the filter must still narrow what the OTHER families see, or this test is passing "
+        "because the filter stopped working")
