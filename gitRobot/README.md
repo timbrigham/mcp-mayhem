@@ -244,12 +244,31 @@ killed the registry. Never give two supervised servers the same module path.
 3. **`push` does not reach branch or PR creation**, and `gh` is not proxied.
    Releases mint permanent DOIs; that is a human decision, and it is out of scope
    until someone decides otherwise.
-4. **The `.claude-local` → OneDrive backup is superseded, not broken.** A PostToolUse
-   hook matching `git commit` used to mirror that directory to OneDrive; direct git
-   is now blocked, so it can no longer fire. It should be **removed**, not re-hooked
-   — pushing `.claude-local` to its own private remote replaced it, and that is
-   reachable here via `push(branch=…, repo_mode='.claude-local')`. Removal belongs
-   to a larger refactor on the consumer side.
+4. **The `.claude-local` → OneDrive backup is superseded.** Pushing `.claude-local`
+   to its own private remote is the off-machine path, reachable here via
+   `push(branch=…, repo_mode='.claude-local')`.
+
+   > ⛔ **THIS ITEM USED TO SAY A `PostToolUse` HOOK STILL EXISTED AND SHOULD BE REMOVED.
+   > IT DOES NOT EXIST.** Searched 2026-09-08 by the consumer and independently here:
+   > `PostToolUse` appears **0 times** in ZeroParadox's `.claude/settings.json`, its
+   > `settings.local.json`, the user-level `~/.claude/settings.json`, or this repo's
+   > local settings. The project carries `PreToolUse` hooks only — four matchers, none
+   > of them a backup.
+   >
+   > ⚠ SCOPE, not a bare absence: settings FILES were searched. A managed or enterprise
+   > settings layer is not readable from either side, so this is *not located as of
+   > 2026-09-08* rather than *proven absent*.
+   >
+   > ⭐⭐ THE FINDING IS WHY IT SURVIVED. **Both** this readme and ZeroParadox's
+   > `handoff.md` PART 0b asserted the hook existed and was inert — written
+   > independently, agreeing, and neither author had opened the file. A hook that was
+   > REMOVED and a hook that CANNOT FIRE look identical from every angle except that
+   > one. Neither of us had a reason to look, because both readings produce the same
+   > true conclusion — *the push is the only backup path now*. **A wrong premise
+   > carrying a right conclusion survives indefinitely**, and two documents agreeing
+   > is not corroboration when both inherited the belief rather than measured it.
+
+   Nothing remains to remove; there is no ticket.
 
    One asymmetry worth carrying into that refactor: the mirror was *automatic* on
    every commit, whereas a push is a deliberate act someone has to remember. Same
