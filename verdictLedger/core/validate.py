@@ -634,14 +634,29 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     #
     # ⚠ §3's rule applies to a validation refusal as much as to a git one: a refusal
     # that does not name the alternative is how a workaround gets invented. Name it.
+    #
+    # ⛔⛔ AND NAME ONLY WHAT THIS SERVER CAN GUARANTEE. This message ALSO used to offer
+    # "or pass --run on the CLI", and that is a claim about the CALLER'S argparse, which
+    # this server cannot see and does not own. Measured 2026-09-09: `check_claude_md.py`
+    # accepts [-h] [--measure] [--selftest] [--record] and has NO `--run`, so a consumer
+    # refused by V9 was handed two remedies of which one did not exist for the checker
+    # in their hand. They reported the environment half worked first try.
+    #
+    # ⚠ THAT IS THE SAME DEFECT AS THE 2026-08-26 ONE DIRECTLY ABOVE, IN THE SAME
+    # SENTENCE, WITH THE SIGN FLIPPED. The old wording refused a route that DID work; the
+    # new wording offered a route that DOES NOT. Both are this server describing a caller
+    # it cannot observe. `ZPLEDGER_RUN` is different in kind: `record.emit` and
+    # `Ledger.append` both read it here, in this repo, so it is the one route a refusal
+    # written on this side can promise. A second route that MIGHT exist does not add
+    # help; it adds a coin flip to a message whose whole job is to end one.
     if not (run.get("id") or "").strip():
         out.append("V9: run.id is required — a verdict that cannot be tied to the run "
                    "that produced it makes cost-per-run and first-failure-latency "
                    "uncomputable, and two verdicts from one sweep indistinguishable "
                    "from two sweeps. SUPPLY IT: export ZPLEDGER_RUN=<name> before the "
-                   "checker (record.emit reads it from the environment, so a hand-run "
-                   "sets it exactly the way the pipeline does), or pass --run on the "
-                   "CLI. It is ATTRIBUTION, not authentication — nothing here can tell "
+                   "checker — record.emit and this server both read it from the "
+                   "environment, so a hand-run sets it exactly the way the pipeline "
+                   "does. It is ATTRIBUTION, not authentication — nothing here can tell "
                    "a pipeline run from an exported string, and it does not try to.")
 
     # V10 — policy changes silently re-qualifying every past record.

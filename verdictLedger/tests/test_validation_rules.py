@@ -553,7 +553,29 @@ def test_v9_names_how_to_supply_the_run_id(ledger):
         if e.startswith("V9")]
     assert found
     assert "ZPLEDGER_RUN=" in found[0], "the refusal must name the alternative"
-    assert "--run" in found[0]
+
+
+def test_v9_does_not_name_a_cli_flag_this_server_cannot_see(ledger):
+    """⛔⛔ THIS ASSERTION USED TO READ `assert "--run" in found[0]` — the control PINNED
+    the defect in place. Measured 2026-09-09: `check_claude_md.py` accepts
+    [-h] [--measure] [--selftest] [--record] and has no `--run` at all, so V9 handed a
+    refused consumer two remedies of which one did not exist for the checker in their
+    hand. They reported the `ZPLEDGER_RUN` half worked first try.
+
+    ⚠ IT IS THE 2026-08-26 DEFECT WITH THE SIGN FLIPPED, IN THE SAME SENTENCE. That one
+    denied a route that worked; this one offered a route that does not. Both are this
+    server making a claim about a caller it cannot observe. `ZPLEDGER_RUN` is the one
+    route a refusal written on this side can promise, because `record.emit` and
+    `Ledger.append` both read it in this repo.
+
+    ⚠ AND A SECOND MAYBE-ROUTE IS NOT FREE. A refusal exists to end a guess; naming an
+    interface the server cannot verify puts the guess back, and the reader who follows
+    the wrong half spends the debugging session the message was written to prevent."""
+    found = [e for e in errs(ledger, good(
+        run={"id": "", "started": None, "config_sha": None, "env": {}}))
+        if e.startswith("V9")][0]
+    assert "--run" not in found, (
+        "V9 must not name a CLI flag; this server cannot see any caller's argparse")
 
 
 def test_v9_does_not_claim_to_authenticate_the_run(ledger):
