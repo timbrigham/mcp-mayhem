@@ -509,7 +509,9 @@ class Config:
                     and rb.replace("-", "").isdigit()):
                 raise ConfigError(
                     f"{self.loopbreaks_path}: break {step!r} has review_by={rb!r}. "
-                    f"Satisfied when it is an ISO date, YYYY-MM-DD.")
+                    f"Satisfied when it is an ISO date, YYYY-MM-DD, interpreted as UTC - "
+                    f"every date and timestamp on this fleet is UTC, and expiry is compared "
+                    f"against the UTC date, never the machine's local one.")
             # ⭐⭐ THE CADENCE IS ENFORCED, NOT REMEMBERED. Tim, 2026-09-08: *"let's do their
             # reviews in one month increments at least to start."* Written here rather than
             # held as a habit, because a rule agreed in conversation binds only the people in
@@ -550,7 +552,13 @@ class Config:
         all. The date is required; acting on it is a decision, and decisions are Tim's.
         """
         import datetime
-        today = datetime.date.today().isoformat()
+        # THE COMPARISON IS UTC, BECAUSE EVERYTHING IT COMPARES AGAINST IS.
+        # `date.today()` is the LOCAL date. Every timestamp this fleet stores carries an
+        # explicit +00:00 - all 2,625 records, the refusal sidecar, every `_now()` - so a
+        # local `today` would price a UTC-dated carve against a local calendar and read a
+        # break as expired up to six hours early, or late, depending on the machine's zone.
+        # Tim, 2026-09-09: make it blatantly obvious what timezone entries use.
+        today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         out = []
         for step, brk in sorted(((self.loopbreaks or {}).get("breaks") or {}).items()):
             if not isinstance(brk, dict):

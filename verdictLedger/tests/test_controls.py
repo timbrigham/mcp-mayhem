@@ -1975,3 +1975,50 @@ def test_a_filtered_signals_call_does_not_report_every_OTHER_step_as_never_run(l
     assert narrowed["records_considered"] < whole["records_considered"], (
         "the filter must still narrow what the OTHER families see, or this test is passing "
         "because the filter stopped working")
+
+
+def test_carve_expiry_is_compared_in_UTC_not_local_time(ledger, config_dir, tmp_path,
+                                                        monkeypatch):
+    """EVERY DATE ON THIS FLEET IS UTC, AND THE COMPARISON HAS TO BE TOO.
+
+    Tim, 2026-09-09: make it blatantly obvious what timezone entries use. The survey found
+    the storage was already unambiguous - all 2,625 records carry an explicit +00:00, as does
+    the refusal sidecar and every _now() - and that the COMPARISON was not: expiry used
+    date.today(), which is the LOCAL date.
+
+    At UTC-5 or -6 those differ for five to six hours of every day, so a UTC-dated carve was
+    priced against a local calendar and could read expired early or late. Small in effect and
+    exactly the class this repo exists to remove: a true value read against the wrong object.
+
+    The probe pins the behaviour rather than the wording: a carve whose review_by is the UTC
+    date must not read as expired, in any machine timezone.
+    """
+    import datetime
+
+    from core.ledger import Ledger
+
+    utc_today = datetime.datetime.now(datetime.timezone.utc).date()
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "decided": utc_today.isoformat(),
+        "review_by": (utc_today + datetime.timedelta(days=1)).isoformat()}})
+    cfg = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                 required_path=config_dir / "required.v2.json").config
+    assert cfg.loop_breaks_expired == [], (
+        "a carve reviewed tomorrow in UTC must not read as expired - if this fails the "
+        "comparison has drifted back to a local date")
+
+    _breaks(tmp_path, monkeypatch, {"check_invariants": {
+        "exclude": ["docs/x.md"], "reason": "r", "decided_by": "tim",
+        "decided": (utc_today - datetime.timedelta(days=10)).isoformat(),
+        "review_by": (utc_today - datetime.timedelta(days=1)).isoformat()}})
+    cfg2 = Ledger(ledger.data_path, policy_path=config_dir / "policy.v1.json",
+                  required_path=config_dir / "required.v2.json").config
+    assert [e["step"] for e in cfg2.loop_breaks_expired] == ["check_invariants"], (
+        "a carve reviewed yesterday in UTC must read as expired")
+
+    import inspect
+    src = inspect.getsource(type(cfg).loop_breaks_expired.fget)
+    assert "date.today()" not in src.replace("`date.today()`", ""), (
+        "loop_breaks_expired must not call date.today() - that is the LOCAL date, and every "
+        "value it compares against is UTC")

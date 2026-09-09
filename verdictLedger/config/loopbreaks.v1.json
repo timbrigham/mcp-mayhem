@@ -14,5 +14,6 @@
       "review_by": "2026-10-08"
     }
   },
-  "_first_carve": "adversary carved 2026-09-08. editorial is MEASURED circular and deliberately NOT carved: it returned a capped PASS while adversary failed nine rounds in ten, so leaving it uncarved is the control that tells us whether cross-review alone is enough. Carving both would have removed the evidence along with the deadlock."
+  "_first_carve": "adversary carved 2026-09-08. editorial is MEASURED circular and deliberately NOT carved: it returned a capped PASS while adversary failed nine rounds in ten, so leaving it uncarved is the control that tells us whether cross-review alone is enough. Carving both would have removed the evidence along with the deadlock.",
+  "_timezone": "EVERY date and timestamp in this file, and everywhere else on this fleet, is UTC. Records carry an explicit +00:00 (all 2,625 of them, measured 2026-09-09); the bare YYYY-MM-DD dates here are UTC dates, and `review_by` expiry is compared against the UTC date rather than the machine's local one. Stated because a bare date is ambiguous by up to a day, and because a true value sitting next to a misleading zone label is one reader away from the wrong-object defect this repo exists to remove."
 }

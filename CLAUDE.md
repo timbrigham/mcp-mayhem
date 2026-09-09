@@ -81,6 +81,33 @@ detected.
 **Guards and their claims land together.** A control whose surviving enforcement is *asserted*
 rather than *run* is an unpriced exemption. Verify by making it fail.
 
+## Time is UTC, everywhere, and the entry says so
+
+⭐ Tim, 2026-09-09: *"we need to make it blatantly obvious what time zone we are using for our
+entries."*
+
+**Every timestamp this fleet writes is UTC with an explicit offset.** Measured that day: all
+2,625 ledger records end `+00:00`, as does the refusal sidecar; `_now()` is
+`datetime.now(timezone.utc)`. That half was already right and needed no change.
+
+⛔ **THE COMPARISONS WERE NOT, AND THAT IS WHERE IT BIT.** `loop_breaks_expired` used
+`date.today()` — the LOCAL date — against UTC-dated carves. At UTC-5/-6 those differ for five
+to six hours of every day, so a carve could read expired early or late. A true value read
+against the wrong object, in the module written to remove that class. **Never compare a stored
+UTC value against `date.today()`, `datetime.now()` without a tz, or anything else that resolves
+locally.**
+
+⚠ **A BARE `YYYY-MM-DD` IS AMBIGUOUS BY UP TO A DAY.** Where a date must stay bare — the
+loop-break register — the file states the convention in a `_timezone` field rather than leaving
+a reader to assume. Where a full timestamp is written, carry the offset.
+
+⛔ **AND IN PROSE, WRITE THE INSTANT IN UTC AND DROP THE ZONE NAME.** The consumer's rule,
+earned 2026-09-09: they printed a correct `-05:00` next to the zone id `Central Standard Time`,
+whose BASE offset is `-06:00` and which says "Standard" year-round. The number was right and the
+label beside it would make the next reader's arithmetic wrong by an hour in December. **A true
+value displayed next to a misleading label is one reader away from `DC-44`** — the same shape as
+a record id sitting next to a step name, which is what the whole 2026-09-09 arc was pulling on.
+
 ## The MCP surface is a contract, not a docstring
 
 Measured 2026-09-05 across all four live servers: **84 tools, zero annotations, zero
