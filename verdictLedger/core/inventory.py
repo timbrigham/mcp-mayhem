@@ -1119,6 +1119,45 @@ def build(*, config, records, action: str, files: dict,
     }
 
 
+def _gap_remedy(name: str, applies: int, missing: list, records, files: dict) -> str:
+    """What to DO about this step's gap, and never advice that would waste the attempt.
+
+    ⛔⛔ THE DEFECT THIS REPLACES, MEASURED 2026-09-09 AND REPORTED BY THE CONSUMER. The
+    condition was `any(r["step"] == name and r["verdict"] == "FAIL" for r in records)` --
+    ANY FAIL anywhere in the stream, EVER, with no test that it was about the bytes in
+    hand. So a step whose row status is `LEGACY_IDENTITY` was told **"fix the findings,
+    so re-running changes nothing"** on the strength of a FAIL from some earlier tree.
+
+    ⚠⚠ AND IT CONTRADICTED THE OTHER TOOL AT THE SAME REF. `inventory` said of `build`:
+    *"recorded under the superseded sha256 subject scheme; RE-RECORD it (or let it age
+    out)"*. `coverage_gap` said re-running changes nothing. Two tools, one step, one ref,
+    opposite instructions -- and the wrong one told the caller NOT to do the single thing
+    that would clear it. Measured at tag scope: `build`, 524 applies, 0 have, gating.
+
+    ⭐ THE TEST IS WHETHER THE FAIL IS LIVE AT THIS CONTENT. A FAIL indicts BYTES. If every
+    subject it names has since moved, it is not the reason this step has no PASS today, and
+    "re-running changes nothing" is false. This is the same error as taking `records[-1]`
+    for the deciding record: a real FAIL, read against the wrong tree.
+
+    ⚠ Deliberately NOT reusing the row status, which `coverage_gap` does not build. The
+    honest local test is the one the status itself is derived from -- does a FAIL name a
+    subject at a blob this tree still has.
+    """
+    if not missing:
+        return "nothing owed"
+    covers_whole_scope = bool(applies) and len(missing) == applies
+    if covers_whole_scope:
+        for r in records:
+            if r.get("step") != name or r.get("verdict") != "FAIL":
+                continue
+            for sub in (r.get("subjects") or []):
+                path, blob = sub.get("path"), sub.get("git_blob_id")
+                if blob and path and files.get(path) == blob:
+                    return ("fix the findings — this step covers its scope and passes "
+                            "none of it, so re-running changes nothing")
+    return "run the step over the listed paths and record"
+
+
 def coverage_gap(*, config, records, action: str, files: dict,
                  admission: list, step: Optional[str] = None,
                  limit: int = 200) -> dict:
@@ -1178,13 +1217,7 @@ def coverage_gap(*, config, records, action: str, files: dict,
             # is the failure this whole server exists to end.
             "paths": missing[:limit],
             "truncated": max(0, len(missing) - limit),
-            "remedy": ("nothing owed" if not missing else
-                       "fix the findings — this step covers its scope and passes none "
-                       "of it, so re-running changes nothing"
-                       if applies and len(missing) == applies
-                       and any(r.get("step") == name and r.get("verdict") == "FAIL"
-                               for r in records)
-                       else "run the step over the listed paths and record"),
+            "remedy": _gap_remedy(name, applies, missing, records, files),
         })
     return {"action": action, "steps": out,
             "total_missing": sum(s["missing"] for s in out),

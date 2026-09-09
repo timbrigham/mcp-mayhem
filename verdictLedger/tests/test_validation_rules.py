@@ -785,3 +785,46 @@ def test_v19_is_governed_by_the_rule_engine_not_the_shape_pass(ledger):
                    validate_mod.structural(good(verdict="FAIL", reason="x", failing=[]))), (
         "V19 must not fire from the shape pass — it is a rule, and the neuter control "
         "only governs `rules()`")
+
+
+# -- coverage_gap must not advise against the one thing that would work ---------
+
+def test_a_stale_fail_does_not_produce_fix_the_findings_advice():
+    """⛔⛔ MEASURED 2026-09-09, REPORTED BY THE CONSUMER. The old condition was `any FAIL
+    for this step anywhere in the stream`, with no test that it concerned the bytes in
+    hand. A step whose row status was LEGACY_IDENTITY — `build`, 524 applies, 0 have,
+    gating a tag — was told "fix the findings, so re-running changes nothing", while
+    `inventory` said of the same step at the same ref "re-record it". Two tools, opposite
+    instructions, and the wrong one told the caller NOT to do the thing that clears it.
+
+    ⚠ A FAIL indicts BYTES. If every subject it names has moved, it is not why this step
+    has no PASS today. Same error as taking records[-1] for the deciding record."""
+    from core.inventory import _gap_remedy
+    files = {"a.py": "b" * 40}                      # the tree today
+    stale_fail = [{"step": "s", "verdict": "FAIL",
+                   "subjects": [{"path": "a.py", "git_blob_id": "a" * 40}]}]   # older bytes
+    assert _gap_remedy("s", 1, ["a.py"], stale_fail, files) == (
+        "run the step over the listed paths and record")
+
+
+def test_a_live_fail_still_produces_fix_the_findings_advice():
+    """⚠ THE OTHER LEG, AND IT MUST NOT REGRESS. Measured 2026-08-25: `editorial`,
+    `adversary` and `rely` cover their whole scope and pass NONE of it, and for those
+    re-running genuinely changes nothing — the remedy is to fix findings. Narrowing the
+    condition must not cost that."""
+    from core.inventory import _gap_remedy
+    files = {"a.py": "a" * 40}
+    live_fail = [{"step": "s", "verdict": "FAIL",
+                  "subjects": [{"path": "a.py", "git_blob_id": "a" * 40}]}]
+    assert "re-running changes nothing" in _gap_remedy("s", 1, ["a.py"], live_fail, files)
+
+
+def test_a_partial_gap_never_says_re_running_changes_nothing():
+    """The claim is about a step that passes NONE of its scope. With something passing,
+    re-running demonstrably does change things."""
+    from core.inventory import _gap_remedy
+    files = {"a.py": "a" * 40}
+    live_fail = [{"step": "s", "verdict": "FAIL",
+                  "subjects": [{"path": "a.py", "git_blob_id": "a" * 40}]}]
+    assert _gap_remedy("s", 5, ["a.py"], live_fail, files) == (
+        "run the step over the listed paths and record")
