@@ -167,6 +167,16 @@ class InventoryResult(Result, total=False):
     # registry `module` (mechanical steps) and the record `evidence` (agent steps). Measured
     # 2026-09-08: registry-only returns 3 and misses `adversary`/`editorial`; the union is 5.
     circular_gates: list[dict[str, Any]]
+    # ⭐ SCOPE-2 — steps recording a verdict over a path OUTSIDE their declared scope.
+    # Twenty-two rules, V1..V21, and none compares a record's subjects against the step's
+    # fence, so a registered step may claim any path and the ledger accepts it.
+    # ⚠ NOT the same as `witness` on can_push, which reports UNDER-coverage (paths nobody
+    # covers). This is the mirror — OVER-claim — and the two are not independent: over-claim
+    # is the mechanism by which under-coverage hides, because an inflated coverage count
+    # looks BETTER and nothing re-runs in that direction.
+    # ⚠ Disclosure only, Tim's call 2026-09-09. A refusal here would reject records the
+    # ledger accepts today, which is a coordinated change, client first.
+    subjects_outside_scope: list[dict[str, Any]]
     # ⭐ The frozen convergence bar, beside `complete`. `complete: true` is a claim about a
     # SCOPE — if the registry moved since the run was frozen it is true about a different one.
     # Carried here because gitRobot's status() embeds an inventory, not a progress, so a

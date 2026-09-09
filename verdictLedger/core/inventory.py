@@ -853,6 +853,90 @@ def build(*, config, records, action: str, files: dict,
                             "also admitted for this action."),
         })
 
+    # ⭐⭐ SCOPE-2 — A STEP RECORDING A VERDICT OVER A PATH OUTSIDE ITS OWN FENCE.
+    #
+    # ⛔ THE HOLE THIS NAMES. Twenty-two validation rules, V1 through V21, and NOT ONE
+    # compares a record's `subjects` against the step's declared scope. `V8` refuses an
+    # unregistered STEP and says nothing about subjects, so a registered step may record a
+    # PASS over any path in the tree and the ledger accepts it. Confirmed 2026-09-09 by
+    # reading every rule, after a probe was refused on V15/V16c/V1 first and answered a
+    # different question than the one asked.
+    #
+    # ⚠⚠ AND IT IS NOT THE SAME DEFECT AS THE ONE THE CONSUMER REPORTED, WHICH IS WHY IT
+    # NEEDED ITS OWN FIELD. They reported "6 of 16 changed paths fall outside every admitted
+    # review step's scope" and called it SCOPE-2. That is UNDER-COVERAGE — paths nobody
+    # covers — and `witness` on `can_push` already reports it. This is the MIRROR:
+    # OVER-CLAIM, a step reaching outside its fence. The two point in opposite directions
+    # and only this one is invisible.
+    #
+    # ⛔ THE TWO ARE NOT INDEPENDENT, AND THAT IS THE REASON THIS MATTERS. Over-claim is the
+    # mechanism by which under-coverage HIDES: if a step may name subjects outside its scope
+    # and nothing refuses it, coverage counts can be inflated by records never entitled to
+    # those paths — and the inflated number looks BETTER, which is the direction nobody
+    # re-runs. A green `19/19` is only as good as the subject lists behind it.
+    #
+    # ⚠ DISCLOSURE, NEVER A GATE — deliberately, and Tim's call 2026-09-09. The fix would be
+    # a new refusal rejecting records the ledger accepts today, which is a coordinated change
+    # exactly like `isError`: landing it unilaterally turns a working pipeline into a blocked
+    # one at a moment nobody chose. `undeclared_producers`, `loop_breaks_expired`,
+    # `coverage_unbarred`, `stale_pins` and `circular_gates` all bought the same time first.
+    #
+    # ⛔⛔ THREE TRAPS. The first two are `circular_gates`' and are documented above; the
+    # third is this field's alone and would have made it lie.
+    # (1) SCOPE FROM `reqs`, NOT THE RAW REGISTRY — `requirements()` discards a narrowing
+    #     with no `reason`, so the registry shows a fence the resolved requirement lacks.
+    # (2) A STEP DECLARING NO SCOPE IS SKIPPED. It has no fence, so it cannot reach outside
+    #     one. `unscoped` already reports that as its own finding.
+    # (3) ⚠⚠ MATCH AGAINST THE GLOBS, NEVER AGAINST `_scope_paths`. `_scope_paths` is
+    #     globs INTERSECTED WITH THIS TREE, so a subject naming a path that has since been
+    #     DELETED is absent from it while having been perfectly in scope when recorded.
+    #     Testing membership there would report every deleted file as an out-of-scope
+    #     claim — a true value read against the wrong object, in the field written to catch
+    #     exactly that. `evidence_moved` is where a moved subject belongs.
+    _raw_types_s2 = (config.required.get("types") or {})
+    subjects_outside_scope = []
+    for _step, _spec in sorted(reqs.items()):
+        _when = _spec.get("when")
+        _globs = _spec.get("scope") or ([_when] if _when else [])
+        if not _globs:
+            continue          # no declared fence — see trap (2)
+        _drop = _spec.get("scope_exclude") or []
+        _outside, _record_ids = {}, []
+        for _rec in records:
+            if _rec.get("step") != _step:
+                continue
+            _bad = sorted({
+                _sub.get("path") for _sub in (_rec.get("subjects") or [])
+                if _sub.get("path")
+                and (not any(fnmatch.fnmatch(_sub["path"], _g) for _g in _globs)
+                     or any(fnmatch.fnmatch(_sub["path"], _g) for _g in _drop))
+            })
+            if _bad:
+                _record_ids.append(_rec.get("id"))
+                for _p in _bad:
+                    _outside[_p] = _outside.get(_p, 0) + 1
+        if not _outside:
+            continue
+        # ⚠ AGGREGATED BY STEP, NOT BY RECORD, so the field is bounded by the registry
+        # (tens) rather than by the stream (thousands). The per-path list is capped and
+        # the cap is DISCLOSED: a silently truncated list reads as "that was all of them",
+        # which is the defect this whole field exists to surface.
+        _paths = sorted(_outside, key=lambda p: (-_outside[p], p))
+        subjects_outside_scope.append({
+            "step": _step,
+            "paths": _paths[:10],
+            "paths_total": len(_paths),
+            "paths_omitted": max(0, len(_paths) - 10),
+            "records_affected": len(_record_ids),
+            "example_record": _record_ids[0] if _record_ids else None,
+            "declared_scope": list(_globs),
+            "admitted": admission is not None and _step in set(admission),
+            "consequence": ("this step recorded a verdict over a path outside its declared "
+                            "scope. Nothing refuses that today, so any coverage count "
+                            "including these subjects is inflated in the direction that "
+                            "does not get re-run. REPORTED, NEVER BLOCKING."),
+        })
+
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.
     admitted = None if admission is None else set(admission)
@@ -1012,6 +1096,7 @@ def build(*, config, records, action: str, files: dict,
         # append, where the claim is made; this is the interval before it fires.
         "stale_pins": stale_pins,
         "circular_gates": circular_gates,
+        "subjects_outside_scope": subjects_outside_scope,
         "how_breakdown": how_counts,
         "rows": rows,
     }
