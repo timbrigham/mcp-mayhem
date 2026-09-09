@@ -89,9 +89,19 @@ EXIT_CODES = {
     0: "ok - the check ran and found nothing.",
     1: "the check ran and FOUND something. A real finding, not an error.",
     2: ("the check could not run - usage error, bad arguments, missing input. NOT a finding."),
-    3: ("UNDETERMINED - it ran and could not decide: scope not resolved, a contested panel, a "
-        "dependency unavailable. Must never collapse into 0 or 1; that collapse is the defect "
-        "this whole vocabulary exists to make unrepresentable."),
+    # THE FIRST DRAFT OF THIS ENTRY WAS WRONG AND IT IS WORTH THE COMMENT. It read "scope not
+    # resolved, a contested panel, a dependency unavailable" - an ENUMERATION of causes,
+    # written without checking what the consumer's code does with 3. Measured 2026-09-09 after
+    # their editorial gate caught it: their tree branches on 3 in THREE places -
+    # check_paths.EXIT_SKIPPED (scope could not be determined), check_briefs.py:572, and
+    # hooks.py:697 ON THE PUSH PATH, where 3 means "the ledger REACHED and REFUSED this record
+    # - a DECISION, not an outage". NEITHER is a contested panel. The definition invented a
+    # meaning the code does not implement and omitted two it does, inside the module built to
+    # end exactly that. A vocabulary that enumerates CAUSES is a second copy of its callers.
+    3: ("UNDETERMINED - it ran and could not return a finding-or-clean answer. Must never "
+        "collapse into 0 or 1; that collapse is the defect this whole vocabulary exists to "
+        "make unrepresentable. WHAT SPECIFICALLY made it undetermined is the CHECKER's to say, "
+        "in that checker, mapped onto this - never enumerated here."),
 }
 
 VOCABULARIES = {
