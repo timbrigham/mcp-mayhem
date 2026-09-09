@@ -78,7 +78,19 @@ caller's files. Recording a verdict from inside one is SUPPORTED and correct.
 
 A worktree from add is DETACHED, so it has no branch name. Carry its commit SHA back:
 merge(branch=<the sha>, reason=...) accepts any commit-ish, despite that parameter being
-called 'branch'.""",
+called 'branch'.
+
+OBSERVED 2026-09-09, 6-for-6 across three servers: after this server RESTARTS, the first
+call on a connection that predates the restart fails with a bare transport error and NO
+body - retry once and the second call succeeds. Isolated by an accidental control in one
+batch: the server whose connection had already been re-established succeeded on its first
+read; the two that were stale failed. The only variable that differed was connection age.
+
+This is a DATED OBSERVATION ABOUT CLIENT BEHAVIOUR, not a guarantee. Neither this server
+nor its author owns the client, and a client change could end it without notice. It is
+written here rather than in the error payload because the payload IS classified -
+error_type unavailable, retryable true - and at least one MCP client discards it and
+surfaces only "Connection closed".""",
     host=os.environ.get("GITROBOT_HOST", "127.0.0.1"),
     port=int(os.environ.get("GITROBOT_PORT", "8010")),
 )
