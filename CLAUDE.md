@@ -196,10 +196,27 @@ to hold it. Publishing it does not reach them and NO additional channel fixes th
 remedy is that they start a new session. Write for the fresh client and say plainly that
 existing sessions must restart to see it.
 
-⚠ MEASURED ONCE, WITH NO NEGATIVE CASE. One fresh client, one positive. The consumer flagged
-this against their own evidence rather than mine: it is the same repeated-positives shape as
-`DC-48`. A second cleared client after the next `instructions` edit is the cheap confirmation,
-and until then this is an observation, not a law.
+⛔⛔ AND "BOOT-TIME ONLY" IS ALREADY FALSIFIED — TREAT THE CHANNEL AS UNPREDICTABLE
+MID-SESSION, NOT AS A SNAPSHOT. Three observations, same client, same fleet, unreconciled:
+
+    2026-09-08  a LIVE session could not see the newly-added `admission` tool, then hit a
+                reconnect, and afterwards saw BOTH the new tool AND the new `instructions`.
+                A mid-session refresh, of roster and instructions together.
+    2026-09-09  a live session held PRE-UPDATE `instructions` across two reconnects and four
+                successful resource reads.
+    2026-09-09  a live session held PRE-UPDATE tool DESCRIPTIONS after a confirmed restart
+                (pid start 12:02:57 UTC, re-fetch 12:04) while a call on the same connection
+                SUCCEEDED first try — which is also the first exception to the retry signature
+                below.
+
+⚠ SO THE VARIABLE IS NOT "DOES IT EVER REFRESH". It does, sometimes. Nobody has WHICH reconnect
+refreshes, and a tidy hypothesis here would be a cause attached to a real observation with no
+negative case — the defect this pair filed as `DC-48` the same night. The 09-08 datum survives
+only because the session that saw it was staggered against a session that did not clear.
+
+⭐ WHAT A READER CAN RELY ON, WHICH IS THE ONLY PART WORTH DOCUMENTING: **if you need current
+text, START A SESSION.** Do not reason about whether a reconnect gave you one, and do not
+publish anything urgent expecting live sessions to see it.
 
 ⛔⛔ **A RESOURCE IS UNREACHABLE FROM A SPAWNED SUBAGENT, AND THAT CHANGES WHO IT IS FOR.**
 Measured by the consumer 2026-09-09: a subagent spawned via the Agent tool receives MCP TOOLS
