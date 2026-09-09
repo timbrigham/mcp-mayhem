@@ -75,6 +75,84 @@ def _first_segment(path: str) -> str:
     return p.split("/", 1)[0]
 
 
+# On a run we can SEE succeeded, the transcript answers a question nobody asked: the
+# receipt already carries `decision`, `head`, `branch`, `tree` and `ok`. Keep only enough
+# tail for git's own summary lines -- `[branch sha] subject` and `N files changed` --
+# which is what a caller actually reads back after a commit.
+_OK_TAIL_KEEP = 800
+
+
+def _bound_receipt_output(out: dict) -> dict:
+    """Bound the free-text fields a receipt hands back, and SAY what was dropped.
+
+    THE DEFECT THIS REMOVES. `_receipt` clips `detail` -- but `detail` goes to
+    `self.audit.append` and NEVER APPEARS IN THE RETURNED DICT. What the consumer
+    receives is `extra`, which FOURTEEN call sites fill with a raw subprocess stdout and
+    which `_receipt` passed through untouched. The clip protected the audit log on disk
+    and not the caller, and that was invisible for five days.
+
+    AND THE 2026-09-04 COMMENT ON THAT CLIP SAYS, IN ITS OWN WORDS, "SO THE CLIP I ADDED
+    EARLIER COVERED ONE COPY AND MISSED THE OTHER" -- then the fix it introduced did the
+    same thing one layer along. Bounding centrally was the right instinct aimed at the
+    wrong copy: the argument for doing it in `_receipt` rather than per call site is
+    exactly why it must also cover `extra`, or the fourteen sites get found one incident
+    at a time, which is the outcome that comment was written to prevent.
+
+    MEASURED 2026-09-09 OFF THE CALL LOG, WHICH PRICES THE WIRE:
+
+        merge     2 calls   max 147,922 bytes   median 147,922
+        commit    5 calls   max 147,812 bytes   median   1,011
+        progress  3 calls   max  11,342 bytes   median   7,340
+
+    That 147,922-byte payload reduced, in the consumer's words, to "manifest
+    reconciliation: 11 of 11 launched; 0 bad exit(s)". All four of their last
+    merge/commit calls overflowed their context outright, and an MCP response has no
+    defence on the receiving end: unlike a shell command it cannot be redirected to a
+    file and read selectively, so the payload is in the caller's context the instant the
+    call returns. The choice is made entirely here.
+
+    AND THE ASYMMETRY WAS BACKWARDS, WHICH IS THE PART TO REMEMBER. The two FAILURE paths
+    in `merge` already truncate -- `merged.output[-2000:]` on a conflict,
+    `gate.output[-4000:]` on a gate failure -- while the SUCCESS path at the end of the
+    same method relays `merged.output + result.output` whole. The receipt was careful with
+    the caller's context exactly where detail is wanted, and profligate exactly where
+    `0 bad exit(s)` would have done.
+
+    THE DISCLOSURE IS NOT DECORATION. `calllog.py` already holds the rule this follows:
+    `req_bytes`/`resp_bytes` price the WIRE, never the stored excerpt. A clipped output
+    that renders like a complete one is this project's recurring defect, and it would be
+    worst here, in the record of what an operation did. So `output_bytes` is always the
+    FULL length and `output_truncated` says plainly whether anything was cut.
+
+    NARROW ONLY WHERE SUCCESS IS AFFIRMATIVELY VISIBLE -- `decision == "allowed"` and `ok`
+    not False. An unknown state takes the GENEROUS branch, because "absence is never
+    success" cuts this way round: a caller given too much output is inconvenienced, and a
+    caller given too little cannot see why something failed. The safe direction is more.
+    """
+    succeeded = out.get("decision") == "allowed" and out.get("ok") is not False
+    for field in ("output", "error"):
+        text = out.get(field)
+        if not isinstance(text, str):
+            continue
+        full = len(text)
+        if succeeded and full > _OK_TAIL_KEEP:
+            # Tail, not head: git prints its own result lines AFTER the hook transcript.
+            marker = (
+                "... [" + str(full - _OK_TAIL_KEEP) + " characters elided by gitRobot -- "
+                "this operation SUCCEEDED, so the passing transcript is dropped and the "
+                "tail kept. `output_bytes` prices the whole of it.] ...\n\n"
+            )
+            kept = marker + text[-_OK_TAIL_KEEP:]
+        elif succeeded:
+            kept = text
+        else:
+            kept = _clip_output(text)
+        out[field] = kept
+        out[field + "_bytes"] = full
+        out[field + "_truncated"] = len(kept) != full
+    return out
+
+
 class GitRobot:
     def __init__(self, repo: str | os.PathLike, *, data_path: str | os.PathLike,
                  actor: str = "cli", scratch: Optional[Path] = None):
@@ -199,7 +277,9 @@ class GitRobot:
             out["gates"] = [{k: g[k] for k in ("phase", "ran", "passed", "exit_code")}
                             for g in gates]
         out.update(extra or {})
-        return out
+        # Bounded HERE, not at the fourteen call sites that fill `extra` with a raw
+        # subprocess stdout -- see `_bound_receipt_output` for what that cost.
+        return _bound_receipt_output(out)
 
     # =========================================================================
     # Tier 3 — reads. No gates, no audit, always available.

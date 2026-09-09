@@ -46,6 +46,24 @@ class ReceiptResult(Result, total=False):
     gates: list[dict[str, Any]]
     # -- per-tool extras, all conditional
     output: str
+    # ⭐ WHAT THE CALLER NEEDS TO KNOW ABOUT `output`, BECAUSE IT IS BOUNDED. Added
+    # 2026-09-09 with `_bound_receipt_output`. `output_bytes` prices the FULL text the
+    # operation produced, NEVER the excerpt above it — the same rule `calllog.py` holds,
+    # and the reason bounding is safe here at all. `output_truncated` says plainly
+    # whether anything was cut, because a clipped output that renders like a complete
+    # one is this project's recurring defect and would be worst in the record of what
+    # an operation did.
+    # ⚠ MEASURED: merge was returning 147,922 bytes to say "0 bad exit(s)".
+    output_bytes: int
+    output_truncated: bool
+    # ⚠ `error` WAS RETURNED AND NEVER DECLARED — `stage` passes
+    # `extra={"error": result.output}` and has since before this file existed. Declaring
+    # it now rather than leaving a second raw-stdout field undocumented beside the one
+    # that just got fixed; an understated contract costs more than a wrong one, because
+    # nothing ever fails.
+    error: str
+    error_bytes: int
+    error_truncated: bool
     exit_code: int
     args: list[str]
     worktree: str | None
