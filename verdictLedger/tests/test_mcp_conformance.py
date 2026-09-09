@@ -891,3 +891,68 @@ def test_the_vocabulary_resource_is_generated_not_transcribed():
             assert str(key) in text, (
                 "%r is published in the constants but missing from the rendered resource - "
                 "the document is a copy, not a rendering" % key)
+
+
+def test_a_failed_resource_read_says_which_kind_of_failure_it_was():
+    """A RESOURCE FAILURE MUST SAY WHETHER RETRYING COULD EVER HELP.
+
+    Found from outside 2026-09-08. `install()` wraps `call_tool` and nothing else, so the
+    resource path had no classification at all: an unknown URI returned a JSON-RPC error with
+    code 0 and no error_type.
+
+    THE CALLER CANNOT TELL THE TWO FAILURES APART, and the consumer hit both within an hour on
+    the same call:
+
+        "Unknown resource"   the server is up and does not have it   -> TERMINAL
+        "Connection closed"  the transport died mid-call             -> RETRY (new pid)
+
+    Their words: "a caller who reads 'Connection closed' as 'not there yet' waits for a restart
+    that already happened, and one who reads 'Unknown resource' as transient retries forever."
+
+    THAT IS THE SPLIT mcpcommon/vocabulary.py DRAWS ONE LAYER UP - validation is terminal,
+    unavailable is retryable, "and conflating the two is how a rule gets retried past." The
+    tool path has held that line since the ledger was built; the resource path was never given
+    it.
+
+    The transport half is not fixable from here - when the connection dies there is no response
+    to classify. What this pins is the half the server owns.
+    """
+    import asyncio
+    import json as _json
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from mcp.shared.exceptions import McpError
+
+    from ledger_server import server as srv
+
+    # ⚠ THROUGH THE LOW-LEVEL HANDLER, WHICH IS THE PATH THE WIRE USES. The first draft
+    # called `mcp.read_resource()` — FastMCP's high-level helper — which raises ValueError
+    # before the protocol layer is reached, so it tested a layer no client ever touches and
+    # reported the wrapper missing while it was working over HTTP.
+    import mcp.types as types
+    handler = srv.mcp._mcp_server.request_handlers[types.ReadResourceRequest]
+    req = types.ReadResourceRequest(
+        method="resources/read",
+        params=types.ReadResourceRequestParams(uri="docs://verdictledger/no-such-thing"))
+    try:
+        asyncio.run(handler(req))
+    except McpError as exc:
+        body = _json.loads(exc.error.message)
+        assert body["error_type"] == "usage", (
+            "an unknown URI is the CALLER's mistake, not a server fault - `unhandled` is "
+            "reserved for a genuine bug and must not absorb it")
+        assert body["retryable"] is False, "a terminal failure must say so"
+        assert "transport" in body.get("note", ""), (
+            "the refusal must name the OTHER failure, or a caller cannot tell them apart")
+    except Exception as exc:
+        raise AssertionError(
+            "an unknown resource raised %s rather than a classified McpError - the wrapper "
+            "is not installed, or it failed inside its own handler (the first draft raised "
+            "AttributeError from mcp.types.McpError, which the client saw as the resource's "
+            "error message)" % type(exc).__name__)
+    else:
+        raise AssertionError("an unknown resource did not raise at all")

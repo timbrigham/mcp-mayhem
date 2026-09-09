@@ -189,3 +189,71 @@ def install(mcp) -> None:
             structuredContent=(result if (not refused and isinstance(result, dict)) else None),
             isError=refused,
         )
+
+
+def install_resource_classification(mcp) -> None:
+    """Make a failed `resources/read` say WHICH KIND of failure it was.
+
+    ⛔⛔ THE GAP, FOUND FROM OUTSIDE 2026-09-08. `_install_is_error` above wraps `call_tool`
+    and nothing else, so the resource path had no classification at all. Measured: an unknown
+    URI returns a JSON-RPC error with `code: 0` and NO `error_type` field.
+
+    ⚠⚠ AND A CALLER CANNOT TELL THE TWO FAILURES APART. The consumer hit both within an hour
+    of each other, on the same call:
+
+        "Unknown resource"   the server is up and does not have it   -> TERMINAL, do not retry
+        "Connection closed"  the transport died mid-call             -> RETRY, it is probably
+                                                                        a reconnect to a new pid
+
+    Their words, and they are right: *"a caller who reads 'Connection closed' as 'not there
+    yet' waits for a restart that already happened, and one who reads 'Unknown resource' as
+    transient retries forever."*
+
+    ⭐ THAT IS THE EXACT SPLIT `mcpcommon/vocabulary.py` DRAWS ONE LAYER UP — `validation` is
+    terminal, `unavailable` is retryable, *"and conflating the two is how a rule gets retried
+    past."* The tool path has held that line since the ledger was built; the resource path was
+    never given it. So this applies the same vocabulary rather than inventing a second one.
+
+    ⚠ THE TRANSPORT HALF CANNOT BE FIXED FROM HERE and this does not pretend to. When the
+    connection dies there is no response to classify — the client sees a dead socket and the
+    server never learns the call happened. What this fixes is the half the server owns: an
+    error IT returns now says whether retrying could ever help. A caller that sees a classified
+    `usage` knows to stop; anything unclassified reaching it is, by elimination, transport.
+    """
+    import mcp.types as types
+    from mcp.shared.exceptions import ErrorData, McpError
+
+    handlers = mcp._mcp_server.request_handlers
+    original = handlers.get(types.ReadResourceRequest)
+    if original is None:                     # nothing registered; nothing to wrap
+        return
+
+    async def _classified(req):
+        try:
+            return await original(req)
+        except Exception as exc:
+            # ⚠ An unknown URI is the CALLER's mistake, not a server fault — the same
+            # classification a bad argument name gets on the tool path. `unhandled` is
+            # reserved for a genuine server bug and must not absorb this.
+            text = str(exc)
+            kind = "usage" if "Unknown resource" in text else "unhandled"
+            payload = {
+                "ok": False,
+                "error_type": kind,
+                "error": text,
+                "retryable": False,
+                "note": ("A CLASSIFIED error means the server answered. If you instead saw the "
+                         "connection drop, that is the transport and IS worth one retry — "
+                         "typically a reconnect after a server restart."),
+            }
+            # ⚠ `McpError` lives in `mcp.shared.exceptions`, NOT in `mcp.types` — the first
+            # draft raised an AttributeError from inside its own error handler, which the
+            # client then saw as the resource's error message. A wrapper that fails is worse
+            # than none, so this import is checked at wrap time below rather than at raise
+            # time, where it would only surface on the failure path.
+            raise McpError(
+                ErrorData(code=types.INVALID_PARAMS if kind == "usage"
+                          else types.INTERNAL_ERROR,
+                          message=json.dumps(payload))) from exc
+
+    handlers[types.ReadResourceRequest] = _classified
