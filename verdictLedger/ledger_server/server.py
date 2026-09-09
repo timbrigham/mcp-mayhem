@@ -384,7 +384,27 @@ async def get(id: str) -> GetResult:
 async def find(step: Optional[str] = None, verdict: Optional[str] = None,
                tier: Optional[str] = None, since: Optional[str] = None,
                subject_sha: Optional[str] = None, limit: int = 50) -> FindResult:
-    """Query the stream. `count` is the full match total, `returned` is how many came back."""
+    """Query the stream. `count` is the full match total, `returned` is how many came back.
+
+    ORDERING IS STREAM ORDER - OLDEST FIRST - AND `limit` TAKES THE FIRST N, NOT THE LAST.
+    So find(step='editorial', limit=4) against 58 records returns the four from 2026-08-24
+    and 08-25, not today's. Measured 2026-09-09 after it cost an outside caller ~20k tokens
+    of two-week-old records while answering a question about that morning.
+
+    That is the current behaviour, stated because it is the opposite of the obvious reading
+    of a log query. It is NOT being flipped in place: the same call would start returning
+    different records to every existing caller, `record.py` included, which is a coordinated
+    change and not a quiet improvement. The order is document the ordering (this), then add
+    an explicit selector, then move the default.
+
+    Use `since=` to bound the window when you want recent records - it filters before the
+    limit applies, so it is the reliable way to ask about today.
+
+    AND IF YOU ARE LOOKING FOR THE RECORD THAT DECIDES AN ACTION, THIS IS THE WRONG TOOL AND
+    "MOST RECENT" IS THE WRONG SELECTOR. See `inventory`: the deciding record is the one
+    whose BASIS matches the tip's tree, which is not in general the newest one for that step.
+    Two readers got that wrong independently within one hour on 2026-09-09, both by taking
+    the latest record for a step and reasoning from it."""
     return await _guard(_ledger().find, step=step, verdict=verdict, tier=tier,
                         since=since, subject_sha=subject_sha, limit=limit)
 
@@ -503,7 +523,28 @@ def _sync_policy() -> dict:
           annotations=ToolAnnotations(title='Coverage inventory', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def inventory(action: str, ref: str = "staged",
                     admission: Optional[list[str]] = None) -> InventoryResult:
-    """Required vs satisfied vs MISSING for a ref — the complete key set for an action.
+    """⭐⭐ THE RECORD THAT DECIDES IS THE ONE WHOSE BASIS MATCHES THE TIP'S TREE - NOT THE MOST
+    RECENT ONE FOR THAT STEP.
+
+    Derive it rather than searching for it:
+
+        read(op='rev-parse', args=['<tip>^{tree}'])   ->  <tree>
+        get(id='<step>@<tree>#0')                     ->  the record that decides
+
+    ⚠⚠ WHY THIS NEEDS SAYING. Measured 2026-09-09: two editorial FAILs existed for one file
+    on one day - one based on the tip's tree, one based on `git write-tree` of the INDEX,
+    which matches no commit. Both are real, both name the same step, verdict, tier and
+    subject path. **Reading them side by side does not separate them; only the basis does.**
+    Two readers took the newest record and built opposite conclusions from it within one
+    hour, and one of those conclusions inverted a recommendation about a 14-commit push.
+
+    ⛔ A RECORD ID IS A DERIVED VALUE AND PROSE STORES IT AS A LITERAL, which strips the
+    binding that made it correct. A handoff line naming `<step>@<sha>#0` is true when written
+    and silently stops being the deciding record the moment the tip moves. Carry the TIP and
+    the derivation instead - it is strictly more information, and it cannot go stale into a
+    plausible-but-wrong answer.
+
+    Required vs satisfied vs MISSING for a ref — the complete key set for an action.
 
     ⚠ The requirement set is declared IN ADVANCE. An inventory assembled from "the
     records that happen to exist" is worthless, because "3 of 3 passed" and "5
