@@ -1,0 +1,122 @@
+"""The fleet's shared vocabularies - ONE definition, imported by every server.
+
+WHY THIS EXISTS, AND IT IS A DEFECT THAT ALREADY HAPPENED. Measured 2026-09-08: the
+consumer-facing failure vocabulary was defined in TWO errors.py files that had diverged with
+only `usage` in common -
+
+    verdictLedger   config, ledger, unavailable, usage, validation
+    gitRobot        gate, gitrobot, refusal, repo, usage
+    mcpcommon/iserror.py emits `unhandled` and READS error_type on every refusal from every
+                    server while owning none of it
+
+Nine values, three definition sites, no shared source. A caller cannot enumerate what it may
+receive, and two servers answering the same question with different words is the second copy
+of the policy config.py forbids, at fleet scale.
+
+Tim, 2026-09-08: "the standard and the definitions themselves are under the control of the mcp
+instance, and the zeroparadox framework is strictly a consumer." This is that. And on the
+duplication it retires: "definitely kill off all of the duplication."
+
+THESE ARE DEFINITIONS, NOT DOCUMENTATION. The rule from CLAUDE.md's resource contract: a
+vocabulary is GENERATED from the constants the code imports, never hand-authored. schema.py is
+the model that already works - VERDICTS is defined once, ledger.py imports it, inputs.py
+derives its Literal from it, and the wire enum comes from the same tuple, so the code would
+BREAK if it disagreed. Anything here that a server merely DESCRIBES rather than IMPORTS is a
+fourth copy, and the fourth copy is the one nobody notices.
+
+MEANING BELONGS HERE TOO, and that is the half an enum cannot carry. ["PASS","FAIL","UNDECIDED"]
+publishes the values; it cannot say that UNDECIDED is the honest verdict for a contested panel.
+That meaning currently lives in prose that drifts - 27 exit-code assertions in one consumer
+brief, four bedrock findings against them in one evening, every finding about a claim the
+tooling never implemented.
+
+WHAT DOES NOT BELONG HERE: registered step names, thresholds, and anything editable without a
+restart. Those live in config and are served by requirements()/policy(). Publishing a threshold
+here would be exactly the second copy this module exists to remove.
+"""
+
+from __future__ import annotations
+
+ERROR_TYPES = {
+    "usage": ("the CALL was malformed - a bad argument name, a missing required field. Fix the "
+              "call and retry; the server never saw a valid request."),
+    "validation": ("the call was well-formed and the CONTENT broke a rule. TERMINAL: do not "
+                   "retry, fix the record. Every violation is reported at once so one round "
+                   "trip is enough."),
+    "refusal": ("the operation is DELIBERATELY not offered. Not a failure - a design decision, "
+                "and the message names the sanctioned alternative."),
+    "gate": ("a blocking gate leg failed, so the mutation did not run. The work is unstarted, "
+             "not half-done."),
+    "config": ("the server's own configuration could not be read or is invalid. Nothing is "
+               "judged until it is fixed; this is served, never crashed on."),
+    "repo": "the configured repository is missing, is not a git repo, or git itself failed.",
+    "unavailable": ("a transient condition - a lock held, a resource busy. RETRYABLE, unlike "
+                    "validation, and conflating the two is how a rule gets retried past."),
+    "ledger": "an unclassified verdictLedger fault.",
+    "gitrobot": "an unclassified gitRobot fault.",
+    "unhandled": ("an exception the server did not classify. A BUG in the server, not in the "
+                  "call - if you see this for an ordinary caller mistake, that is a defect."),
+}
+
+DECISIONS = {
+    "allowed": "the operation ran and succeeded.",
+    "refused": "gitRobot declined to run it - policy, not failure. The alternative is named.",
+    "failed": "it ran and git returned non-zero. The tree may have changed.",
+    "skipped": ("there was nothing to do, which is not the same as success and not the same as "
+                "failure."),
+}
+
+ROW_STATUSES = {
+    "SATISFIED": "a verdict covers these exact bytes and it passed.",
+    "MISSING": ("no verdict exists for this step at this content. NOT a failure - nobody "
+                "looked."),
+    "STALE": ("a verdict exists but against different bytes, or its PRODUCER moved. It does not "
+              "judge this content; re-run the step."),
+    "FAIL": ("a verdict exists and it blocks. It indicts the subset it NAMES, never everything "
+             "it examined."),
+    "UNDECIDED": ("the step ran and could not decide - a crashed checker, a contested panel. "
+                  "Distinct from both PASS and FAIL, and it blocks."),
+    "REFUSED": ("a verdict was ATTEMPTED and rejected. Blocks, but condemns nothing: it is not "
+                "a FAIL about the content."),
+    "UNVALIDATED": ("the step is barred by min_coverage and examined too little of what this "
+                    "commit CHANGED."),
+    "LEGACY_IDENTITY": ("a verdict predating the current content key. Grandfathered, and named "
+                        "rather than silently counted."),
+    "NOT_APPLICABLE": "the registry narrows this step out for this action. It owes nothing.",
+}
+
+EXIT_CODES = {
+    0: "ok - the check ran and found nothing.",
+    1: "the check ran and FOUND something. A real finding, not an error.",
+    2: ("the check could not run - usage error, bad arguments, missing input. NOT a finding."),
+    3: ("UNDETERMINED - it ran and could not decide: scope not resolved, a contested panel, a "
+        "dependency unavailable. Must never collapse into 0 or 1; that collapse is the defect "
+        "this whole vocabulary exists to make unrepresentable."),
+}
+
+VOCABULARIES = {
+    "error_type": ERROR_TYPES,
+    "decision": DECISIONS,
+    "row_status": ROW_STATUSES,
+    "exit_code": EXIT_CODES,
+}
+
+
+def render_markdown():
+    """The vocabularies as a document, GENERATED from the constants above.
+
+    Never transcribe this into a brief or a readme. A copy is the fourth one and it goes stale
+    the way a README's test count does - measured four times in one evening in one file. Point
+    at the served resource instead.
+    """
+    out = ["# The fleet vocabularies", "",
+           "One definition, imported by every server, rendered from the constants in",
+           "mcpcommon/vocabulary.py. If a document restates any of this, the document is the",
+           "copy that will be wrong.", ""]
+    for name, table in VOCABULARIES.items():
+        out.append("## " + name)
+        out.append("")
+        for key, meaning in table.items():
+            out.append("- **`%s`** - %s" % (key, meaning))
+        out.append("")
+    return chr(10).join(out)

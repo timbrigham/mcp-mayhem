@@ -10,9 +10,30 @@ only one anything may retry.
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+# The fleet vocabulary is defined ONCE at the repo root and imported, never restated. Measured
+# 2026-09-08: this file and its sibling had diverged to share only `usage`, while
+# mcpcommon/iserror.py read the field on every refusal from every server and owned none of it.
+_root = _Path(__file__).resolve().parents[2]
+if str(_root) not in _sys.path:
+    _sys.path.insert(0, str(_root))
+from mcpcommon.vocabulary import ERROR_TYPES as _ERROR_TYPES
+
+
+def _kind(name):
+    """The shared value, and a hard failure if this server invents one nobody published."""
+    if name not in _ERROR_TYPES:
+        raise AssertionError(
+            "error_type %r is not in mcpcommon.vocabulary.ERROR_TYPES. Add it there so every "
+            "server and every caller can enumerate it, rather than defining it here." % name)
+    return name
+
+
 
 class LedgerError(Exception):
-    error_type = "ledger"
+    error_type = _kind("ledger")
 
 
 class ValidationFailure(LedgerError):
@@ -22,7 +43,7 @@ class ValidationFailure(LedgerError):
     time across three round trips is a caller that gives up and works around it.
     """
 
-    error_type = "validation"
+    error_type = _kind("validation")
 
     def __init__(self, violations: list[str]):
         self.violations = list(violations)
@@ -37,14 +58,14 @@ class ConfigError(LedgerError):
     notices. An unloadable config serves UNDECIDED and refuses every gated action.
     """
 
-    error_type = "config"
+    error_type = _kind("config")
 
 
 class Unavailable(LedgerError):
     """The store could not be written — a wedged writer, a full disk, a lock that
     never came free. The ONLY retryable class, and even then boundedly."""
 
-    error_type = "unavailable"
+    error_type = _kind("unavailable")
 
 
 class UsageError(LedgerError):
@@ -82,7 +103,7 @@ class UsageError(LedgerError):
     prose, and prose goes stale exactly like the `reason` field does.
     """
 
-    error_type = "usage"
+    error_type = _kind("usage")
 
     def __init__(self, what: str, satisfied_when: str):
         self.what = what

@@ -813,3 +813,81 @@ def test_every_call_signature_in_instructions_is_actually_callable():
              for t in asyncio.run(_srv.mcp.list_tools())]
     problems = unsupported_calls(_srv.mcp.instructions or "", tools)
     assert not problems, "uncallable signatures in instructions: %s" % problems
+
+
+def test_no_server_defines_an_error_type_the_fleet_has_not_published():
+    """ONE VOCABULARY, IMPORTED - not three, restated.
+
+    Measured 2026-09-08. error_type was defined in two errors.py files that had diverged with
+    only `usage` in common:
+
+        verdictLedger   config, ledger, unavailable, usage, validation
+        gitRobot        gate, gitrobot, refusal, repo, usage
+        mcpcommon/iserror.py emits `unhandled` and READS the field on every refusal from
+                        every server while owning none of it
+
+    Nine values, three definition sites, no shared source. A caller could not enumerate what
+    it might receive, and two servers answering the same question with different words is the
+    second-copy-of-the-policy defect at fleet scale.
+
+    Tim, 2026-09-08: "the standard and the definitions themselves are under the control of the
+    mcp instance, and the zeroparadox framework is strictly a consumer."
+
+    Both errors.py now take their VALUE from mcpcommon.vocabulary via _kind(), which raises if
+    a server invents one. This test is the other half: it walks the exception classes and
+    asserts every published error_type is in the shared table, so the next one cannot be added
+    locally.
+    """
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from mcpcommon.vocabulary import ERROR_TYPES
+
+    from core import errors as vl_errors
+
+    found = set()
+    for name in dir(vl_errors):
+        obj = getattr(vl_errors, name)
+        if isinstance(obj, type) and issubclass(obj, Exception):
+            kind = getattr(obj, "error_type", None)
+            if isinstance(kind, str):
+                found.add(kind)
+    assert found, "no error_type values found - the scrape broke, not the code"
+    unpublished = sorted(found - set(ERROR_TYPES))
+    assert not unpublished, (
+        "these error_type values are defined locally and published by nobody, so a caller "
+        "cannot enumerate them: %s" % unpublished)
+
+
+def test_the_vocabulary_resource_is_generated_not_transcribed():
+    """A vocabulary resource must RENDER the constants, never carry a copy of them.
+
+    CLAUDE.md's resource contract: "generated from the constants the code imports, never
+    hand-authored. A hand-written dictionary is the FOURTH copy, not the replacement for
+    three." This asserts the served document actually contains every published value, which a
+    transcription would drift out of the moment a value was added.
+    """
+    import asyncio
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from mcpcommon.vocabulary import VOCABULARIES
+
+    from ledger_server import server as srv
+
+    uris = [str(r.uri) for r in asyncio.run(srv.mcp.list_resources())]
+    assert any("vocabulary" in u for u in uris), "no vocabulary resource is served"
+
+    rendered = asyncio.run(srv.mcp.read_resource("docs://verdictledger/vocabulary"))
+    text = "".join(getattr(c, "content", "") or "" for c in rendered)
+    for table in VOCABULARIES.values():
+        for key in table:
+            assert str(key) in text, (
+                "%r is published in the constants but missing from the rendered resource - "
+                "the document is a copy, not a rendering" % key)

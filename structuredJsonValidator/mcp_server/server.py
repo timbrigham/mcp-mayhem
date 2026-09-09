@@ -770,6 +770,42 @@ def _readme() -> str:
         return "README could not be read at %s: %s" % (path, exc)
 
 
+@mcp.resource(
+    "docs://sjv/vocabulary",
+    name="fleet vocabulary",
+    title="error_type, decision, row_status and exit_code - what every value MEANS",
+    description=("The shared vocabularies every server on this fleet answers with, rendered "
+                 "from the constants the code imports. An enum publishes the values; this "
+                 "publishes what they mean and when each is the honest answer."),
+    mime_type="text/markdown",
+)
+def _vocabulary() -> str:
+    """GENERATED from mcpcommon.vocabulary, never transcribed.
+
+    THE DUPLICATION THIS RETIRES. Measured 2026-09-08: `error_type` was defined in two
+    errors.py files sharing only `usage`, while mcpcommon/iserror.py read the field on every
+    refusal and owned none of it. Row statuses were string literals at each assignment site
+    with no list anywhere - UNVALIDATED had shipped the day before and appeared in no
+    enumeration, so a caller could not know it might arrive. And in the consumer's tree ONE
+    named exit constant stood against 19 bare sys.exit() and 120 bare returns, which is how
+    exit 3 acquired three incompatible meanings and how one brief came to carry 27 assertions
+    about tooling behaviour that produced four bedrock findings in a single evening.
+
+    Tim, 2026-09-08: "the standard and the definitions themselves are under the control of the
+    mcp instance, and the zeroparadox framework is strictly a consumer" - and on the prose
+    those consumers were maintaining by hand, "definitely kill off all of the duplication."
+
+    ANY DOCUMENT THAT RESTATES THIS IS THE COPY THAT WILL BE WRONG. Point at this URI.
+    """
+    import sys
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from mcpcommon.vocabulary import render_markdown
+    return render_markdown()
+
+
 def main() -> None:
     # ⚠ NOT `mcp.run(transport="streamable-http")`. That builds the Starlette app and
     # starts uvicorn in one call with no seam to install middleware; `serve` does the
