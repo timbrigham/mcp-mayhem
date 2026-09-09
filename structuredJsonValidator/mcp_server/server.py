@@ -688,17 +688,45 @@ def migrate_batch(source: Optional[str] = None, reconcile: Optional[list[dict]] 
 @mcp.tool(title='Apply a collection op',
           annotations=ToolAnnotations(title='Apply a collection op', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def apply(op: str, params: dict, collection: str = "declarations") -> WriteResult:
-    """Generic escape hatch: run any registered operation on a collection
-    (default 'declarations') with a params dict."""
+    """LAST RESORT. Runs a registered write op on a collection with a raw params dict.
+
+    ⛔ PREFER THE DEDICATED TOOL. Almost every op here also has its own tool — add_new,
+    annotate, drop, merge, move, rename, split and the rest — and those carry a real
+    inputSchema, so the shape of what you are sending is checked before it arrives. This one
+    takes `params: dict` and checks nothing until the store does. Reach for it only when no
+    dedicated tool covers the op.
+
+    ⚠ DO NOT GUESS AT `op`. The set is a RUNTIME registry, so it is deliberately not listed
+    here — a list in this docstring would be a second copy that drifts the moment an op is
+    added. Discover it instead: an unknown op is REFUSED with the complete set named in the
+    message ("Unknown operation 'x'. Known: ..."), which is a cheap, always-current probe.
+
+    ⚠ `params` is op-specific and validated by the op, not by this signature. A bad shape
+    surfaces as error_type 'validation' with the violations listed, never as a partial write:
+    the op runs on an isolated deep copy and the store is only replaced if the whole result
+    validates.
+
+    This is a WRITE into a validated store — destructiveHint is set for that reason."""
     return _write(collection, op, params)
 
 
 @mcp.tool(title='Apply a store-level op',
           annotations=ToolAnnotations(title='Apply a store-level op', readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
 def apply_store(op: str, params: dict) -> WriteResult:
-    """Generic escape hatch for a STORE-LEVEL (cross-collection) op — e.g.
-    op='migrate_batch'. The op receives the whole store and is validated across
-    all collections as one atomic transaction."""
+    """LAST RESORT, STORE-WIDE. A cross-collection op — e.g. op='migrate_batch'.
+
+    The op receives the WHOLE store and is validated across every collection as one atomic
+    transaction: either all collections end valid or nothing is written. That is the
+    difference from `apply`, which is scoped to one collection.
+
+    ⛔ The blast radius is every collection, so prefer `apply` when the change is confined to
+    one, and prefer the dedicated tool over either.
+
+    ⚠ DO NOT GUESS AT `op`. The store-level set is a runtime registry and is deliberately not
+    listed here — an unknown op is refused with the complete set named in the message, which
+    cannot go stale the way a list in this docstring would.
+
+    This is a WRITE into a validated store — destructiveHint is set for that reason."""
     return _write_store(op, params)
 
 
