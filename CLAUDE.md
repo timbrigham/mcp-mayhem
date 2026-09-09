@@ -177,6 +177,30 @@ times and observe the same bytes? Then it is a resource.**
   gate/gitrobot/refusal/repo/usage), while `mcpcommon/iserror.py` READS that field on every
   refusal from every server and owns none of it.
 
+⚠⚠ **`instructions` IS A BOOT-TIME CHANNEL WITH A SESSION-LENGTH TTL, NOT A BROADCAST.**
+Measured 2026-09-09 by clearing the consumer's session as a deliberate test. A FRESH client
+receives the current text unprompted — it arrives in the harness-supplied "MCP Server
+Instructions" section of the system prompt, before any tool call. A LIVE session does not: the
+previous session held the pre-update block across two successful reconnects and four successful
+resource reads.
+
+So the audience map is:
+
+    fresh session      gets current instructions ✓   can fetch resources ✓
+    running session    holds STALE instructions ✗    can fetch resources ✓
+    spawned subagent   instructions unmeasured       CANNOT fetch resources ✗
+
+⭐ THE CONSEQUENCE FOR ANYTHING URGENT: a long-lived session is exactly the caller that hits a
+mid-session restart, so the readers who most need a newly-published warning are the least likely
+to hold it. Publishing it does not reach them and NO additional channel fixes that — the only
+remedy is that they start a new session. Write for the fresh client and say plainly that
+existing sessions must restart to see it.
+
+⚠ MEASURED ONCE, WITH NO NEGATIVE CASE. One fresh client, one positive. The consumer flagged
+this against their own evidence rather than mine: it is the same repeated-positives shape as
+`DC-48`. A second cleared client after the next `instructions` edit is the cheap confirmation,
+and until then this is an observation, not a law.
+
 ⛔⛔ **A RESOURCE IS UNREACHABLE FROM A SPAWNED SUBAGENT, AND THAT CHANGES WHO IT IS FOR.**
 Measured by the consumer 2026-09-09: a subagent spawned via the Agent tool receives MCP TOOLS
 but not the MCP RESOURCE surface — `ToolSearch("select:ReadMcpResourceTool,ListMcpResourcesTool")`
