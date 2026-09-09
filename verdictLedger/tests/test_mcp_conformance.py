@@ -730,3 +730,46 @@ def test_no_served_description_understates_the_rules_it_runs():
     assert not stale, (
         "a served or documented rule range disagrees with the code. An UNDERSTATED range is "
         "the dangerous direction: it makes clean results from that path uncitable. %s" % stale)
+
+
+def test_the_server_teaches_a_caller_through_every_channel_it_advertises():
+    """⭐⭐ THREE CHANNELS, AND UNTIL 2026-09-08 THIS SERVER USED ONE.
+
+    An outside cold-read audit registered all seven MCP servers to a fresh instance and asked
+    a question the conformance suite never had: not "do the tools respond correctly" — they
+    all did — but **is a cold agent TOLD how to use them.** Its finding: three channels teach
+    a caller (server-level `instructions`, MCP resources, tool docstrings) and NO SERVER USED
+    MORE THAN ONE. Six of seven shipped no instructions.
+
+    ⛔ AND EVERY SERVER ADVERTISED A `resources` CAPABILITY WHILE SERVING AN EMPTY LIST.
+    FastMCP advertises it by default. That is an untrue served contract of the same class as
+    `validate` claiming V1-V18 while running V21 — and it sat one layer ABOVE all 22 checks in
+    this file, every one of which audits tools.
+
+    ⚠ WHY IT BITES HARDER THAN IT LOOKS: in the auditor's session every MCP tool was DEFERRED.
+    It received ~200 bare tool names and no schemas. A docstring answers "how do I use this?"
+    only after "which tool do I want?" is already settled. **`instructions` is the only
+    channel that reaches an agent before it commits** — and it found gitRobot's requirements(),
+    the best onboarding artifact in the set, BY ACCIDENT in a speculative batch load.
+    """
+    import asyncio
+
+    from ledger_server import server as srv
+
+    instructions = srv.mcp.instructions or ""
+    assert instructions.strip(), (
+        "no server-level instructions: the only channel that reaches an agent BEFORE it picks "
+        "a tool")
+    for required in ("START HERE", "MISTAKE"):
+        assert required in instructions, (
+            "instructions must name the first call to make and the mistake that will bite — "
+            "missing %r" % required)
+
+    resources = asyncio.run(srv.mcp.list_resources())
+    assert resources, (
+        "this server advertises a `resources` capability; serving none makes that capability "
+        "an untrue claim — either serve something or stop advertising it")
+    for r in resources:
+        assert r.name and r.description and r.mimeType, (
+            "every resource declares uri/name/description/mimeType per CLAUDE.md's resource "
+            "contract; %s is missing one" % r.uri)

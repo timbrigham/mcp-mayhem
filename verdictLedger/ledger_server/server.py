@@ -793,6 +793,44 @@ async def status() -> StatusResult:
     return await _guard(_ledger().status)
 
 
+
+# ── RESOURCES ─────────────────────────────────────────────────────────────────
+# ⭐⭐ THE THIRD CHANNEL, AND UNTIL 2026-09-08 THIS SERVER USED NONE OF IT.
+#
+# An outside cold-read audit registered all seven servers to a fresh instance and found that
+# THREE channels teach a caller how to use a server — server-level `instructions`, MCP
+# resources, and tool docstrings — and NO SERVER USED MORE THAN ONE. Worse, every server
+# ADVERTISED a `resources` capability (FastMCP does it by default) and served an empty list:
+# an untrue contract of exactly the class `CLAUDE.md` now forbids, sitting one layer above
+# every check in the conformance suite.
+#
+# ⚠ THE README WAS ALREADY THE BEST DOCUMENT IN THE PROJECT AND THE SERVER DID NOT SERVE IT.
+# The auditor read it only because it called github.get_file_contents out of curiosity. A
+# document a caller must find by another route is a document most callers never find — the
+# same argument `verdictLedger/client/record.py` exists to warn about, one level up.
+#
+# ⛔ THIS IS A DOCUMENT, NOT A VOCABULARY. `CLAUDE.md`'s resource contract requires a
+# vocabulary resource to be GENERATED from the constants the code imports, and forbids
+# publishing one before the vocabularies are consolidated into `mcpcommon`. Serving a README
+# publishes no value set, so it does not jump that queue. The dictionary is still owed.
+@mcp.resource(
+    "docs://verdictledger/readme",
+    name="verdictledger README",
+    title="verdictLedger — the append-only verdict stream",
+    description=("Why a verdict binds (step, path, git_blob_id), what each V-rule refuses and the measured incident behind it, and how the admission set divides between this ledger and gitRobot. Served from the repository so a caller never has to find it by "
+                 "another route."),
+    mime_type="text/markdown",
+)
+def _readme() -> str:
+    path = Path(__file__).resolve().parents[1] / "README.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # ⚠ An unreadable doc renders as ITS OWN STATE, never as an empty document. A blank
+        # resource reads as "this server has nothing to say", which is a different claim.
+        return "README could not be read at %s: %s" % (path, exc)
+
+
 def main() -> None:
     # ⚠ NOT `mcp.run(transport="streamable-http")`. That builds the Starlette app and
     # starts uvicorn in one call with no seam to install middleware; `serve` does the
