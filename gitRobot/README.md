@@ -22,9 +22,22 @@ the machine, and it must not be read as if it could.
 
 | layer | what it is | soundness |
 |---|---|---|
-| 1 | remote branch protection + required status checks | **the only sound layer** |
+| 1 | remote branch protection + required status checks | **the only sound layer — ON THE BRANCHES WHERE IT IS ACTUALLY ON** |
 | 2 | **gitRobot + a PreToolUse deny on direct `git`** | cooperative; defeats drift, not intent |
 | 3 | the installed git hooks | a backstop gitRobot keeps reachable |
+
+> ⛔ **LAYER 1 IS SOUND WHERE IT IS CONFIGURED, AND THAT IS NOT AUTOMATICALLY YOUR BRANCH.**
+> Reported by the ZeroParadox consumer 2026-09-08, measured on their side and NOT verifiable
+> from gitRobot's read tools: `main` reports `protected: true`, and **`illustrated` — the
+> branch every one of their commits actually lands on — reports `protected: false`.** So for
+> the branch in daily use, the layer this table calls *the only sound one* is not present, and
+> layer 2 is carrying the whole load.
+>
+> ⚠ The tiering above is unchanged and correct. What was wrong is reading "the only sound
+> layer" as a statement about THIS repository rather than about a control that has to be
+> switched on per branch. gitRobot cannot see branch-protection settings, so it cannot warn
+> you: **checking it is the reader's job, per branch, and this note exists because two
+> documents each held half of that and neither could see the other.**
 
 Installing this closes nothing on its own. Layer 2 works because the agent has no
 hands, not because the door has a better lock — and an agent that decides to route
@@ -98,8 +111,10 @@ findings arrive after the irreversible act. Splitting the verdict from the act i
 the point. A preflight is bound to the HEAD it ran against, so it cannot authorise
 anything committed after it.
 
-**Why `preflight` does not wait.** Measured 2026-08-22: the real pipeline takes
-~155s. Held open, that outlives two separate limits — the caller's ~120s call
+**Why `preflight` does not wait.** Measured 2026-08-22: the real pipeline took
+~155s. ⚠ IT NO LONGER DOES — 2026-09-08 it ran **743s**, and before the consumer's
+`env=` fix it hit the 1800s cap at exit 124. The ARGUMENT below is unchanged and got
+stronger; the number is a floor, not a current measurement. Held open, that outlives two separate limits — the caller's ~120s call
 window, and (the one that actually bit) the supervisor's 30s health poll. FastMCP
 runs a synchronous tool function *on the event loop*, so a blocking call stalls
 the whole server; the supervisor saw gitRobot unresponsive, declared it Down,
@@ -167,7 +182,9 @@ checkout on the machine — a strictly worse hole than the one it closes.
 
 Every Tier 1 and Tier 2 call appends one line to `data/git_ops.jsonl` — timestamp,
 actor, operation, arguments, HEAD, branch, tree state, decision, gate verdicts
-where run, the caller's reason, the refusal's *alternative* (so `explain` survives
+where run, **which WORKTREE it happened in** (added 2026-09-08 — before that a commit
+made in an isolated reviewer worktree and one made in the shared checkout produced
+identical receipts), the caller's reason, the refusal's *alternative* (so `explain` survives
 a restart), and the writing `pid` (so an interrupted run is detectable). Append-only, same shape as the sibling
 registry's audit sidecar.
 
@@ -242,7 +259,7 @@ killed the registry. Never give two supervised servers the same module path.
 ## Tests
 
 ```
-python -m pytest -q          # 163 tests
+python -m pytest -q          # 324 tests (2026-09-08; the count moves, re-run it)
 ```
 
 Every test runs against a disposable repository created per test — never the

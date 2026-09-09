@@ -63,7 +63,7 @@ mcp = FastMCP(
 history-rewriting and working-tree-destroying operations are not exposed, because an agent
 that can reset --hard can destroy uncommitted work and then correctly report the tree clean.
 
-START HERE: admission(action='push') - ~400 bytes, and it is what verdictLedger's progress(),
+START HERE: admission(action='push') - ~665 bytes, and it is what verdictLedger's progress(),
 coverage_gap() and can_push() refuse without. Then requirements(action='push') ONCE if you
 want the which_tool_answers_what routing map and the exclusion rationale: it is ~12KB and 79%
 of that is prose you probably do not need twice. status() is comprehensive and LARGE (~57KB
@@ -281,7 +281,7 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResu
 @mcp.tool(title='The admission set, and nothing else',
           annotations=ToolAnnotations(title='The admission set, and nothing else', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def admission(action: str = "push") -> AdmissionResult:
-    """THE ADMISSION SET ALONE — the steps that must be GREEN for `action`. ~400 bytes.
+    """THE ADMISSION SET ALONE — the steps that must be GREEN for `action`. ~665 bytes.
 
     CALL THIS BEFORE verdictLedger's progress(), coverage_gap() or can_push(). They refuse
     without an admission set, and this is the cheap way to satisfy them: pass the `admitted`

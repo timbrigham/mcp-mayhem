@@ -818,6 +818,47 @@ async def status() -> StatusResult:
 # publishing one before the vocabularies are consolidated into `mcpcommon`. Serving a README
 # publishes no value set, so it does not jump that queue. The dictionary is still owed.
 @mcp.resource(
+    "docs://verdictledger/writing-guide",
+    name="verdictLedger writing guide",
+    title="How to write a record the ledger will accept",
+    description=("The full `append` contract: which `decided.how` to use, how to split a mixed "
+                 "round, what belongs in subjects vs evidence vs inputs vs outstanding, and why "
+                 "a refusal is terminal. Served whole because the tool docstring is TRUNCATED "
+                 "by schema-fetch paths."),
+    mime_type="text/markdown",
+)
+def _writing_guide() -> str:
+    """The append docstring, GENERATED not copied — so it cannot drift from the tool.
+
+    ⛔⛔ IT EXISTS BECAUSE THE GUIDE WAS UNREADABLE IN FULL. Reported 2026-09-08 by the
+    consumer, after I told them to read it end to end: `ToolSearch` returns the docstring
+    TRUNCATED, cutting mid-sentence at *"revision only supersedes WI…"* — which is exactly the
+    rule they then had to ask me for by hand. **A writing guide that truncates mid-rule is
+    worse than one that stops earlier, because the reader does not know a rule was cut.**
+
+    ⚠ AND IT IS THE SECOND HALF OF A DEFECT WE ALREADY KNEW. `append`'s own docstring warns
+    that `client/record.py` carries the same advice and "an agent calling this tool directly
+    never sees that file — which is how a correct emitter came to be written against half the
+    contract." The consumer then found the deeper version: they never fetched `append` at all,
+    because `record.py` mediates every normal call, so nothing ever NEEDED it. Their words:
+    *"a rule keyed to 'read the contract before you call X' cannot reach the docs on the X you
+    never call."* One sentence in here — "ONE record carries the whole round; do NOT write one
+    per pass" — was the whole `copy_editor` V11 panel race, sitting on the wire all evening.
+
+    ⭐ Rendered from `append.__doc__` at read time, never transcribed. A copy would be the
+    fourth one and would go stale the way the README's test count did.
+    """
+    import inspect
+    fn = getattr(append, "fn", append)
+    doc = inspect.getdoc(fn) or ""
+    if not doc:
+        return "The append docstring could not be read; the tool may have been rebound."
+    header = "# verdictLedger - the writing guide"
+    note = "Rendered from `append`'s docstring, never transcribed."
+    return chr(10).join([header, "", note, "", doc])
+
+
+@mcp.resource(
     "docs://verdictledger/readme",
     name="verdictledger README",
     title="verdictLedger — the append-only verdict stream",

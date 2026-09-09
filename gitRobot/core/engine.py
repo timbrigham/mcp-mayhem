@@ -2492,7 +2492,14 @@ class GitRobot:
                 "what do I need to re-run?": "verdictLedger heal_plan(action, ref, admission)",
                 "which PATHS does step X owe?": "verdictLedger coverage_gap(step=X)",
                 "is it converging?": "verdictLedger progress(action, ref, admission)",
-                "what gates this action?": "gitRobot requirements(action) — this call",
+                # ⛔ ADDED 2026-09-08 AFTER THE MAP CONTRADICTED THE SERVER. `admission()`
+                # shipped at 20:28 and this map still answered its question with
+                # `requirements` — so the START HERE line and the routing map, two surfaces
+                # a cold agent reads minutes apart, gave different answers to the same
+                # question. The consumer caught it on the first read-through.
+                "what gates this action?": ("gitRobot admission(action) — 665 bytes, JUST the "
+                                            "set. This call adds the rationale and the map."),
+                "what must be GREEN, cheaply?": "gitRobot admission(action)",
                 "why was I refused?": "gitRobot explain(refusal_id)",
             },
             "source": "gitRobot/config/admission.v1.json (the file _require_inventory reads)",

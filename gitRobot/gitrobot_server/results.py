@@ -117,7 +117,7 @@ class PushStatusResult(Result, total=False):
 
 
 class AdmissionResult(Result, total=False):
-    """The admission set alone. ~400 bytes against requirements()' 11,904.
+    """The admission set alone. ~665 bytes against requirements()' 11,904.
 
     MEASURED 2026-09-08: of requirements(action='push'), `exclusion_rationale` is 9,463 bytes
     (79%) and `admitted` is 303 (2.5%). The consumer read only `admitted`, ~99 times, and had
