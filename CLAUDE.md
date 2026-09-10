@@ -364,9 +364,34 @@ tool available" WITHOUT the `disabled` clause — so the harness distinguishes a
 has disabled from a name that does not exist. ⚠ That control was run only after it was suggested
 in conversation, so it postdates the original claim rather than founding it.
 
-⭐⭐ WHAT SURVIVES BOTH, AND IT IS ALL THE DESIGN RULE NEEDS: **a spawned agent does not reach the
-resource surface, by any route either session could find.** Whether that is a disable or a
-non-registration changes who could fix it and changes nothing about what to build.
+⭐⭐ **RESOLVED 2026-09-10, IN THE CONSUMER SESSION'S FAVOUR: THE TOOLS ARE PRESENT AND
+SUPPRESSED, NOT UNREGISTERED.** The provenance-ring session found the discriminator by calling
+each name DIRECTLY, with no ToolSearch first:
+
+    ListMcpResourcesTool  -> "No such tool available: ListMcpResourcesTool.
+                              ListMcpResourcesTool is disabled for this session, ..."
+    ZzQxNotARealToolName  -> "No such tool available: ZzQxNotARealToolName"    <- STOPS HERE
+
+⭐ **ALL THREE SHARE THE PREFIX. ONLY THE REAL ONES CARRY A SECOND SENTENCE.** So the prefix is
+the generic wrapper and the trailing clause is the entire signal — and that is exactly how two
+honest probes disagreed: **both read the same first sentence, and only one read to the end of the
+line.** ToolSearch reports on the DEFERRED REGISTRY, where a suppressed tool is absent for a
+different reason than a nonexistent one, so that route never shows the cause at all.
+
+⚠ NEITHER ACCOUNT WAS FABRICATED. "No matching deferred tools found" was true and uninformative
+about mechanism; "disabled" was true and was the mechanism. **The strong word belonged to whoever
+had made the call that carries the second sentence.**
+
+⛔ AND THE SCOPE CLAUSE IS DISPROVEN INSIDE A SINGLE SESSION: the same session called
+`ReadMcpResourceTool(server="sjv", uri="docs://sjv/vocabulary")` successfully from the PARENT while
+its own child, minutes later, was told the tool is disabled *"in subagents as well as here."*
+⭐ The mechanism is that the string is a FIXED TEMPLATE written from the parent's vantage — "here"
+means the main session — so it cannot be tailored to its reader and will be wrong wherever the
+template's vantage does not match the reader's position. **A message describing its own blast
+radius is not evidence about that radius**, now with two instances and a cause.
+
+⚠ The design rule is unchanged and was never in doubt: a spawned agent does not reach the resource
+surface. Only the mechanism was contested, and it is a suppression.
 
 ⚠⚠ AND THE PROVENANCE LESSON IS THE EXPENSIVE ONE. Writing this entry, I credited the fabricated-
 name control and a separate observation to the WRONG PEER SESSION — real findings, wrong source,

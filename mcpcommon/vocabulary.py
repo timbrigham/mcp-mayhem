@@ -88,7 +88,30 @@ ROW_STATUSES = {
 EXIT_CODES = {
     0: "ok - the check ran and found nothing.",
     1: "the check ran and FOUND something. A real finding, not an error.",
-    2: ("the check could not run - usage error, bad arguments, missing input. NOT a finding."),
+    # ⛔⛔ THIS ENTRY WAS NEVER MEASURED EITHER, AND IT IS THE SECOND IN THIS DICT TO BE
+    # WRONG FOR THE SAME REASON. The provenance note below is entirely about `3`; nobody ever
+    # checked `2` against a caller. It read "the check could not run - usage error, bad
+    # arguments, missing input", which is an ENUMERATION OF CAUSES - the exact failure the
+    # `3` note says a vocabulary must not commit - and it describes none of the three things
+    # the fleet actually returns 2 for. Measured 2026-09-10 in the consumer's
+    # `tools/verify/record.py`:
+    #
+    #     emit() returned None      -> 2   the ledger was UNREACHABLE or REFUSED the record
+    #     dry-run check() -> None   -> 2   unreachable; "nothing was learned about it"
+    #     no recordable subjects    -> 2   "nothing recordable ... NEVER 0"
+    #
+    # NOT ONE of those is a usage error. In every one the check RAN; what failed was getting a
+    # verdict recorded. ⚠ And my own `verdictLedger/client/record.py` - the template the
+    # consumer copied - has said `sys.exit(2)` for "ledger unavailable or record rejected"
+    # since before this dict existed. So the vocabulary contradicted the client it ships
+    # beside, and the consumer holding the older faithful copy was the one who was right.
+    #
+    # ⭐ STATE THE SHAPE, NEVER THE CAUSES - the lesson `3` already paid for, applied here.
+    2: ("NO USABLE VERDICT was produced - the check could not run, or its result could not "
+        "be recorded. NOT a finding, and never 0 or 1. Distinguished from 3 by WHERE the gap "
+        "is: 3 means it ran and could not decide about the CONTENT; 2 means no verdict "
+        "reached the ledger at all. WHAT specifically failed is the CHECKER's to say, in "
+        "that checker - never enumerated here."),
     # THE FIRST DRAFT OF THIS ENTRY WAS WRONG AND IT IS WORTH THE COMMENT. It read "scope not
     # resolved, a contested panel, a dependency unavailable" - an ENUMERATION of causes,
     # written without checking what the consumer's code does with 3. Measured 2026-09-09 after
