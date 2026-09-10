@@ -259,6 +259,38 @@ def test_exit_codes_gitrobot_actually_emits_are_published():
         "gates.py emits exit code(s) %s that EXIT_CODES does not publish" % unpublished)
 
 
+def test_claim_fields_is_published_as_UNBOUND_and_says_so():
+    """⛔⛔ A CONVENTION THE FLEET DOES NOT ENFORCE IS STILL WORTH PUBLISHING — BUT IT MUST SAY
+    SO, OR IT BECOMES A CLAIM ABOUT ENFORCEMENT THAT NOTHING ENFORCES.
+
+    `ERROR_TYPES` is bound by `_kind()` raising in four files. `CLAIM_FIELDS` CANNOT be bound
+    that way and this test exists to keep that admission attached to it: the emitters are AGENTS
+    WRITING PROSE, not functions, so no import-time guard can reach them. Same honest footing as
+    `EXIT_CODES`, which this suite already describes as "the one table that is UNBINDABLE from
+    this side".
+
+    ⚠ MEASURED WHILE WRITING THIS, and it is why the test is worded this way: a control that
+    RENAMED a `claim_field` value did NOT fail the conformance ratchet. It cannot — the table
+    and the markdown render read the SAME constants, so a rename changes both together and is
+    self-consistent. The ratchet catches TRANSPORT DIVERGENCE, which is real and which it does
+    catch; it does not and cannot catch a table nothing binds. **42 tests passing did not mean
+    this table was covered**, and that gap is the exact "a test that looks like coverage" defect
+    found twice already in this session.
+    """
+    from mcpcommon.vocabulary import CLAIM_FIELDS, VOCABULARIES
+
+    assert VOCABULARIES.get("claim_field") is CLAIM_FIELDS, (
+        "claim_field must be served through the same table the render walks, or the two "
+        "transports can disagree")
+    assert set(CLAIM_FIELDS) == {"object", "instrument", "scope", "provenance"}, (
+        "the four fields are derived from measured failures; adding or dropping one is a "
+        "deliberate change to the taxonomy, not an edit")
+    for field, meaning in CLAIM_FIELDS.items():
+        assert len(meaning) > 200, (
+            "%r publishes a value without its meaning and its measured failure — an enum can "
+            "say WHAT, and the whole point of this surface is WHY and WHEN" % field)
+
+
 def test_exit_code_0_does_not_claim_the_check_found_nothing():
     """⛔ MEASURED: `check_poles` exits 0 printing "26 pole-equality site(s)" and
     `check_divergent` exits 0 printing "5 surviving retired phrase(s)". Published 0 said "the

@@ -115,6 +115,43 @@ label beside it would make the next reader's arithmetic wrong by an hour in Dece
 value displayed next to a misleading label is one reader away from `DC-44`** — the same shape as
 a record id sitting next to a step name, which is what the whole 2026-09-09 arc was pulling on.
 
+## A CLAIM IS NOT A MEASUREMENT UNTIL IT NAMES ITS OBJECT, INSTRUMENT, SCOPE AND PROVENANCE
+
+⭐⭐ Tim, 2026-09-10: *"shouldn't you be able to standardize this? I mean quite frankly that's
+been the problem the entire time."* He is right, and the count is the argument: **this rule
+appeared EIGHT TIMES in this file in SEVEN SPELLINGS**, and its eighth spelling — "name the
+session beside a relayed measurement" — was in the gitignored HANDOFF and scored ZERO here.
+**The most-restated rule in the repo was the one vocabulary nobody consolidated, and its copies
+did not even share a file.**
+
+⛔ **IT IS NOW A SERVED TABLE: `mcpcommon/vocabulary.py:CLAIM_FIELDS`, published as
+`claim_field` through `vocabulary()` and `docs://*/vocabulary`.** Four fields, and the taxonomy
+was DERIVED from the day's actual failures rather than invented — every disagreement measured on
+2026-09-10 was exactly one missing field:
+
+    "MCP works in subagents"            missing OBJECT      which tool? old yes, new no
+    "No files found"                    missing INSTRUMENT  harness Grep honours .gitignore
+    "subagents cannot reach the ledger" missing PROVENANCE  relayed twice, never re-derived
+    "1717 of 1717 unresolvable"         missing SCOPE       a root nobody named
+    "27 unpushed"                       missing OBJECT      which rev range
+    "gitRobot is the only commit path"  missing OBJECT      which repository
+    "install as tools/verify/record.py" missing OBJECT      which record.py: 278 vs 1165 lines
+    "the servers are running HEAD"      missing INSTRUMENT  a commit time, not a process start
+
+⚠ **THE PASSAGES ELSEWHERE IN THIS FILE STAY, AND THEY ARE NOT DUPLICATES ANY MORE — THEY ARE
+INSTANCES.** Each carries the measurement that produced it, which is the comment style this repo
+requires and which a served table cannot hold. **The RULE is served once; the INCIDENTS stay
+where they explain a specific guard.** Do not re-derive the rule in prose again: cite
+`claim_field` and add your incident.
+
+⛔ **AND IT IS PUBLISHED UNBOUND, WHICH IT MUST SAY OUT LOUD.** `ERROR_TYPES` is bound by
+`_kind()` raising in four files; this table cannot be, because **the emitters are agents writing
+prose, not functions**. Same honest footing as `EXIT_CODES`. ⚠ Verified rather than assumed: a
+control that RENAMED a `claim_field` value did NOT fail the conformance ratchet, and cannot —
+the table and the render read the same constants, so a rename is self-consistent. The ratchet
+catches transport DIVERGENCE, not an unbound table. **A convention the fleet does not enforce is
+still worth publishing; one that implies enforcement it does not have is the defect.**
+
 ## An exit code names WHAT HAPPENED, never merely whether it happened
 
 ⭐⭐ Tim, 2026-09-10: *"as a design schematic, we should never have, for example zero and

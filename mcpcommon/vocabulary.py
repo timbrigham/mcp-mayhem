@@ -275,11 +275,76 @@ RESERVED_EXIT_CODES = {
     ">255": "TRUNCATED ON POSIX to the low 8 bits. 256 becomes 0, a SUCCESS. Never mint here.",
 }
 
+# ⭐⭐ THE FIFTH TABLE, AND IT IS THE ONE THE OTHER FOUR KEPT POINTING AT.
+# Tim, 2026-09-10: "shouldn't you be able to standardize this? I mean quite frankly that's been
+# the problem the entire time."
+#
+# ⛔ COUNTED THAT DAY: the rule below appears EIGHT TIMES in CLAUDE.md, in seven different
+# spellings -- "never report a number without naming what it prices", "measure it independently
+# on both sides", "quote it FROM the source", "pre-register a prediction", "a checker's answer
+# is only as scoped as its caller made it", "a true value read against the WRONG OBJECT" -- plus
+# "name the session beside a relayed measurement", which is in the HANDOFF and scores ZERO in
+# CLAUDE.md. So the most-restated rule in the repo was the one vocabulary nobody consolidated,
+# and its copies do not even share a file. That is the exact defect the other four tables were
+# built to end, sitting one level up and describing the tables themselves.
+#
+# ⭐ EVERY DISAGREEMENT MEASURED ON 2026-09-10 WAS A MISSING FIELD FROM THIS TABLE, and the
+# taxonomy was DERIVED from those failures rather than invented:
+#     "MCP works in subagents"          missing OBJECT      (which tool? old ones yes, new no)
+#     "No files found"                  missing INSTRUMENT  (harness Grep honours .gitignore)
+#     "subagents cannot reach ledger"   missing PROVENANCE  (relayed twice, never re-derived)
+#     "1717 of 1717 unresolvable"       missing SCOPE       (a root nobody named)
+#     "27 unpushed"                     missing OBJECT      (which rev range)
+#     "gitRobot is the only commit path" missing OBJECT     (which repository)
+#     "install as tools/verify/record.py" missing OBJECT    (which record.py -- 278 vs 1165 lines)
+#     "the servers are running HEAD"    missing INSTRUMENT  (a commit time, not a process start)
+#
+# ⚠ HOW STRONGLY THIS IS BOUND, STATED HONESTLY, BECAUSE OVERSTATING IT WOULD BE THE DEFECT.
+# `ERROR_TYPES` is bound by `_kind()` raising in four files. THIS table cannot be bound that way,
+# for the same reason `EXIT_CODES` is described in the test suite as "the one table that is
+# UNBINDABLE from this side": the emitters are AGENTS WRITING PROSE, not functions. A published
+# convention the fleet does not mechanically enforce is still worth publishing -- but it must SAY
+# it is one, or it becomes a claim about enforcement that nothing enforces.
+CLAIM_FIELDS = {
+    "object": (
+        "WHAT the claim is about, named precisely enough that a second party measures the SAME "
+        "THING. This is the field whose absence is this fleet's defining defect: a TRUE value "
+        "read against the WRONG OBJECT. ⛔ THE TEST: could two people who agree on every word "
+        "of the claim still be measuring different things? Then the object is not named. "
+        "'27 unpushed' fails it; '27 on origin/illustrated..illustrated, which is what the push "
+        "publishes' does not."),
+    "instrument": (
+        "HOW it was measured, named as the TOOL and not just the query -- because the query is "
+        "what you chose and the SCOPE IS WHAT THE INSTRUMENT CHOSE FOR YOU. ⛔ Measured "
+        "2026-09-10: shell `grep` and the harness `Grep` tool, same pattern, same tree, opposite "
+        "answers, because the second honours .gitignore and said only 'No files found'. ⚠ AND "
+        "TWO INSTRUMENTS IS NOT ENOUGH: two that share a scope restriction agree perfectly and "
+        "are both wrong, and agreement then reads as CORROBORATION, which is worse than a lone "
+        "probe. You must know WHICH IS WIDER AND WHY."),
+    "scope": (
+        "WHAT WAS AND WAS NOT COVERED, including the exclusions you did not type. A checker's "
+        "answer is only as scoped as its caller made it -- the same pipeline printed opposite "
+        "prior-art answers thirty minutes apart because one invocation was handed refs and one "
+        "was not. ⛔ An ABSENCE claim is a claim about the INSTRUMENT until its scope is stated: "
+        "'not located as of <date>, searched as follows' names the tool, never just the pattern."),
+    "provenance": (
+        "WHO established it and WHEN, in UTC -- and whether you MEASURED it or RELAYED it. ⛔ "
+        "THE TWO ARE DIFFERENT CLAIMS AND ONLY ONE OF THEM IS YOURS. A relayed measurement "
+        "carries the name of the session that made it; a relayed INSTRUCTION carries more "
+        "weight still, because it authorises rather than informs, and a session that cannot "
+        "name which message and which words has not got one. ⚠ Measured 2026-09-10: a premise "
+        "was re-derived correctly and its CONSEQUENCE was inherited unchecked, and the "
+        "inherited half became a recommendation to widen a permission surface. ⭐ Outcome never "
+        "retroactively upgrades evidence: a question carrying a discriminating test does the "
+        "work of an assertion and cannot go false."),
+}
+
 VOCABULARIES = {
     "error_type": ERROR_TYPES,
     "decision": DECISIONS,
     "row_status": ROW_STATUSES,
     "exit_code": EXIT_CODES,
+    "claim_field": CLAIM_FIELDS,
 }
 
 
