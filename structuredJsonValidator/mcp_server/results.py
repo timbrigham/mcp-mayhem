@@ -109,3 +109,27 @@ class ExportResult(TypedDict, total=False):
     collections: dict[str, Any]
     text: str
     count: int
+
+
+class VocabularyResult(TypedDict, total=False):
+    """The fleet vocabularies as data — the TOOL transport of `docs://sjv/vocabulary`.
+
+    ⛔ NOTE THE BASE CLASS: `TypedDict`, not this file's `Result`, and NO `ok` on success.
+    sjv does not stamp `ok` on reads — `validate` returns {valid, violations},
+    `find(count_only)` returns {count} — and CLAUDE.md names copying a sibling's base class
+    here as the way to publish a contract three read tools break on every successful call.
+    `ok` appears ONLY on the refusal branch, where it is false beside an `error_type`.
+
+    ⭐ The vocabulary CONTENT is identical across all three servers and the conformance suite
+    fails if it diverges. Only the ENVELOPE differs, and it differs because these servers
+    genuinely differ.
+    """
+
+    names: list             # every published vocabulary name, regardless of `name`
+    requested: Any          # the `name` asked for, or None for all four
+    vocabularies: dict      # {vocabulary_name: {value: meaning}} — keys are STRINGS on the wire
+    markdown: str           # the same render the resource serves, so both audiences agree
+    ok: bool                # REFUSAL ONLY, and always false when present
+    error_type: str
+    error: str
+    satisfied_when: str

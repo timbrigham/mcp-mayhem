@@ -992,3 +992,98 @@ def test_a_refusal_always_carries_error_type():
             assert "error_type" in f, (
                 "%s has an ok:False path with no error_type: %s — iserror.py would read "
                 "this as a DOMAIN result and let a refusal through as success" % (rel, f[:90]))
+
+
+# -- the vocabulary must reach a subagent, and must not diverge between servers ------------
+#
+# ⛔⛔ CLAUDE.md required this and it could not be written until 2026-09-10, because there was
+# nothing to check: the vocabulary was served ONLY as `docs://*/vocabulary`, and a resource
+# cannot be reached by a spawned agent at all. Measured across three sessions and confirmed
+# HARNESS-LEVEL rather than project-scoped -- the suppression holds even in mcp-mayhem, whose
+# subagents demonstrably DO reach `mcp__` tools. Every gate brief runs in a spawned agent, so
+# the canonical generated vocabulary was unreachable to its most important reader and only
+# restatements remained. The `vocabulary()` TOOL is the second transport; these tests are what
+# stop it becoming the fifth copy.
+
+def test_both_vocabulary_transports_come_from_one_source():
+    """The tool payload's markdown must be BYTE-IDENTICAL to what the resource serves.
+
+    Two transports are only safe while they cannot disagree. If someone ever renders the tool
+    payload separately -- the obvious "small" change -- this fails.
+    """
+    from mcpcommon.vocabulary import as_payload, render_markdown, VOCABULARIES
+
+    assert as_payload()["markdown"] == render_markdown(), (
+        "the tool transport and the resource transport have diverged; they must render from "
+        "the same constants through the same selector")
+    for name in VOCABULARIES:
+        assert as_payload(name)["markdown"] == render_markdown(name), (
+            "scoped render diverged for %r" % name)
+
+
+def test_every_vocabulary_value_is_published_by_both_transports():
+    """THE RATCHET. A vocabulary gaining a value that no transport publishes must fail.
+
+    ⚠ This is the check that would have caught `UNVALIDATED`: it was added to the row statuses
+    2026-09-07 and appeared in no list, so nothing could enumerate the statuses a caller may
+    receive. A value that exists in the code and in no published surface is unknowable to the
+    caller who has to branch on it.
+    """
+    from mcpcommon.vocabulary import as_payload, VOCABULARIES
+
+    payload = as_payload()
+    markdown = payload["markdown"]
+    for name, table in VOCABULARIES.items():
+        assert name in payload["vocabularies"], "%r published by no transport" % name
+        published = payload["vocabularies"][name]
+        for value in table:
+            # Keys are stringified for the wire; the STRING form is what a caller receives.
+            assert str(value) in published, (
+                "%s value %r is in the constants and not in the tool payload" % (name, value))
+            assert "`%s`" % value in markdown, (
+                "%s value %r is in the constants and not in the rendered document" % (name, value))
+
+
+def test_all_three_servers_serve_the_same_vocabulary_content():
+    """⛔ "Two servers render the same vocabulary differently" is the failure this exists for.
+
+    Checked at the SOURCE rather than by importing three servers into one process: each server's
+    `vocabulary` tool must delegate to `mcpcommon.vocabulary.as_payload` and must not build a
+    payload of its own. A server that grows its own table is the fourth copy, and it would pass
+    every other test in this file.
+    """
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    servers = ("verdictLedger/ledger_server/server.py",
+               "gitRobot/gitrobot_server/server.py",
+               "structuredJsonValidator/mcp_server/server.py")
+    for rel in servers:
+        src = (root / rel).read_text(encoding="utf-8")
+        fn = re.search(r"def vocabulary\(.*?(?=\n@mcp\.|\nasync def |\ndef main)", src, re.S)
+        assert fn, (
+            "%s serves no vocabulary() tool. The resource transport alone cannot reach a "
+            "spawned agent, and every gate brief runs in one." % rel)
+        body = fn.group(0)
+        assert "as_payload" in body, (
+            "%s's vocabulary() does not call mcpcommon.vocabulary.as_payload; a server that "
+            "renders its own is the copy that will diverge" % rel)
+        # No server may hard-code a vocabulary value: that is the restatement this retires.
+        for literal in ('"usage"', '"PASS"', '"UNVALIDATED"', '"started"'):
+            assert literal not in body, (
+                "%s's vocabulary() hard-codes %s instead of reading the constants" % (rel, literal))
+
+
+def test_the_vocabulary_tool_refuses_an_unpublished_name_rather_than_answering_empty():
+    """⚠ ABSENCE IS NEVER SUCCESS. An empty vocabulary reads as "this value has no published
+    meanings"; the truth is "you asked for a table that does not exist". Different claims."""
+    import pytest as _pytest
+    from mcpcommon.vocabulary import as_payload, UnknownVocabulary
+
+    with _pytest.raises(UnknownVocabulary) as caught:
+        as_payload("no_such_vocabulary")
+    assert caught.value.satisfied_when, "a refusal must name the success condition"
+    for name in ("error_type", "decision", "row_status", "exit_code"):
+        assert name in caught.value.satisfied_when, (
+            "satisfied_when must enumerate the valid names, or the caller cannot build a "
+            "passing next attempt from it alone")

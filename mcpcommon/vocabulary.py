@@ -230,21 +230,93 @@ VOCABULARIES = {
 }
 
 
-def render_markdown():
+class UnknownVocabulary(ValueError):
+    """Raised for a vocabulary name nobody publishes. Carries `satisfied_when`.
+
+    ⚠ NOT a server error type. `mcpcommon` cannot import any server's error classes without
+    inverting the dependency, so this carries the two fields a refusal owes and each server
+    maps it to ITS OWN `usage` refusal at the tool boundary. One message, three envelopes.
+    """
+
+    def __init__(self, what, satisfied_when):
+        super().__init__(what)
+        self.satisfied_when = satisfied_when
+
+
+def _select(name=None):
+    """The requested tables, or all of them. Refuses a name nobody publishes."""
+    if name is None:
+        return dict(VOCABULARIES)
+    if name not in VOCABULARIES:
+        raise UnknownVocabulary(
+            "no vocabulary named %r" % (name,),
+            "pass `name` as one of %s, or omit it for all four. Refusing rather than "
+            "returning an empty set, because an empty vocabulary reads as 'this value has no "
+            "published meanings' when it means 'you asked for a table that does not exist'."
+            % (", ".join(repr(k) for k in VOCABULARIES),))
+    return {name: VOCABULARIES[name]}
+
+
+def render_markdown(name=None):
     """The vocabularies as a document, GENERATED from the constants above.
 
     Never transcribe this into a brief or a readme. A copy is the fourth one and it goes stale
     the way a README's test count does - measured four times in one evening in one file. Point
     at the served resource instead.
     """
+    tables = _select(name)
     out = ["# The fleet vocabularies", "",
            "One definition, imported by every server, rendered from the constants in",
            "mcpcommon/vocabulary.py. If a document restates any of this, the document is the",
            "copy that will be wrong.", ""]
-    for name, table in VOCABULARIES.items():
-        out.append("## " + name)
+    for vocab_name, table in tables.items():
+        out.append("## " + vocab_name)
         out.append("")
         for key, meaning in table.items():
             out.append("- **`%s`** - %s" % (key, meaning))
         out.append("")
     return chr(10).join(out)
+
+
+def as_payload(name=None):
+    """THE SAME CONTENT `render_markdown` RENDERS, AS DATA - for the TOOL transport.
+
+    ⛔⛔ WHY A TOOL EXISTS BESIDE THE RESOURCE, AND IT IS NOT CONVENIENCE. Measured 2026-09-10
+    across three sessions: **a spawned subagent cannot reach the MCP resource surface at all.**
+    `ListMcpResourcesTool` and `ReadMcpResourceTool` answer "No such tool available: <name>.
+    <name> is disabled for this session, in subagents as well as here" - and a FABRICATED name
+    returns the same prefix WITHOUT that second sentence, which is the control proving the tools
+    are present and SUPPRESSED rather than unregistered.
+
+    ⭐ CONFIRMED HARNESS-LEVEL, NOT PROJECT-SCOPED. The suppression survives in mcp-mayhem,
+    whose subagents demonstrably DO reach `mcp__` tools (gate 3 passes here). So no project
+    config can lift it.
+
+    ⚠ AND EVERY GATE BRIEF IS EXECUTED BY A SPAWNED AGENT. So the canonical, generated,
+    single-source vocabulary was unreachable to its most important reader, and only
+    restatements remained - the exact failure the resource was built to prevent. A subagent
+    asked "what does exit 2 mean" had no route to the rendered definition.
+
+    ⭐ TWO TRANSPORTS, ONE SOURCE. This function and `render_markdown` read the SAME constants
+    through the SAME `_select`, so they cannot disagree; the resource serves the markdown and
+    the tool serves this. Neither is a copy of the other.
+
+    ⚠ `markdown` IS INCLUDED DELIBERATELY. A caller that only has the tool transport must be
+    able to obtain exactly what a resource reader sees, or the two audiences are reading
+    different documents and the divergence is invisible from both sides.
+    """
+    tables = _select(name)
+    # ⛔ KEYS ARE STRINGIFIED HERE, ON PURPOSE, AND NOT LEFT TO THE SERIALISER. `EXIT_CODES` is
+    # keyed by INT; JSON object keys can only be strings. So over the wire `{2: "..."}` becomes
+    # `{"2": "..."}` silently, and a caller doing `vocabularies["exit_code"][2]` gets a KeyError
+    # while `["2"]` works - with nothing in the schema saying which to use, because the schema
+    # describes the Python shape and the transport quietly changed it.
+    # ⭐ Converting here makes the published contract the SAME one the caller receives. The
+    # alternative is a shape that is true in the process and false on the wire, which is this
+    # fleet's defect class with the transport as the wrong object.
+    return {
+        "names": list(VOCABULARIES),
+        "requested": name,
+        "vocabularies": {k: {str(vk): vv for vk, vv in v.items()} for k, v in tables.items()},
+        "markdown": render_markdown(name),
+    }

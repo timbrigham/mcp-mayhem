@@ -284,3 +284,21 @@ class SignalsResult(Result, total=False):
     records_considered: int
     note: str | None
     families: dict[str, Any]
+
+
+class VocabularyResult(Result, total=False):
+    """The fleet vocabularies as data — the TOOL transport of `docs://*/vocabulary`.
+
+    ⭐ THIS SHAPE MUST BE IDENTICAL ON EVERY SERVER THAT SERVES IT, and the conformance suite
+    fails if the CONTENT diverges. What legitimately differs per server is the ENVELOPE: this
+    file's servers stamp `ok` in `_guard`, and sjv does not stamp one at all. Copying a
+    sibling's base class is how a contract gets published that the server breaks on every call.
+    """
+
+    names: list             # every published vocabulary name, regardless of `name`
+    requested: Any          # the `name` asked for, or None for all four
+    vocabularies: dict      # {vocabulary_name: {value: meaning}} — keys are STRINGS on the wire
+    markdown: str           # the same render the resource serves, so both audiences agree
+    error_type: str
+    error: str
+    satisfied_when: str

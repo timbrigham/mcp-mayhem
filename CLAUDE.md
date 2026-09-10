@@ -3,6 +3,13 @@
 Local MCP servers. Each subfolder is one server; Python unified stack.
 
     gitRobot        mediated git — the only path by which commits and pushes happen
+                    ⛔ TO THE **CONSUMER'S** REPOSITORY. gitRobot is fixed at startup to one
+                    repo and it is NOT this one: `read(op='rev-parse', args=['--show-toplevel'])`
+                    answers `C:/Workspace/ZeroParadox`, on branch `illustrated`. **mcp-mayhem's
+                    own commits go through plain `git`.** Measured 2026-09-10, after a `stage` +
+                    `commit` from here would have landed in the consumer's tree over five staged
+                    files this session never touched — a true sentence read against the wrong
+                    object, in the file that exists to name that defect.
     verdictLedger   append-only verdict stream; gates commit and push
     sjv             separate server, separate concerns
     mcpSupervisor   PowerShell watchdog keeping the HTTP servers alive

@@ -48,10 +48,11 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from gitrobot_server.results import (  # noqa: E402
     ExplainResult, HistoryResult, PreflightStatusResult, PushStatusResult,
-    AdmissionResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult)
+    AdmissionResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult,
+    VocabularyResult)
 
 from core.engine import GitRobot
-from core.errors import GitRobotError, RefusalError
+from core.errors import GitRobotError, RefusalError, UsageError
 
 REPO = os.environ.get("GITROBOT_REPO", r"C:\Workspace\ZeroParadox")
 DATA = os.environ.get("GITROBOT_DATA", "data/git_ops.jsonl")
@@ -693,6 +694,46 @@ def _start_worktree_reaper() -> None:
 # vocabulary resource to be GENERATED from the constants the code imports, and forbids
 # publishing one before the vocabularies are consolidated into `mcpcommon`. Serving a README
 # publishes no value set, so it does not jump that queue. The dictionary is still owed.
+@mcp.tool(title='The fleet vocabularies',
+          annotations=ToolAnnotations(title='The fleet vocabularies', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def vocabulary(name: Optional[str] = None) -> VocabularyResult:
+    """The fleet vocabularies as DATA — the same content `docs://gitrobot/vocabulary` serves.
+
+    ⛔ THIS EXISTS BECAUSE A SPAWNED SUBAGENT CANNOT REACH THE RESOURCE SURFACE AT ALL.
+    Measured 2026-09-10 across three sessions and confirmed HARNESS-LEVEL, not project-scoped:
+    `ListMcpResourcesTool` and `ReadMcpResourceTool` answer "No such tool available: <name>.
+    <name> is disabled for this session, in subagents as well as here", while a FABRICATED
+    name returns the same prefix with NO second sentence — the control that proves they are
+    present and suppressed rather than unregistered. The suppression holds even in a project
+    whose subagents demonstrably DO reach `mcp__` tools, so no config can lift it.
+
+    ⚠ AND EVERY GATE BRIEF IS EXECUTED BY A SPAWNED AGENT. So the canonical generated
+    vocabulary was unreachable to its most important reader, and only restatements remained —
+    the exact failure the resource was built to prevent.
+
+    ⭐ TWO TRANSPORTS, ONE SOURCE. This tool and the resource both call
+    `mcpcommon.vocabulary`, over the same constants, through the same selector. They cannot
+    disagree, and neither is a copy of the other. `markdown` is returned as well as the
+    structured tables so a tool-only caller can read exactly what a resource reader sees.
+
+    Pass `name` for one of error_type / decision / row_status / exit_code; omit it for all
+    four. An unpublished name is REFUSED, never answered with an empty set.
+
+    ⚠ `exit_code` KEYS ARE STRINGS ON THE WIRE. They are ints in the source and JSON object
+    keys can only be strings, so they are converted at the source rather than silently by the
+    serialiser — the published contract is the one you receive.
+    """
+    from mcpcommon.vocabulary import as_payload, UnknownVocabulary
+    try:
+        return {"ok": True, **as_payload(name)}
+    except UnknownVocabulary as exc:
+        # Mapped to THIS server's usage refusal. mcpcommon cannot import gitRobot's error
+        # classes without inverting the dependency, so the shared raise carries the two fields
+        # a refusal owes and each server puts its own envelope on them.
+        return {"ok": False, "error_type": UsageError.error_type, "error": str(exc),
+                "satisfied_when": exc.satisfied_when}
+
+
 @mcp.resource(
     "docs://gitrobot/readme",
     name="gitrobot README",
