@@ -336,8 +336,45 @@ a spawned agent must clear ALL of them, and clearing three reads exactly like cl
        NOTHING about "the call will be allowed". Measured in one agent, one permission mode:
        `mcp__gitRobot__admission` EXECUTED while `mcp__verdictLedger__status` was REFUSED.
     4  THE CONTENT MUST NOT LIVE ONLY BEHIND A `docs://` URI. `ListMcpResourcesTool` and
-       `ReadMcpResourceTool` are absent from a child's schema AND absent from the deferred
-       registry — not a permission refusal, simply not registered for children.
+       `ReadMcpResourceTool` do not reach a child. ⛔ THE MECHANISM IS NOT ESTABLISHED AND
+       THIS ENTRY DELIBERATELY DOES NOT PICK A SIDE — see the disagreement below.
+
+⛔⛔ **TWO SESSIONS PROBED GATE 4 AND GOT DIFFERENT MESSAGES. THAT DISAGREEMENT IS THE FINDING,
+AND AN EARLIER VERSION OF THIS ENTRY QUIETLY PICKED ONE.** Corrected 2026-09-10 after the second
+session read the first's evidence back to me and neither of us could reconcile them:
+
+    probed by CALLING the tool     "No such tool available: ReadMcpResourceTool.
+    (consumer session)              ReadMcpResourceTool is DISABLED for this session,
+                                    in subagents as well as here."
+                                   -> reads as a DELIBERATE DISABLE.
+
+    probed by ToolSearch           ToolSearch("select:ListMcpResourcesTool,
+    (provenance-ring session)       ReadMcpResourceTool") -> "No matching deferred
+                                    tools found."
+                                   -> reads as NOT REGISTERED.
+
+⚠ THE SECOND PROBE CANNOT CARRY THE STRONGER WORD, AND ITS OWN AUTHOR SAID SO FIRST. **"No
+matching deferred tools found" is a NEGATIVE SEARCH RESULT, not a statement of non-existence** —
+it cannot separate "no such tool anywhere" from "a real tool this query failed to match." So
+"absent from the deferred registry" was stronger than that probe earns, and it was the phrasing
+this file had adopted.
+
+⭐ THE FIRST PROBE EARNS MORE, VIA A CONTROL: a FABRICATED tool name returns the same "No such
+tool available" WITHOUT the `disabled` clause — so the harness distinguishes a name it knows and
+has disabled from a name that does not exist. ⚠ That control was run only after it was suggested
+in conversation, so it postdates the original claim rather than founding it.
+
+⭐⭐ WHAT SURVIVES BOTH, AND IT IS ALL THE DESIGN RULE NEEDS: **a spawned agent does not reach the
+resource surface, by any route either session could find.** Whether that is a disable or a
+non-registration changes who could fix it and changes nothing about what to build.
+
+⚠⚠ AND THE PROVENANCE LESSON IS THE EXPENSIVE ONE. Writing this entry, I credited the fabricated-
+name control and a separate observation to the WRONG PEER SESSION — real findings, wrong source,
+and I did it while three sessions were live on one machine. **A true finding attached to the wrong
+origin is `DC-44` in the provenance rather than in the units**, and it is worse here: the sessions
+disagree, so which one said it is exactly what decides how much the claim is worth. ⭐ It was
+caught only because the misattributed session recognised words it had never written. **Name the
+session beside a relayed measurement, every time.**
 
 ⭐ WHY GATE 3 BIT, AND IT IS CONFIG RATHER THAN CHANCE — verified here 2026-09-10 by reading the
 consumer's `.claude/settings.json` rather than trusting the symptom:
