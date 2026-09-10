@@ -22,11 +22,38 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+import sys as _sys
+from pathlib import Path as _Path
+_root = _Path(__file__).resolve().parents[2]
+if str(_root) not in _sys.path:
+    _sys.path.insert(0, str(_root))
+from mcpcommon.vocabulary import DECISIONS as _DECISIONS
+
 from typing import Any, Optional
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+
+# ⛔⛔ EVERY AUDIT ROW PASSES THROUGH `append`, WHICH IS WHY THE CHECK LIVES HERE AND NOT AT THE
+# TWENTY-ODD CALL SITES. Measured 2026-09-10: `mcpcommon.vocabulary.DECISIONS` published four
+# values while this server emitted FIVE -- `started`, written by both `preflight` and `push` and
+# read back by `preflight_status`, appeared in no published list. Nothing could catch it because
+# NOTHING BOUND THE TABLE TO THE CODE; the consolidation that fixed `error_type` did not reach
+# `decision`, and the two look identical sitting in one dict.
+#
+# ⭐ Same shape as `_kind()` in errors.py, deliberately: raise rather than coerce, so a value this
+# fleet has not published cannot reach an audit row that a caller will later enumerate.
+def _decision(name: str) -> str:
+    """The shared value, and a hard failure if this server invents one nobody published."""
+    if name not in _DECISIONS:
+        raise AssertionError(
+            "decision %r is not in mcpcommon.vocabulary.DECISIONS. Add it there so every caller "
+            "can enumerate what an audit row may say, rather than defining it here." % name)
+    return name
+
 
 
 class AuditLog:
@@ -49,6 +76,7 @@ class AuditLog:
         alternative: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> dict:
+        decision = _decision(decision)
         """Append one immutable record and return it.
 
         ``decision`` is one of ``started`` / ``allowed`` / ``refused`` / ``failed``:

@@ -59,6 +59,16 @@ ERROR_TYPES = {
 }
 
 DECISIONS = {
+    # ⛔⛔ MISSING UNTIL 2026-09-10, AND THE CODE HAS EMITTED IT SINCE THE ASYNC PATH
+    # EXISTED. `engine.py` writes `decision="started"` for both `preflight` and `push`,
+    # and READS IT BACK -- `audit.last_where(op="preflight", head=head,
+    # decision="started")` is how `preflight_status` finds a run at all. So a caller
+    # enumerating this vocabulary to learn what an audit row may say would have missed
+    # the one value that means WORK IS IN FLIGHT, and read a running push as no push.
+    # ⚠ It survived because NOTHING BOUND THIS TABLE TO THE CODE -- see the note at the
+    # top of the module. `_decision()` in gitRobot/core/audit.py now raises on an
+    # unpublished value, the same way `_kind()` does for ERROR_TYPES.
+    "started": ("the operation BEGAN and has not resolved. The only NON-TERMINAL value here -- a row carrying it is a promise of a later row, not an outcome. Reading it as success or failure is reading a question as an answer."),
     "allowed": "the operation ran and succeeded.",
     "refused": "gitRobot declined to run it - policy, not failure. The alternative is named.",
     "failed": "it ran and git returned non-zero. The tree may have changed.",
@@ -126,6 +136,29 @@ EXIT_CODES = {
         "make unrepresentable. WHAT SPECIFICALLY made it undetermined is the CHECKER's to say, "
         "in that checker, mapped onto this - never enumerated here."),
 }
+
+# ⛔⛔ NOT EVERY TABLE ABOVE IS BOUND TO CODE, AND UNTIL 2026-09-10 NOTHING SAID SO.
+# Measured that day, and it is the reason `exit_code` drifted twice and `decision` shipped
+# incomplete:
+#
+#     ERROR_TYPES    bound in 4 files. gitRobot/core/errors.py and verdictLedger/core/errors.py
+#                    both call `_kind()`, which RAISES on a value this module does not publish,
+#                    and mcpcommon/iserror.py reads the field. The code breaks if it disagrees.
+#     DECISIONS      bound in 0 files -- now 1, via `_decision()` in gitRobot/core/audit.py.
+#     ROW_STATUSES   bound in 0 files. Held by a conformance test instead, because the statuses
+#                    are computed across many branches of inventory.py.
+#     EXIT_CODES     bound in 0 files, AND UNBINDABLE FROM HERE -- exit codes are emitted by the
+#                    CONSUMER's checkers, in another repository. Only our own
+#                    verdictLedger/client/record.py is in reach.
+#
+# ⚠ THE HAZARD IS THAT ALL FOUR LOOK IDENTICAL TO A READER. They sit in one dict, are rendered
+# by one function, and are served through one resource, so a caller cannot tell the enforced
+# table from the described one. `CLAUDE.md` requires a resource be GENERATED from the constants
+# the code imports and forbids one that "merely describes what the code happens to do" -- and
+# three of these four were the forbidden kind, published beside the one that was not.
+#
+# ⭐ SO `exit_code` IS A PUBLISHED CONVENTION THE FLEET DOES NOT ENFORCE, and saying that here
+# is the honest alternative to implying a binding that cannot exist.
 
 VOCABULARIES = {
     "error_type": ERROR_TYPES,
