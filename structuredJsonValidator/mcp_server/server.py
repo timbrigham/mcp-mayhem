@@ -47,7 +47,7 @@ from mcp_server.results import (  # noqa: E402
     CheckHeadResult, ExportResult, FindResult, GetResult, HistoryResult,
     ValidateResult, VerifyIntegrityResult, ViewResult, WriteResult)
 
-from consumers.store import build_store, head_correspondence
+from consumers.store import build_store, head_correspondence, require_source_root
 from core.errors import IntegrityError, OperationError, ValidationError
 from core.query import _MISSING, get_path
 
@@ -130,7 +130,16 @@ def _write(collection: str, op: str, params: dict[str, Any]) -> dict:
     except IntegrityError as exc:
         return {"ok": False, "error_type": IntegrityError.error_type, "error": str(exc)}
     except OperationError as exc:
-        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        # ⚠ `satisfied_when` IS FORWARDED WHEN THE RAISE SUPPLIED ONE, and omitted when it did
+        # not. Measured 2026-09-10: the ABSENT-root branch above returns a satisfied_when while
+        # this branch dropped it, so two refusals from the same tool -- both `usage`, both about
+        # `root` -- carried different shapes depending on which line produced them. A caller
+        # cannot tell "this refusal has no success condition" from "this path forgot to pass one".
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        satisfied_when = getattr(exc, "satisfied_when", None)
+        if satisfied_when:
+            refusal["satisfied_when"] = satisfied_when
+        return refusal
 
 
 def _write_store(op: str, params: dict[str, Any]) -> dict:
@@ -142,7 +151,16 @@ def _write_store(op: str, params: dict[str, Any]) -> dict:
     except IntegrityError as exc:
         return {"ok": False, "error_type": IntegrityError.error_type, "error": str(exc)}
     except OperationError as exc:
-        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        # ⚠ `satisfied_when` IS FORWARDED WHEN THE RAISE SUPPLIED ONE, and omitted when it did
+        # not. Measured 2026-09-10: the ABSENT-root branch above returns a satisfied_when while
+        # this branch dropped it, so two refusals from the same tool -- both `usage`, both about
+        # `root` -- carried different shapes depending on which line produced them. A caller
+        # cannot tell "this refusal has no success condition" from "this path forgot to pass one".
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        satisfied_when = getattr(exc, "satisfied_when", None)
+        if satisfied_when:
+            refusal["satisfied_when"] = satisfied_when
+        return refusal
 
 
 # -- read tools ---------------------------------------------------------------
@@ -287,7 +305,16 @@ def check_head(root: str = "", tier: str = "paths", limit: int = 25) -> CheckHea
         report = head_correspondence(_store().load(), root=resolved_root,
                                      tier=tier, limit=limit)
     except OperationError as exc:
-        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        # ⚠ `satisfied_when` IS FORWARDED WHEN THE RAISE SUPPLIED ONE, and omitted when it did
+        # not. Measured 2026-09-10: the ABSENT-root branch above returns a satisfied_when while
+        # this branch dropped it, so two refusals from the same tool -- both `usage`, both about
+        # `root` -- carried different shapes depending on which line produced them. A caller
+        # cannot tell "this refusal has no success condition" from "this path forgot to pass one".
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        satisfied_when = getattr(exc, "satisfied_when", None)
+        if satisfied_when:
+            refusal["satisfied_when"] = satisfied_when
+        return refusal
 
     # ⛔⛔ THE DOMAIN `ok` MUST NOT CLOBBER THE CALL-STATUS `ok`. `head_correspondence`
     # returns its own `ok` — "no drift", the FINDING axis, which `core/cli.py` turns into
@@ -303,6 +330,19 @@ def check_head(root: str = "", tier: str = "paths", limit: int = 25) -> CheckHea
     # ⚠ NOTHING RESOLVING AT ALL IS EVIDENCE ABOUT THE ROOT, NOT ABOUT THE REGISTRY. Said
     # here rather than left for the reader, because "1717 of 1717 unresolvable" is exactly
     # the shape that gets reported upward as a crisis.
+    #
+    # ⭐ THIS NOTE IS NOW CORRECTLY SCOPED, WHICH IT WAS NOT BEFORE 2026-09-10. It used to
+    # cover a root that did not exist at all, i.e. it was doing double duty as an advisory for
+    # a finding AND as cover for a typo. `head_correspondence` now REFUSES a nonexistent or
+    # non-directory root, so by the time this line runs the root is a real directory and
+    # "wrong tree" is the honest reading of zero-resolved rather than a guess spanning two
+    # unrelated causes.
+    #
+    # ⚠ KNOWN AND DELIBERATE, raised by the zptester session the same day: this fires only at
+    # EXACTLY zero, so a registry that genuinely drifted 100% still reports `matches: False`
+    # with this advisory attached. That is a guard scoped to a ROUTE (wrong root) rather than
+    # to a PROPERTY (registry matches). The trade is accepted -- a wrong root is common and
+    # total drift is not -- and it is recorded here rather than left for someone to rediscover.
     if out.get("checked") and not out.get("resolved"):
         out["note"] = (
             "ZERO of %d entries resolved. A wrong `root` explains this better than total "
@@ -703,12 +743,37 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
     export still happens; `ok` stays true and `head_check.ok` tells you whether
     what you just published still matches the source tree."""
     try:
+        # ⛔⛔ `head_root` IS VALIDATED **BEFORE** THE EXPORT, AND THE ORDER IS THE WHOLE POINT.
+        # Caught 2026-09-10 while fixing check_head's bad-root collapse -- i.e. THIS DEFECT WAS
+        # INTRODUCED BY THAT FIX and was absent before it. `head_correspondence` now RAISES on
+        # a bad root, this function catches only ValidationError and IntegrityError, and the
+        # export runs FIRST. So a typo'd `head_root` would have let the export SUCCEED and
+        # write the artifact to disk, then escaped as an unhandled raise -- which FastMCP
+        # rewrites to "Error executing tool export_full: <msg>" with error_type `unhandled` and
+        # a body that is no longer JSON. The caller would read a protocol error and believe the
+        # export failed, while the file was sitting in `dest`. A FALSE FAILURE on a completed
+        # write is the direction that does not get re-run and discovered.
+        #
+        # ⚠ REFUSING UP FRONT RATHER THAN DEMOTING THE CHECK TO A WARNING IS DELIBERATE. The
+        # docstring's "warning, not a gate" is about DRIFT: a real finding must not block
+        # publication. A malformed argument is not a finding, and reporting `head_check.ok:
+        # false` for "the check could not run" would rebuild the exact value-on-the-wrong-object
+        # collapse one layer up -- indistinguishable from "the check ran and found drift".
+        # ⭐ Nothing is written, so the caller fixes the path and re-exports.
+        if head_root is not None:
+            require_source_root(head_root)
         st = _store()
         result = {"ok": True, **st.export_full(dest)}
         if head_root is not None:
             result["head_check"] = head_correspondence(st.load(), root=head_root,
                                                        tier="paths")
         return result
+    except OperationError as exc:
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        satisfied_when = getattr(exc, "satisfied_when", None)
+        if satisfied_when:
+            refusal["satisfied_when"] = satisfied_when
+        return refusal
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:

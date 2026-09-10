@@ -189,6 +189,46 @@ def _declared_names(text: str) -> set:
     return names
 
 
+def require_source_root(root):
+    """Refuse a `root` that is not an existing directory. Returns it as a Path.
+
+    ⭐ ONE FUNCTION, TWO CALLERS, BECAUSE THE SECOND COPY IS THE DEFECT. `head_correspondence`
+    needs this and so does `export_full`, which runs the same check with a caller-supplied
+    `head_root`. Writing the test twice is how the two drift; CLAUDE.md's rule is that a rule
+    with one copy and no enforcement is not a rule.
+
+    ⛔ WHY IT EXISTS AT ALL -- measured on the wire 2026-09-10 by the zptester session and
+    re-derived independently before this was written. `check_head` had three distinguishable
+    bad-input states and only PROSE separated two of them:
+
+        root ABSENT       -> REFUSED, isError true, error_type `usage`
+        root NONEXISTENT  -> ok TRUE, matches False, resolved 0, unresolvable_files 1717
+        root A FILE       -> ok TRUE, matches False, resolved 0, unresolvable_files 1717
+
+    `matches: False` was a TRUE value read against the WRONG OBJECT: it prices "the registry
+    does not describe this tree", which is trivially true of a directory that is not there,
+    while the caller reads it as "the registry has drifted". The remedies are opposites -- fix
+    the path, or fix the registry -- so collapsing them costs the reader the whole answer.
+    """
+    root_path = Path(root)
+    if not root_path.exists():
+        raise OperationError(
+            f"root {str(root_path)!r} does not exist",
+            satisfied_when=(
+                "pass `root` as the absolute path of an EXISTING directory -- the source tree "
+                "the registry describes. A path that is not on disk cannot be checked for "
+                "correspondence, and reporting it as drift would price a typo as a registry "
+                "failure."))
+    if not root_path.is_dir():
+        raise OperationError(
+            f"root {str(root_path)!r} is not a directory",
+            satisfied_when=(
+                "pass `root` as the absolute path of an existing DIRECTORY -- the source tree "
+                "the registry describes, not a file inside it. Entry paths are resolved "
+                "beneath `root`, so a file resolves nothing and reads as total drift."))
+    return root_path
+
+
 def head_correspondence(store_doc: dict, *, root=".", tier: str = "paths",
                         limit: int = 25) -> dict:
     """Report where the declarations collection has drifted from the source tree.
@@ -218,7 +258,28 @@ def head_correspondence(store_doc: dict, *, root=".", tier: str = "paths",
     """
     if tier not in ("paths", "names"):
         raise OperationError(f"tier must be 'paths' or 'names', got {tier!r}")
-    root = Path(root)
+
+    # ⛔⛔ A `root` THAT DOES NOT EXIST USED TO REPORT AS TOTAL DRIFT. Measured on the wire
+    # 2026-09-10 by the zptester session and re-derived here before this line was written:
+    #
+    #     root ABSENT       -> REFUSED, isError true, error_type `usage`
+    #     root NONEXISTENT  -> ok TRUE, isError false, matches False, resolved 0,
+    #                          unresolvable_files 1717   <- IDENTICAL to a wrong-but-real tree
+    #     root A FILE       -> same again (found here; a file is not a tree either)
+    #
+    # Three distinguishable bad-input states, and what differed between them was only PROSE.
+    # `matches: False` is a TRUE value read against the WRONG OBJECT -- it prices "the registry
+    # does not describe this tree", which is trivially true of a directory that does not exist,
+    # while the caller reads it as "the registry has drifted". The two have OPPOSITE remedies:
+    # fix your path, or fix your registry.
+    #
+    # ⭐ ENFORCED HERE RATHER THAN IN THE MCP TOOL, AND THAT IS THE WHOLE POINT. `check_head`
+    # is not the only caller -- `core/cli.py:cmd_check_head` passes `args.root` straight in --
+    # so a guard in the server would be a rule with one copy and no enforcement over the other
+    # caller. Raising from the shared function makes the defect unrepresentable for BOTH: the
+    # MCP layer turns OperationError into a `usage` refusal, the CLI turns it into exit 2, and
+    # a bad `root` now behaves exactly like a bad `tier` already did.
+    root = require_source_root(root)
     entries = (store_doc.get("collections", {}).get("declarations", {})
                .get("entries", []))
 

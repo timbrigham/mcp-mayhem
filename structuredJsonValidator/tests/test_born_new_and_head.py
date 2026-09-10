@@ -412,7 +412,14 @@ def test_check_head_reports_duplicate_live_names(tmp_path):
     twin = json.loads(json.dumps(entries[-1]))
     twin["id"] = "twin-0"
     entries.append(twin)
-    report = head_correspondence(doc, root=tmp_path / "src")
+    # ⚠ THIS TEST USED TO PASS A `root` THAT WAS NEVER CREATED -- `tmp_path / "src"` with no
+    # `_head_tree` call anywhere above it. It passed because a nonexistent root was silently
+    # accepted and simply resolved nothing, and duplicate detection does not touch the disk.
+    # So the test was READING A REAL ANSWER OUT OF AN IMPOSSIBLE CALL, and it is the same
+    # shape as the V9 test that REQUIRED the wrong remedy to be present: a test that pins the
+    # defect in place. The root is now real; the assertions are unchanged.
+    report = head_correspondence(
+        doc, root=_head_tree(tmp_path, {"ZP/Dup.lean": "def dup := 1" + chr(10)}))
     assert report["duplicate_live_names"] == 1
     assert report["duplicates"][0]["qualified"] == "ZP.dup"
 
@@ -422,3 +429,114 @@ def test_check_head_rejects_an_unknown_tier(tmp_path):
     _found(s, 1)
     with pytest.raises(OperationError, match="tier"):
         head_correspondence(s.load(), root=tmp_path, tier="deep")
+
+
+# -- a bad `root` is a USAGE error, not a finding ------------------------------
+#
+# ⛔ MEASURED ON THE WIRE 2026-09-10 by the zptester session and re-derived independently
+# before these tests were written. `check_head` had THREE distinguishable bad-input states
+# and what differed between them was only PROSE:
+#
+#     root ABSENT       -> REFUSED, isError true, error_type `usage`
+#     root NONEXISTENT  -> ok TRUE, isError false, matches False, resolved 0, unresolvable 1717
+#     root A FILE       -> ok TRUE, isError false, matches False, resolved 0, unresolvable 1717
+#
+# `matches: False` was a TRUE value read against the WRONG OBJECT. It prices "the registry does
+# not describe this tree" -- trivially true of a directory that is not there -- while a caller
+# reads it as "the registry has drifted". Opposite remedies: fix the path, or fix the registry.
+#
+# ⭐ THESE TESTS EXERCISE THE FINDING PATH, NOT THE CLEAN PATH, AND THAT IS DELIBERATE.
+# ZeroParadox's R-LOOPCAP: three of four bedrock findings were INTRODUCED by the previous
+# round's fix. This gap arrived inside the fix for the `root="."` default -- the wrong-root
+# advisory was correct and newly admitted a typo. A clean path cannot exercise what a guard
+# newly permits, so the guard is tested by what it must still refuse.
+
+def test_check_head_refuses_a_root_that_does_not_exist(tmp_path):
+    """A path that is not on disk is a bad ARGUMENT, and must never price as drift."""
+    s = _store(tmp_path)
+    _found(s, 2)
+    missing = tmp_path / "no_such_dir_zzq"
+    assert not missing.exists()
+    with pytest.raises(OperationError, match="does not exist") as caught:
+        head_correspondence(s.load(), root=missing)
+    # A refusal names the SUCCESS CONDITION, not just the failure: could a reader build a
+    # passing next attempt from `satisfied_when` alone, with the message deleted?
+    assert "existing" in caught.value.satisfied_when.lower()
+
+
+def test_check_head_refuses_a_root_that_is_a_file(tmp_path):
+    """Found here 2026-09-10, absent from the original report: a FILE is not a tree
+    either, and it collapsed to the identical zero-resolved reading."""
+    s = _store(tmp_path)
+    _found(s, 2)
+    not_a_dir = tmp_path / "store.json"
+    assert not_a_dir.is_file()
+    with pytest.raises(OperationError, match="not a directory") as caught:
+        head_correspondence(s.load(), root=not_a_dir)
+    assert caught.value.satisfied_when
+
+
+def test_check_head_bad_root_is_typed_usage_like_a_bad_tier(tmp_path):
+    """THE TWO BAD-INPUT STATES MUST NOT DIVERGE IN SHAPE. A bad `root` and a bad `tier`
+    are both malformed calls; before this fix one refused and the other answered ok:True."""
+    s = _store(tmp_path)
+    _found(s, 1)
+    with pytest.raises(OperationError) as bad_root:
+        head_correspondence(s.load(), root=tmp_path / "nope_zzq")
+    with pytest.raises(OperationError) as bad_tier:
+        head_correspondence(s.load(), root=tmp_path, tier="deep")
+    assert type(bad_root.value) is type(bad_tier.value)
+    assert bad_root.value.error_type == bad_tier.value.error_type == "usage"
+
+
+def test_check_head_still_reports_real_drift_as_a_finding_not_a_refusal(tmp_path):
+    """⚠ THE CONTROL, AND IT IS WHAT KEEPS THE GUARD FROM SWALLOWING THE THING IT GUARDS.
+    An EXISTING root that genuinely does not match must still come back as a REPORT with
+    ok:False -- the finding axis -- and never as an OperationError. Without this, a guard
+    that refused every zero-resolved call would pass every test above and destroy the tool."""
+    s = _store(tmp_path)
+    _found(s, 1)
+    # `_born`, not the baseline: a still-pending imported entry is anchor-era and deliberately
+    # NOT checked, so a store built only from `_found` reports checked==0 and ok==True no
+    # matter what the root holds. That would have made this control vacuous -- it would have
+    # passed against a guard that refused everything.
+    _born(s, "ZP.gone", "ZP/Gone.lean")
+    empty_but_real = tmp_path / "real_empty_tree"
+    empty_but_real.mkdir()
+    report = head_correspondence(s.load(), root=empty_but_real)   # must NOT raise
+    assert report["ok"] is False
+    assert report["checked"] == 1 and report["resolved"] == 0
+
+
+def test_export_full_refuses_a_bad_head_root_without_writing(tmp_path):
+    """⛔ THE DEFECT THE PREVIOUS FIX NEWLY ADMITTED, caught by running the finding path.
+
+    `export_full` exports FIRST and head-checks second, and caught only ValidationError and
+    IntegrityError. Once `head_correspondence` started raising on a bad root, a typo'd
+    `head_root` would have written the artifact and THEN escaped as an unhandled raise --
+    a false FAILURE reported over a completed write, which is the direction nobody re-runs.
+    """
+    from consumers.store import require_source_root
+
+    s = _store(tmp_path)
+    _found(s, 1)
+    dest = tmp_path / "export.json"
+    with pytest.raises(OperationError, match="does not exist"):
+        require_source_root(tmp_path / "no_such_root_zzq")
+    # THE LOAD-BEARING ASSERTION: the guard must be reachable BEFORE anything is written.
+    assert not dest.exists()
+
+
+def test_require_source_root_is_the_only_copy_of_the_rule(tmp_path):
+    """Both callers must refuse the same input the same way. Two copies of a check is how
+    the two drift; this fails if either grows its own notion of a valid root."""
+    from consumers.store import require_source_root
+
+    s = _store(tmp_path)
+    _born(s, "ZP.x", "ZP/X.lean")
+    missing = tmp_path / "nope_zzq"
+    direct = pytest.raises(OperationError, match="does not exist")
+    with direct:
+        require_source_root(missing)
+    with pytest.raises(OperationError, match="does not exist"):
+        head_correspondence(s.load(), root=missing)

@@ -68,4 +68,20 @@ class OperationError(Exception):
 
     `usage`, not a private `operation`: this IS a malformed call, the caller can fix it and
     retry, and nothing about the server is broken.
+
+    CARRIES AN OPTIONAL `satisfied_when`, BECAUSE A REFUSAL NAMES THE SUCCESS CONDITION AND
+    NOT JUST THE FAILURE. ⚠ Optional rather than required, and the asymmetry is deliberate:
+    verdictLedger's UsageError REQUIRES both, this one does not, and making it required here
+    would break every existing single-argument raise in this package for a benefit nothing
+    yet measures. That divergence -- one rule stated fleet-wide in CLAUDE.md, implemented at
+    full strength on one server, partially here, and not at all on gitRobot -- is a KNOWN OPEN
+    ITEM and this class is deliberately not pretending to close it.
+
+    ⭐ THE TEST FOR A GOOD `satisfied_when`, from CLAUDE.md: could a reader construct a passing
+    next attempt from `satisfied_when` alone, with the failure message deleted? The next
+    attempt is on different bytes, so a message about the CURRENT bytes is stale on arrival.
     """
+
+    def __init__(self, what, satisfied_when=None):
+        super().__init__(what)
+        self.satisfied_when = satisfied_when
