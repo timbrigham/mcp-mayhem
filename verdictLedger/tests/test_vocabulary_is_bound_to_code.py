@@ -107,15 +107,61 @@ def test_exit_codes_our_own_client_emits_are_published():
         % unpublished)
 
 
-def test_exit_code_2_describes_recording_failure_not_a_usage_error():
-    """⛔ THE REGRESSION GUARD FOR THE 2026-09-10 FIX. Every real emitter measured that day
-    meant "the check RAN and its result could not be RECORDED" — `emit()` returned None, the
-    dry-run check returned None, or there was nothing recordable. None was a usage error.
+def test_exit_code_2_covers_BOTH_the_outage_and_the_refusal_path():
+    """⛔⛔ MEASURED 2026-09-10, AND IT FALSIFIED THE FIX MADE EARLIER THE SAME DAY. Entry 2
+    was corrected to say "2 means no verdict reached the ledger at all". A test session then
+    ran the refusal path — ledger REACHABLE, `record.py --step <unregistered>`:
 
-    ⚠ The prior text enumerated CAUSES ("usage error, bad arguments, missing input"), which
-    is exactly what the comment on entry 3 forbids after that entry was caught inventing "a
-    contested panel". Entry 2 shipped the same mistake directly above that warning."""
-    two = EXIT_CODES[2]
-    assert "could not be recorded" in two, (
-        "entry 2 must cover the recording-failure case its emitters actually mean")
+        exit 2 / "UNDECIDED: record refused by verdictLedger: - V8: step ... not registered"
+
+    The ledger was REACHED. It DECIDED. It decided NO. And the code is 2. So the broad clause
+    admitted the refusal while the discriminator excluded it — one sentence contradicting the
+    one before it, in the entry I had just corrected for being too specific.
+
+    ⚠ THIS TEST NOW ASSERTS THE PROPERTY, NOT MY WORDING. Its first version required the
+    literal string "could not be recorded" and went red on a correction that made the entry
+    MORE accurate — a guard pinned to a phrasing rather than a behaviour, which is the same
+    brittleness as the defect it watches."""
+    two = EXIT_CODES[2].lower()
+    assert "reached" in two and ("reject" in two or "refus" in two), (
+        "entry 2 must admit BOTH paths: no verdict reached, AND one reached and rejected")
     assert "3" in two, "entry 2 must say how it differs from 3, or the two collapse"
+
+
+def test_exit_code_2_warns_that_it_collapses_retryable_and_terminal():
+    """⛔⛔ THE R-ZERONULL FINDING, AND IT IS THE MOST SERIOUS THING ARM 1 RETURNED. An outage
+    and a refusal return THE SAME VALUE and differ only in printed prose.
+
+    ⚠ THOSE TWO MAP ONTO THE ONE DISTINCTION THIS FLEET'S OWN `error_type` TABLE SAYS MUST
+    NEVER BE COLLAPSED — `unavailable` is RETRYABLE, `validation` is TERMINAL, and conflating
+    them is documented there as "how a rule gets retried past". A caller branching on the exit
+    code alone cannot tell "the ledger is down, try again" from "the ledger said no, stop".
+
+    ⭐ The consumer already built `reachable()` to split one exit code in two. A workaround in
+    the consumer is EVIDENCE of a gap here, not a substitute for naming it. Until the code
+    space can carry the difference, the vocabulary must at least say it cannot."""
+    two = EXIT_CODES[2].lower()
+    assert "retry" in two, (
+        "entry 2 must warn that the code alone does not distinguish retryable from terminal")
+
+
+def test_exit_code_0_does_not_claim_the_check_found_nothing():
+    """⛔ MEASURED: `check_poles` exits 0 printing "26 pole-equality site(s)" and
+    `check_divergent` exits 0 printing "5 surviving retired phrase(s)". Published 0 said "the
+    check ran and found nothing", which is FALSE of both.
+
+    ⚠ The checkers are not wrong — an advisory enumeration is "a READING LIST, never a finding
+    list" by the consumer's own rule, so exiting 0 is DESIGNED. The table had no slot for
+    "ran, enumerated, owes no verdict", leaving an intended WARN indistinguishable from clean.
+    ⛔ And the wrong fix would be making them exit 1, which turns a reading list into a
+    blocking finding."""
+    zero = EXIT_CODES[0].lower()
+    # ⚠ NOT a ban on the phrase "found nothing" — the entry may say that is the USUAL case
+    # and remain true. What it must not do is stop there, which is what made it false of an
+    # advisory leg. So the test asserts the exception is NAMED, not that a word is absent.
+    # (The first draft banned the substring and went red on correct text — a guard reading a
+    # phrasing where it meant to read a property, twice in one file.)
+    assert "owes no verdict" in zero or "nothing to answer" in zero, (
+        "0 must say what it actually certifies — that nothing is OWED, not that nothing exists")
+    assert "enumeration" in zero or "advisory" in zero, (
+        "0 must name the advisory-enumeration case, or an intended WARN reads as clean")

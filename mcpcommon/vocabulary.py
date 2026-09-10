@@ -96,7 +96,22 @@ ROW_STATUSES = {
 }
 
 EXIT_CODES = {
-    0: "ok - the check ran and found nothing.",
+    # ⛔ "FOUND NOTHING" WAS FALSE OF TWO REAL CHECKERS. Measured 2026-09-10 by the
+    # provenance-ring session across all 17 mechanical checkers on a clean tree:
+    # `check_poles` exited 0 printing "26 pole-equality site(s)" and `check_divergent`
+    # exited 0 printing "5 surviving retired phrase(s)". They found things, enumerated
+    # them, and exited 0.
+    # ⚠ THE CHECKERS ARE NOT WRONG - THIS TABLE HAD NO SLOT. The consumer's own rules make
+    # an enumeration "a READING LIST, never a finding list" and downgrade enumeration legs
+    # to WARN, so exiting 0 is the DESIGNED behaviour for an advisory leg. The gap was that
+    # {0,1,2,3} cannot express "ran, enumerated, owes no verdict", leaving an intended WARN
+    # indistinguishable from clean to anything branching on the code alone.
+    # ⛔ NOT FIXED BY MAKING THEM EXIT 1. That would turn advisory output into a finding and
+    # block on a reading list. Fixed by saying what 0 actually means.
+    0: ("ok - the check ran and OWES NO VERDICT. Usually it found nothing; it may also "
+        "have printed an advisory enumeration that is explicitly not a finding. Read the "
+        "output before concluding the tree is clean - 0 means 'nothing to answer for', "
+        "not 'nothing to see'."),
     1: "the check ran and FOUND something. A real finding, not an error.",
     # ⛔⛔ THIS ENTRY WAS NEVER MEASURED EITHER, AND IT IS THE SECOND IN THIS DICT TO BE
     # WRONG FOR THE SAME REASON. The provenance note below is entirely about `3`; nobody ever
@@ -117,11 +132,37 @@ EXIT_CODES = {
     # beside, and the consumer holding the older faithful copy was the one who was right.
     #
     # ⭐ STATE THE SHAPE, NEVER THE CAUSES - the lesson `3` already paid for, applied here.
-    2: ("NO USABLE VERDICT was produced - the check could not run, or its result could not "
-        "be recorded. NOT a finding, and never 0 or 1. Distinguished from 3 by WHERE the gap "
-        "is: 3 means it ran and could not decide about the CONTENT; 2 means no verdict "
-        "reached the ledger at all. WHAT specifically failed is the CHECKER's to say, in "
-        "that checker - never enumerated here."),
+    # ⛔⛔ AND THE DISCRIMINATOR I ADDED ON 2026-09-10 WAS ITSELF FALSIFIED THE SAME DAY.
+    # It read "2 means no verdict reached the ledger at all". Measured, ledger REACHABLE and
+    # REFUSING - `record.py --step a_step_that_is_not_registered`:
+    #
+    #     exit 2
+    #     UNDECIDED: record refused by verdictLedger:
+    #       - V8: step '...' is not registered in required.v2.json
+    #
+    # The ledger was REACHED. It DECIDED. It decided NO. And the code is 2. So the broad
+    # clause admitted the refusal path while the discriminator excluded it - one sentence
+    # contradicting the one before it.
+    #
+    # ⚠ THE FIX IS NOT "MAKE REFUSAL EXIT 3". A V8 refusal is not indecision about CONTENT;
+    # it is a well-formed decision that the record is inadmissible. It is correctly 2. The
+    # SENTENCE was wrong: the honest axis is RECORDING, not REACHING.
+    #
+    # ⭐ AND FOR THE SECOND TIME IN ONE DAY THE CONSUMER HELD THE CORRECT GENERAL STATEMENT
+    # AND THIS TABLE NARROWED IT WRONGLY. `client/record.py` says "could not be recorded (2)"
+    # - true of BOTH the outage and the refusal. Specialising a correct general claim is the
+    # failure mode of this file, twice now, in the same entry.
+    2: ("NO VERDICT WAS RECORDED - either none was reached, or one was reached and REJECTED. "
+        "NOT a finding, and never 0 or 1. Distinguished from 3 by WHAT is missing: 3 means a "
+        "verdict about the CONTENT was reached and could not resolve to finding-or-clean; 2 "
+        "means no verdict was recorded at all, for any reason. "
+        "⚠ 2 IS AMBIGUOUS ON THE ONE AXIS `error_type` SAYS MUST NEVER BE COLLAPSED - an "
+        "outage is RETRYABLE and a refusal is TERMINAL, and both exit 2, differing only in "
+        "the printed message. A caller branching on the CODE alone cannot tell 'the ledger "
+        "is down, try again' from 'the ledger said no, stop'. Read the line, or ask the "
+        "server, before retrying. "
+        "WHAT specifically failed is the CHECKER's to say, in that checker - never "
+        "enumerated here."),
     # THE FIRST DRAFT OF THIS ENTRY WAS WRONG AND IT IS WORTH THE COMMENT. It read "scope not
     # resolved, a contested panel, a dependency unavailable" - an ENUMERATION of causes,
     # written without checking what the consumer's code does with 3. Measured 2026-09-09 after
@@ -147,9 +188,14 @@ EXIT_CODES = {
 #     DECISIONS      bound in 0 files -- now 1, via `_decision()` in gitRobot/core/audit.py.
 #     ROW_STATUSES   bound in 0 files. Held by a conformance test instead, because the statuses
 #                    are computed across many branches of inventory.py.
-#     EXIT_CODES     bound in 0 files, AND UNBINDABLE FROM HERE -- exit codes are emitted by the
-#                    CONSUMER's checkers, in another repository. Only our own
-#                    verdictLedger/client/record.py is in reach.
+#     EXIT_CODES     bound in 0 files. ⛔ THIS ENTRY SAID "AND UNBINDABLE FROM HERE" AND THAT
+#                    WAS WRONG WITHIN HOURS. It is unIMPORTable - the emitters live in another
+#                    repository - and I wrote that as unBINDable, which is a claim about a
+#                    different axis. A binding does not need a symbol this process can import;
+#                    it can be a MEASUREMENT a test session takes and this table is checked
+#                    against. ⭐ Bound that way 2026-09-10: 17 checkers swept, plus the outage
+#                    and refusal paths and a nonexistent-checker control. Two entries were
+#                    falsified by that one sweep - see 0 and 2 below.
 #
 # ⚠ THE HAZARD IS THAT ALL FOUR LOOK IDENTICAL TO A READER. They sit in one dict, are rendered
 # by one function, and are served through one resource, so a caller cannot tell the enforced
