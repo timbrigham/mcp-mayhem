@@ -136,6 +136,21 @@ def _satisfied_when(err, tool: str):
         f"FETCH cannot go stale the way a docstring can.")
 
 
+def _tool_parameters(mcp, name: str):
+    """The tool's declared JSON-Schema parameters, or None if they cannot be read.
+
+    None is NOT "no arguments" -- it is "this could not be determined", and the caller above
+    treats it as a reason to skip the check rather than as an empty allow-list. Guessing an
+    empty set here would refuse every argument on every tool the moment the FastMCP internals
+    move, which is a far worse failure than the one being fixed.
+    """
+    manager = getattr(mcp, "_tool_manager", None)
+    if manager is None:
+        return None
+    tool = manager.get_tool(name)
+    return getattr(tool, "parameters", None) if tool is not None else None
+
+
 def install(mcp) -> None:
     """Re-register the low-level `call_tool` handler so refusals set `isError`.
 
@@ -151,6 +166,51 @@ def install(mcp) -> None:
 
     @mcp._mcp_server.call_tool(validate_input=False)
     async def _call_tool(name: str, arguments: dict) -> types.CallToolResult:
+        # UNDECLARED ARGUMENTS ARE REFUSED, NOT IGNORED. Measured 2026-09-10 by an external
+        # conformance sweep: `sjv.validate(nonexistent_argument=12345)` returned
+        # `{"valid": true, "violations": []}` -- isError false, structuredContent present, a
+        # clean pass. The argument was silently dropped.
+        #
+        # THE PUBLISHED VOCABULARY ALREADY CALLS THIS A REFUSAL. `usage` is "the CALL was
+        # malformed - a bad argument NAME ...". So the fleet published a refusal for exactly
+        # this and then accepted it.
+        #
+        # AND SILENT-ACCEPT IS WORSE THAN A WRONG ANSWER HERE, BECAUSE THE CALLER'S INTENT WAS
+        # USUALLY TO NARROW. `validate` takes NO arguments at all, so every argument sent to it
+        # is undeclared: a caller who believes they scoped a validation to one collection gets
+        # a WHOLE-STORE PASS that looks exactly like the scoped pass they asked for. The answer
+        # is true about the wrong object -- this codebase's defining defect, handed to the
+        # caller by the transport rather than computed by the tool.
+        #
+        # Refused HERE rather than per tool: FastMCP builds each input model from type hints
+        # and drops unknown keys before any tool body runs, so no tool can see this. One place,
+        # every tool, every server -- and the same argument as bounding output at `_receipt`.
+        try:
+            _declared = (_tool_parameters(mcp, name) or {}).get("properties")
+        except Exception:                               # noqa: BLE001
+            _declared = None
+        if isinstance(_declared, dict) and isinstance(arguments, dict):
+            _undeclared = sorted(k for k in arguments if k not in _declared)
+            if _undeclared:
+                _known = sorted(_declared)
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=_text({
+                        "ok": False,
+                        "error_type": "usage",
+                        "error": "%s does not accept %s" % (
+                            name, ", ".join(repr(k) for k in _undeclared)),
+                        "tool": name,
+                        "undeclared": _undeclared,
+                        # The success condition, not just the failure -- the next attempt is a
+                        # different call, so a message about this one is stale on arrival.
+                        "satisfied_when": (
+                            "call %s with only its declared arguments: %s. It accepts nothing "
+                            "else; an unrecognised name is NOT ignored, because a dropped "
+                            "argument makes a wider answer look like the narrower one you "
+                            "asked for." % (name, _known if _known else "(it takes none)")),
+                    }))],
+                    isError=True,
+                )
         try:
             result = await mcp._tool_manager.call_tool(
                 name, arguments, context=mcp.get_context(), convert_result=False)

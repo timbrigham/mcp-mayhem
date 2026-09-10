@@ -31,7 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from core.errors import GitRobotError
+from core.errors import ConfigError, GitRobotError, UsageError
 
 URL = os.environ.get("GITROBOT_LEDGER_URL", "http://127.0.0.1:8011/mcp")
 TIMEOUT = float(os.environ.get("GITROBOT_LEDGER_TIMEOUT", "60"))
@@ -121,38 +121,45 @@ def admission_for(action: str, path=None) -> list:
     """
     p = Path(path or os.environ.get("GITROBOT_ADMISSION") or DEFAULT_ADMISSION)
     if not p.exists():
-        raise GitRobotError(
+        raise ConfigError(
             f"admission set not found at {p}. gitRobot refuses rather than guessing "
             f"what should gate an action — an absent list is not an empty one.")
     try:
         doc = json.loads(p.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise GitRobotError(f"admission set unreadable at {p}: {exc}") from exc
+        raise ConfigError(f"admission set unreadable at {p}: {exc}") from exc
     # ⚠ The `default` is validated, not merely read. A file that quietly declared a
     # permissive default would move the bar without anyone editing a list, which is
     # exactly the single-edit lowering that separation of duty exists to prevent.
     default = doc.get("default")
     if default != "NOT_ADMITTING":
-        raise GitRobotError(
+        raise ConfigError(
             f"admission set declares default={default!r}; the only accepted value is "
             f"'NOT_ADMITTING'. An unnamed action must never be treated as unrestricted.")
 
     actions = doc.get("admission")
     if not isinstance(actions, dict) or action not in actions:
-        raise GitRobotError(
+        # THE ONE CALLER FAULT AMONG THE NINE RAISES IN THIS FILE, and it reported as
+        # `gitrobot` -- "an unclassified gitRobot fault" -- until 2026-09-10. A bad value
+        # for a declared argument is a MALFORMED CALL: the caller can fix it and retry, and
+        # nothing about this server is broken. Reported by an external conformance sweep.
+        # The message names the accepted values, so the success condition travels with the
+        # refusal rather than being left for the caller to guess.
+        raise UsageError(
             f"admission set names no entry for action {action!r}; it has "
             f"{sorted(actions) if isinstance(actions, dict) else 'no admission map'}. "
-            f"Refusing rather than treating an unnamed action as unrestricted.")
+            f"SATISFIED WHEN: `action` is one of those names. Refusing rather than "
+            f"treating an unnamed action as unrestricted.")
     entry = actions[action]
     if not isinstance(entry, list):
-        raise GitRobotError(f"admission[{action!r}] must be a list of type names")
+        raise ConfigError(f"admission[{action!r}] must be a list of type names")
     if not all(isinstance(t, str) and t for t in entry):
-        raise GitRobotError(f"admission[{action!r}] must contain only type names")
+        raise ConfigError(f"admission[{action!r}] must contain only type names")
     # ⚠ Duplicates are refused rather than de-duplicated. A list with a repeat is a
     # list somebody edited carelessly, and silently accepting it hides the edit.
     if len(set(entry)) != len(entry):
         dupes = sorted({t for t in entry if entry.count(t) > 1})
-        raise GitRobotError(f"admission[{action!r}] repeats {dupes}; refusing an "
+        raise ConfigError(f"admission[{action!r}] repeats {dupes}; refusing an "
                             f"ambiguous set rather than de-duplicating it silently")
     return list(entry)
 
@@ -200,8 +207,8 @@ def admission_doc(path=None) -> dict:
     already written next to the exclusion, rather than a second explanation that drifts."""
     p = Path(path or os.environ.get("GITROBOT_ADMISSION") or DEFAULT_ADMISSION)
     if not p.exists():
-        raise GitRobotError(f"admission set not found at {p}.")
+        raise ConfigError(f"admission set not found at {p}.")
     try:
         return json.loads(p.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise GitRobotError(f"admission set unreadable at {p}: {exc}") from exc
+        raise ConfigError(f"admission set unreadable at {p}: {exc}") from exc

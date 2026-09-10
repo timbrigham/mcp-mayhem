@@ -85,9 +85,16 @@ class VerifyIntegrityResult(TypedDict, total=False):
 
 
 class CheckHeadResult(TypedDict, total=False):
+    # `ok` is the CALL status. `matches` is the FINDING — they were the same key until
+    # 2026-09-10, and the domain value won by dict-spread ordering, which made a successful
+    # call that found drift look like a refused one.
     ok: bool
-    tier: str
+    matches: bool
+    # ⚠ The RESOLVED ABSOLUTE root, never the string the caller passed. A relative root in a
+    # response cannot be interpreted by anyone who does not know the server's cwd.
     root: str
+    note: str
+    tier: str
     checked: int
     resolved: int
     unresolvable_files: int

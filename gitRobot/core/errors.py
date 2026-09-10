@@ -69,6 +69,27 @@ class RepoError(GitRobotError):
     error_type = _kind("repo")
 
 
+class ConfigError(GitRobotError):
+    """This server's own configuration could not be read, or is invalid.
+
+    NOT THE CALLER'S FAULT AND NOT AN UNCLASSIFIED FAULT, WHICH IS HOW EIGHT OF THESE
+    REPORTED UNTIL 2026-09-10. Every admission-set problem -- file absent, unreadable,
+    a bad `default`, a malformed entry list, a duplicate -- raised a bare `GitRobotError`
+    and therefore travelled as `error_type: "gitrobot"`, whose own published meaning is
+    "an unclassified gitRobot fault".
+
+    So the single most consequential failure this server has -- it cannot read the file
+    that decides what gates a push -- was indistinguishable on the wire from any
+    unhandled internal fault. `iserror.py` and every consumer branch on that field.
+
+    `config` already existed in `mcpcommon.vocabulary.ERROR_TYPES`, published and unused
+    here: "the server's own configuration could not be read or is invalid. Nothing is
+    judged until it is fixed." The value was available; nothing raised it.
+    """
+
+    error_type = _kind("config")
+
+
 class UsageError(GitRobotError):
     """Malformed arguments — an unknown read op, an empty path list, and so on."""
 

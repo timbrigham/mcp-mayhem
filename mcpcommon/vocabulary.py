@@ -38,8 +38,15 @@ here would be exactly the second copy this module exists to remove.
 from __future__ import annotations
 
 ERROR_TYPES = {
-    "usage": ("the CALL was malformed - a bad argument name, a missing required field. Fix the "
-              "call and retry; the server never saw a valid request."),
+    # ENUMERATION AGAIN, AND IT EXCLUDED THE COMMONEST CASE. "a bad argument name, a
+    # missing required field" listed CAUSES -- the failure this file's exit-code entries
+    # were twice corrected for -- and a bad argument VALUE matched neither, so a bad
+    # `action` on gitRobot reported as "an unclassified fault" instead. Measured 2026-09-10.
+    "usage": ("the CALL was malformed - a bad argument name, a bad argument VALUE, a "
+              "missing required field. The server never performed the operation, so "
+              "nothing changed; FIX THE CALL AND RETRY. Distinguished from `validation` "
+              "by WHAT was wrong: usage means the request never became a valid one, "
+              "validation means it did and its CONTENT broke a rule."),
     "validation": ("the call was well-formed and the CONTENT broke a rule. TERMINAL: do not "
                    "retry, fix the record. Every violation is reported at once so one round "
                    "trip is enough."),
@@ -52,6 +59,15 @@ ERROR_TYPES = {
     "repo": "the configured repository is missing, is not a git repo, or git itself failed.",
     "unavailable": ("a transient condition - a lock held, a resource busy. RETRYABLE, unlike "
                     "validation, and conflating the two is how a rule gets retried past."),
+    # ADDED 2026-09-10. sjv had been EMITTING this value for as long as it has had an
+    # integrity check, and it appeared in no published list -- because sjv's errors.py was
+    # never bound to this table. It is genuinely distinct from `validation`: validation means
+    # the CONTENT broke a rule, integrity means the FILE MOVED UNDER US and the content was
+    # never judged at all.
+    "integrity": ("the store's on-disk hash does not match the last audit hash - it was "
+                  "edited OUT OF BAND, bypassing the handler. Detection, not prevention: "
+                  "nothing here can say what changed or who changed it. HALT; do not write "
+                  "over it, and re-establish the baseline deliberately."),
     "ledger": "an unclassified verdictLedger fault.",
     "gitrobot": "an unclassified gitRobot fault.",
     "unhandled": ("an exception the server did not classify. A BUG in the server, not in the "

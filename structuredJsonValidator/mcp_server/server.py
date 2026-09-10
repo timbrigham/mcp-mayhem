@@ -128,9 +128,9 @@ def _write(collection: str, op: str, params: dict[str, Any]) -> dict:
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:
-        return {"ok": False, "error_type": "integrity", "error": str(exc)}
+        return {"ok": False, "error_type": IntegrityError.error_type, "error": str(exc)}
     except OperationError as exc:
-        return {"ok": False, "error_type": "operation", "error": str(exc)}
+        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
 
 
 def _write_store(op: str, params: dict[str, Any]) -> dict:
@@ -140,9 +140,9 @@ def _write_store(op: str, params: dict[str, Any]) -> dict:
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:
-        return {"ok": False, "error_type": "integrity", "error": str(exc)}
+        return {"ok": False, "error_type": IntegrityError.error_type, "error": str(exc)}
     except OperationError as exc:
-        return {"ok": False, "error_type": "operation", "error": str(exc)}
+        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
 
 
 # -- read tools ---------------------------------------------------------------
@@ -235,7 +235,7 @@ def validate() -> ValidateResult:
 
 @mcp.tool(title='Check head correspondence',
           annotations=ToolAnnotations(title='Check head correspondence', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-def check_head(root: str = ".", tier: str = "paths", limit: int = 25) -> CheckHeadResult:
+def check_head(root: str = "", tier: str = "paths", limit: int = 25) -> CheckHeadResult:
     """HEAD-correspondence check: does the registry still describe the SOURCE TREE?
     (interop #16b/#17.)
 
@@ -253,11 +253,62 @@ def check_head(root: str = ".", tier: str = "paths", limit: int = 25) -> CheckHe
     Also reports duplicate live names. Read-only; terse (counts + bounded sample).
     Returns {ok, checked, resolved, unresolvable_files, missing_files[],
     missing_files_by_file{}, duplicate_live_names, duplicates[]}."""
+    # ⛔⛔ `root` USED TO DEFAULT TO ".", AND THAT IS A CONFIDENT WRONG ANSWER RATHER THAN A
+    # MISSING ONE. This is a long-lived SERVER: "." is whatever directory the supervisor
+    # happened to launch it from, which is not the source tree the registry describes and is
+    # not knowable to the caller. Measured 2026-09-10 by an external conformance sweep:
+    # `check_head()` reported `root: "."`, checked 1717, resolved 0, unresolvable 1717 —
+    # which reads as TOTAL registry drift and is almost certainly a wrong root.
+    #
+    # ⚠ The registry describes the CONSUMER's source tree; this server's own directory is not
+    # it, so there is no defensible server-side default. Refusing names the success condition;
+    # guessing produces a catastrophic-looking number that is a true count of the wrong thing.
+    resolved_root = root or os.environ.get("SJV_ROOT", "")
+    if not resolved_root:
+        # RETURNED, NOT RAISED -- and the difference is the whole reason `mcpcommon/iserror.py`
+        # exists. A raise escapes to FastMCP, which REWRITES the text to
+        # "Error executing tool check_head: <msg>" and stamps error_type `unhandled`; the body
+        # stops being JSON and the caller's json.loads falls back to None. Measured here
+        # 2026-09-10 by raising it first and reading the wire: the refusal came back prefixed
+        # and unparseable, which is the exact shape iserror.py's docstring warns sjv's raising
+        # read tools already produce. A refusal must travel as DATA.
+        return {
+            "ok": False,
+            "error_type": OperationError.error_type,
+            "error": "check_head needs a `root` — the source tree the registry describes.",
+            "satisfied_when": (
+                "pass `root` as the absolute path of the source tree the registry describes "
+                "(or set SJV_ROOT in the server's environment). This server's own directory "
+                "is not that tree, and a long-lived server has no meaningful current "
+                "directory to fall back on — a relative default resolves against wherever "
+                "the supervisor happened to launch it and reports every entry unresolvable."),
+        }
     try:
-        return {"ok": True, **head_correspondence(_store().load(), root=root,
-                                                  tier=tier, limit=limit)}
+        report = head_correspondence(_store().load(), root=resolved_root,
+                                     tier=tier, limit=limit)
     except OperationError as exc:
-        return {"ok": False, "error_type": "operation", "error": str(exc)}
+        return {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+
+    # ⛔⛔ THE DOMAIN `ok` MUST NOT CLOBBER THE CALL-STATUS `ok`. `head_correspondence`
+    # returns its own `ok` — "no drift", the FINDING axis, which `core/cli.py` turns into
+    # exit 0-vs-1 — and `{"ok": True, **report}` let the spread overwrite the call status
+    # with it. So a successful call that FOUND drift answered `ok: false`, and
+    # `mcpcommon/iserror.py` read that as a refusal and stripped the whole report's
+    # `structuredContent`. One key, two axes, decided by dict ordering.
+    # ⭐ Renamed on the way out: `matches` carries the finding, `ok` carries the call.
+    matches = report.pop("ok", None)
+    out = {"ok": True, "matches": matches, "root": str(Path(resolved_root).resolve()),
+           **report}
+
+    # ⚠ NOTHING RESOLVING AT ALL IS EVIDENCE ABOUT THE ROOT, NOT ABOUT THE REGISTRY. Said
+    # here rather than left for the reader, because "1717 of 1717 unresolvable" is exactly
+    # the shape that gets reported upward as a crisis.
+    if out.get("checked") and not out.get("resolved"):
+        out["note"] = (
+            "ZERO of %d entries resolved. A wrong `root` explains this better than total "
+            "drift — check that %s is the source tree the registry describes before "
+            "treating this as a finding." % (out["checked"], out["root"]))
+    return out
 
 
 @mcp.tool(title='Verify store integrity',
@@ -661,7 +712,7 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
     except ValidationError as exc:
         return _validation_result(exc)
     except IntegrityError as exc:
-        return {"ok": False, "error_type": "integrity", "error": str(exc)}
+        return {"ok": False, "error_type": IntegrityError.error_type, "error": str(exc)}
 
 
 @mcp.tool(title='Migrate the store in batch',
