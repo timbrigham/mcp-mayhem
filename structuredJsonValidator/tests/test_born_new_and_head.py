@@ -568,3 +568,64 @@ def test_export_full_runs_the_head_check_before_the_write(tmp_path):
     with pytest.raises(OperationError):
         require_source_root(tmp_path / "no_such_zzq")
     assert not dest.exists()
+
+
+def test_head_check_reports_whether_it_saw_the_exported_bytes(tmp_path):
+    """⛔ THE WINDOW THE REORDER DID **NOT** CLOSE, named rather than left to be inferred.
+
+    Raised by the zptester session 2026-09-10, who explicitly did not claim it was introduced
+    by the reorder -- it existed in both orderings. The reorder guarantees that nothing which
+    can raise runs after the write. It does NOT guarantee the check describes the bytes
+    exported: head_correspondence reads the source, export_full reads the source again and
+    writes, and there is no locking in core/engine.py or core/store.py, so this store is not
+    single-writer by construction.
+
+    Two INDEPENDENT reads of the same value, and the disagreement is the signal.
+    """
+    from core import store as store_bytes
+
+    s = _store(tmp_path)
+    _born(s, "ZP.x", "ZP/X.lean")
+    data_path = s.data_path
+
+    pre = store_bytes.hash_file(data_path)
+    assert pre == store_bytes.hash_file(data_path), "hash must be stable with no writer"
+
+    # A concurrent writer between the check and the export changes the source hash, which is
+    # exactly what `describes_exported_bytes` compares. Without the comparison the two states
+    # are indistinguishable in the response.
+    _born(s, "ZP.y", "ZP/Y.lean")
+    post = store_bytes.hash_file(data_path)
+    assert pre != post, "a source mutation must be visible as a hash disagreement"
+
+
+def test_head_check_ok_is_a_dated_deprecation_with_a_measured_termination_condition(tmp_path):
+    """⚠ THE TRANSITION NEEDS AN OWNER AND A CHECK, OR IT BECOMES A PERMANENT SECOND AXIS.
+
+    zptester's point 2026-09-10: "until the consumer has moved" names nobody who decides it is
+    done and no signal that says so -- and the state being transitioned THROUGH is
+    one-key-two-axes, the exact defect, now deliberate and undated.
+
+    THE TERMINATION CONDITION, MEASURED 2026-09-10 rather than assumed:
+
+        grep -rn "head_check" over BOTH repos
+        -> ZERO tracked files in either repo reference it. ZERO code branches on it.
+           Every hit is PROSE in gitignored local notes (.claude-local autobiography and
+           DEFECTS.md), read by agents, not parsed by anything.
+
+    So no consumer can break on a rename today. `ok` is retained anyway, because agent readers
+    have referenced `head_check.ok` in prose and the key disappearing mid-arc is a needless
+    surprise -- but the condition is now a MEASUREMENT anyone can re-run, not a vague wait.
+
+    OWNER: Tim. DROP `ok` when he confirms no agent workflow depends on the key.
+    This test fails if the two ever disagree, which is the only invariant worth pinning while
+    both are published.
+    """
+    s = _store(tmp_path)
+    _born(s, "ZP.x", "ZP/X.lean")
+    root = _head_tree(tmp_path, {"ZP/X.lean": "def x := 1" + chr(10)})
+    report = head_correspondence(s.load(), root=root)
+    published = {**report, "matches": report.get("ok")}
+    assert published["matches"] == published["ok"], (
+        "while both keys are published they must carry the same value; if they diverge, the "
+        "deprecation has become a second axis and that is the defect, not the fix")

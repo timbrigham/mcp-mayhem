@@ -49,6 +49,7 @@ from mcp_server.results import (  # noqa: E402
 
 from consumers.store import build_store, head_correspondence, require_source_root
 from core.errors import IntegrityError, OperationError, ValidationError
+from core import store as _store_bytes
 from core.query import _MISSING, get_path
 
 DATA_PATH = os.environ.get("SJV_DATA", "data/registry.json")
@@ -746,6 +747,13 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
     `head_check.ok` carries the same value as `matches` for now and is retained
     only so existing callers do not break; branch on `matches`.
 
+    `head_check.describes_exported_bytes` says whether the check actually saw the
+    bytes that were published. The check reads the source, then the export reads
+    the source again and writes; this store has no locking, so a concurrent write
+    in between yields an artifact the check never examined. False means the
+    head-check result is about different bytes than the artifact -- treat it as
+    unchecked and re-run, not as a pass.
+
     ⚠ A BAD `head_root` REFUSES THE WHOLE CALL AND WRITES NOTHING. It is a
     malformed argument, not a finding: "the check could not run" reported as a
     failed check is the same true-value-wrong-object collapse this tool exists
@@ -787,7 +795,12 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
         # first means NOTHING that can raise executes after `atomic_write_bytes`. The caller can
         # no longer be told the export failed while the file sits in `dest`, by any entrance.
         head_check = None
+        pre_source_sha = None
         if head_root is not None:
+            # ⚠ THE SOURCE HASH IS TAKEN BEFORE THE CHECK SO THE TWO CAN BE COMPARED LATER.
+            # See `describes_exported_bytes` below -- this is the first of two INDEPENDENT
+            # reads of the same value, which is the only shape that catches the window.
+            pre_source_sha = _store_bytes.hash_file(st.data_path)
             head_check = head_correspondence(st.load(), root=head_root, tier="paths")
         result = {"ok": True, **st.export_full(dest)}
         if head_check is not None:
@@ -802,7 +815,32 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
             # MISSING key, which is falsy, which reads as DRIFT -- a silent wrong answer in the
             # alarming direction. `matches` is the fleet-consistent name that `check_head`
             # already publishes; `ok` stays until the consumer has moved. Client first.
-            head_check = {**head_check, "matches": head_check.get("ok")}
+            # ⛔⛔ THE REORDER CLOSED A DIFFERENT PROPERTY THAN IT SOUNDS LIKE IT CLOSED, and
+            # this field is what keeps the difference from being inferred wrongly. Raised by
+            # the zptester session 2026-09-10, who explicitly did NOT claim it was introduced
+            # here -- it existed in BOTH orderings and the point was that "validated before the
+            # write" READS as though it were closed.
+            #
+            # What the reorder guarantees: nothing that can raise runs after `atomic_write_bytes`.
+            # What it does NOT guarantee: that the check describes the bytes actually exported.
+            # `head_correspondence` reads the source, then `export_full` reads the source AGAIN
+            # and writes. A source mutation in between leaves an artifact the check never saw.
+            #
+            # ⚠ AND THE WINDOW IS REACHABLE, NOT THEORETICAL. There is no locking anywhere in
+            # `core/engine.py` or `core/store.py` -- this store is not single-writer by
+            # construction, and background agents write to this checkout concurrently, which is
+            # the same premise `gitRobot.stage` refuses bulk adds over.
+            #
+            # ⭐ SO IT IS MEASURED ON BOTH SIDES AND THE DISAGREEMENT IS THE SIGNAL, which is
+            # the house rule for a value that crosses layers. `pre_source_sha` is hashed here
+            # before the check; `source_sha256` is computed by `export_full` from the bytes it
+            # actually exported. Equal means the check describes the artifact. Unequal means it
+            # does not, and the caller is TOLD so rather than left to assume -- because a check
+            # that silently failed to describe the artifact is indistinguishable from one that
+            # passed, and that is the whole defect class this fleet exists to remove.
+            head_check = {**head_check,
+                          "matches": head_check.get("ok"),
+                          "describes_exported_bytes": pre_source_sha == result.get("source_sha256")}
             result["head_check"] = head_check
         return result
     except OperationError as exc:
