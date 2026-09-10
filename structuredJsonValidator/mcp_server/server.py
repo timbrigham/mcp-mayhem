@@ -740,8 +740,18 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
     Pass `head_root` (the Lean source root) to also run the cheap HEAD-path check
     and include a `head_check` summary in the receipt, so an export can never
     SILENTLY publish a dead path (interop #17). It is a warning, not a gate — the
-    export still happens; `ok` stays true and `head_check.ok` tells you whether
-    what you just published still matches the source tree."""
+    export still happens; `head_check.matches` tells you whether what you just
+    published still matches the source tree, and the top-level `ok` does NOT --
+    it is the CALL axis and stays true for a successful export that found drift.
+    `head_check.ok` carries the same value as `matches` for now and is retained
+    only so existing callers do not break; branch on `matches`.
+
+    ⚠ A BAD `head_root` REFUSES THE WHOLE CALL AND WRITES NOTHING. It is a
+    malformed argument, not a finding: "the check could not run" reported as a
+    failed check is the same true-value-wrong-object collapse this tool exists
+    to avoid, and a silent SUCCESS over an artifact whose correspondence was
+    never actually checked is worse than a refusal, because nothing downstream
+    can distinguish it from a checked one."""
     try:
         # ⛔⛔ `head_root` IS VALIDATED **BEFORE** THE EXPORT, AND THE ORDER IS THE WHOLE POINT.
         # Caught 2026-09-10 while fixing check_head's bad-root collapse -- i.e. THIS DEFECT WAS
@@ -760,13 +770,40 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
         # false` for "the check could not run" would rebuild the exact value-on-the-wrong-object
         # collapse one layer up -- indistinguishable from "the check ran and found drift".
         # ⭐ Nothing is written, so the caller fixes the path and re-exports.
-        if head_root is not None:
-            require_source_root(head_root)
         st = _store()
-        result = {"ok": True, **st.export_full(dest)}
+        # ⭐⭐ THE HEAD CHECK RUNS **BEFORE** THE WRITE, WHICH MAKES THIS A PROPERTY RATHER THAN
+        # A CLOSED ROUTE. Asked by the zptester session 2026-09-10, turning this fix's own
+        # route-versus-property test back on it: validating `head_root` up front closes the
+        # ROUTE I found (a typo'd root raising after the export), but it does not answer
+        # whether ANY OTHER post-write failure can still escape over a completed write. It
+        # could: `require_source_root` is a TOCTOU check, and `st.load()` re-reads the source
+        # from disk and can raise if it moves underneath us. Both windows are narrow and both
+        # land in the same bad place.
+        #
+        # ⭐ THE ORDER REMOVES THE QUESTION INSTEAD OF NARROWING IT. `head_correspondence` reads
+        # the SOURCE store, not the artifact, and `export_full` does not mutate the source --
+        # `engine.py` records the export with `resulting_sha256=source_sha`, the UNCHANGED hash.
+        # So the check is worth exactly the same before the write as after it, and running it
+        # first means NOTHING that can raise executes after `atomic_write_bytes`. The caller can
+        # no longer be told the export failed while the file sits in `dest`, by any entrance.
+        head_check = None
         if head_root is not None:
-            result["head_check"] = head_correspondence(st.load(), root=head_root,
-                                                       tier="paths")
+            head_check = head_correspondence(st.load(), root=head_root, tier="paths")
+        result = {"ok": True, **st.export_full(dest)}
+        if head_check is not None:
+            # ⚠ `matches` IS PUBLISHED BESIDE `ok`, AND THE DUPLICATION IS DELIBERATE AND
+            # TEMPORARY. This embeds `head_correspondence`'s RAW report, whose `ok` is the
+            # FINDING axis, inside a response whose top-level `ok` is the CALL axis -- one key
+            # carrying two axes, one nesting level apart, in a single JSON body. That is the
+            # same shape as the cd1c10e defect, surviving where nobody looked for it, and it
+            # was found by the zptester session ASKING whether the defect had been removed or
+            # merely relocated inward. It had been relocated.
+            # ⛔ NOT RENAMED OUTRIGHT: a consumer branching on `head_check.ok` would get a
+            # MISSING key, which is falsy, which reads as DRIFT -- a silent wrong answer in the
+            # alarming direction. `matches` is the fleet-consistent name that `check_head`
+            # already publishes; `ok` stays until the consumer has moved. Client first.
+            head_check = {**head_check, "matches": head_check.get("ok")}
+            result["head_check"] = head_check
         return result
     except OperationError as exc:
         refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}

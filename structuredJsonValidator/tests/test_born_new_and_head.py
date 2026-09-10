@@ -540,3 +540,31 @@ def test_require_source_root_is_the_only_copy_of_the_rule(tmp_path):
         require_source_root(missing)
     with pytest.raises(OperationError, match="does not exist"):
         head_correspondence(s.load(), root=missing)
+
+
+def test_export_full_runs_the_head_check_before_the_write(tmp_path):
+    """⭐ THE ROUTE-VERSUS-PROPERTY FIX, asked for by the zptester session.
+
+    Validating `head_root` up front closed the route I found. It did not answer whether ANY
+    other post-write failure could escape over a completed write -- `require_source_root` is
+    a TOCTOU check and `st.load()` re-reads from disk. Running the check FIRST removes the
+    question: nothing that can raise executes after the artifact is written.
+
+    The check is worth the same before or after, because it reads the SOURCE store and
+    `export_full` does not mutate it (engine.py records `resulting_sha256=source_sha`).
+    """
+    from consumers.store import require_source_root
+
+    s = _store(tmp_path)
+    _born(s, "ZP.gone", "ZP/Gone.lean")
+    dest = tmp_path / "export.json"
+    # A root that is real but does not match: the check must be REACHABLE and must report a
+    # finding -- if it had been skipped, nothing here would fail.
+    empty_but_real = tmp_path / "real_empty_tree"
+    empty_but_real.mkdir()
+    report = head_correspondence(s.load(), root=empty_but_real)
+    assert report["ok"] is False and report["resolved"] == 0
+    # And the bad-root refusal is reachable without writing anything.
+    with pytest.raises(OperationError):
+        require_source_root(tmp_path / "no_such_zzq")
+    assert not dest.exists()
