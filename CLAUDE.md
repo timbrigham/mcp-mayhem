@@ -306,6 +306,69 @@ reviewers. Publishing to an audience that cannot fetch is the same error as docu
 file nobody opens, which is the defect `verdictLedger/client/record.py` already exists to warn
 about.
 
+⭐⭐ **DURABILITY AND REACHABILITY ARE DIFFERENT PROPERTIES, AND THE TWO CHANNELS FAIL IN
+OPPOSITE DIRECTIONS.** The consumer's line, 2026-09-09, and it corrects a claim made here the
+same evening:
+
+    a DOCSTRING   reaches everyone      and ROTS (cached per session; measured 4h19m stale)
+    a RESOURCE    CANNOT rot (the body  and reaches almost nobody (no subagent route at all)
+                  is read per call)
+
+⛔ So "publish it as a resource" is NOT the fix for descriptor drift on its own. It was named
+here as the cheapest fix without pricing who could read it, which is the same mistake one layer
+up: a true property of the channel, asserted about the wrong audience.
+
+⛔⛔ **AND THE SUBAGENT MODEL IS RICHER THAN "TOOLS YES, RESOURCES NO" — FOUR GATES, MEASURED
+2026-09-10 BY A THIRD SESSION AND CORROBORATED IN CONFIG FROM THIS SIDE.** Anything designed for
+a spawned agent must clear ALL of them, and clearing three reads exactly like clearing four:
+
+    1  ToolSearch MUST BE IN THE AGENT'S ALLOWLIST. MCP tools are DEFERRED — a child's schema
+       at spawn contains no `mcp__` name at all; all 147 across seven servers arrive as
+       name-only strings behind ToolSearch. ⚠ An allowlist of `mcp__*, ToolSearch, Read, Glob`
+       delivered only Read and Glob, 3 for 3. **Granting `mcp__*` without ToolSearch actually
+       landing grants permission over an empty set** — there is no route to populate it.
+    2  THE BRIEF MUST NAME THE EXACT TOOL. The deferred entries carry NO DESCRIPTIONS, so a
+       child cannot browse or discover by concept. It can only select a name it already knows.
+       ⭐ This is why "cite the URI as provenance and state the rule inline" generalises: a
+       spawned agent cannot follow a pointer of any kind, URI or tool, that it must first
+       discover.
+    3  ⛔ SCHEMA-LOAD AND CALL-PERMISSION ARE INDEPENDENT GATES. "The schema loaded" tells you
+       NOTHING about "the call will be allowed". Measured in one agent, one permission mode:
+       `mcp__gitRobot__admission` EXECUTED while `mcp__verdictLedger__status` was REFUSED.
+    4  THE CONTENT MUST NOT LIVE ONLY BEHIND A `docs://` URI. `ListMcpResourcesTool` and
+       `ReadMcpResourceTool` are absent from a child's schema AND absent from the deferred
+       registry — not a permission refusal, simply not registered for children.
+
+⭐ WHY GATE 3 BIT, AND IT IS CONFIG RATHER THAN CHANCE — verified here 2026-09-10 by reading the
+consumer's `.claude/settings.json` rather than trusting the symptom:
+
+    defaultMode  dontAsk
+    allow        mcp__sjv, mcp__gitRobot
+    verdictLedger  ABSENT from allow, ABSENT from deny
+
+⛔⛔ **SO THE LEDGER — THE STATE ENGINE EVERY CALLER IS TOLD TO CONSULT FIRST — IS THE ONE SERVER
+A SPAWNED AGENT IN THAT PROJECT CANNOT REACH.** Under `dontAsk` a child cannot prompt, so an
+absent allow entry is a silent refusal. The parent session reaches it fine, which is exactly why
+nobody noticed: **the session that can check is the session that is not affected.**
+
+⚠ THE FIX IS ONE LINE IN A FILE THAT IS NOT OURS AND MUST NOT BE EDITED FROM HERE. A permission
+allowlist is never changed on a peer's report — that is the shape of permission laundering even
+when the change is plainly correct.
+
+⭐ THE DESIGN RULE THAT FOLLOWS, AND IT BINDS ANYTHING THIS FLEET BUILDS FOR SUBAGENTS:
+**content a spawned agent must have belongs in a TOOL RESPONSE or in the server `instructions`
+block — never only in a resource.** The vocabularies are the live instance: `docs://*/vocabulary`
+is the canonical, generated-from-constants home, its own header says a document restating it is
+the copy that will be wrong, and **it is unreachable to every gate brief, because every gate
+brief is executed by a spawned agent.** A subagent asked "what does exit 2 mean" has no route to
+the rendered definition and only restatements remain — which is the exact failure the resource
+was built to prevent.
+
+⚠ THE SHAPE THAT RESOLVES IT WITHOUT A SECOND COPY: serve the SAME generated render through both
+transports — a `vocabulary()` tool and the `docs://` resource, both calling the one function over
+`mcpcommon`'s constants. Two transports, one source, so they cannot disagree. **NOT BUILT — it is
+a surface expansion rather than a defect fix, and it is Tim's call.**
+
 **CONFORMANCE MUST EXTEND PAST TOOLS.** All 22 checks in `test_mcp_conformance.py` audit tools.
 The advertised-but-empty capability sat one layer above everything they look at. The suite must
 also fail when: a capability is advertised and unserved; two servers render the same vocabulary
