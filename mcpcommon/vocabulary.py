@@ -168,30 +168,39 @@ EXIT_CODES = {
     # AND THIS TABLE NARROWED IT WRONGLY. `client/record.py` says "could not be recorded (2)"
     # - true of BOTH the outage and the refusal. Specialising a correct general claim is the
     # failure mode of this file, twice now, in the same entry.
-    2: ("NO VERDICT WAS RECORDED - either none was reached, or one was reached and REJECTED. "
-        "NOT a finding, and never 0 or 1. Distinguished from 3 by WHAT is missing: 3 means a "
-        "verdict about the CONTENT was reached and could not resolve to finding-or-clean; 2 "
-        "means no verdict was recorded at all, for any reason. "
-        "⚠ 2 IS AMBIGUOUS ON THE ONE AXIS `error_type` SAYS MUST NEVER BE COLLAPSED - an "
-        "outage is RETRYABLE and a refusal is TERMINAL, and both exit 2, differing only in "
-        "the printed message. A caller branching on the CODE alone cannot tell 'the ledger "
-        "is down, try again' from 'the ledger said no, stop'. Read the line, or ask the "
-        "server, before retrying. "
-        "WHAT specifically failed is the CHECKER's to say, in that checker - never "
+    2: ("COULD NOT ASK - no verdict was recorded because the ledger was never reached. "
+        "NOT a finding, and never 0 or 1. RETRYABLE: the ledger is down, the URL is wrong, the "
+        "call timed out - nothing has decided anything, so trying again is the correct next "
+        "move. ⛔ DISTINGUISHED FROM 4, WHICH IS THE OTHER HALF OF WHAT 2 USED TO MEAN: 4 is "
+        "asked AND REFUSED, which is TERMINAL and must never be retried. Distinguished from 3 "
+        "by WHAT is missing: 3 means a verdict about the CONTENT was reached and could not "
+        "resolve to finding-or-clean; 2 means the recording never happened because nobody "
+        "answered. WHAT specifically failed is the CHECKER's to say, in that checker - never "
         "enumerated here."),
-    # THE FIRST DRAFT OF THIS ENTRY WAS WRONG AND IT IS WORTH THE COMMENT. It read "scope not
-    # resolved, a contested panel, a dependency unavailable" - an ENUMERATION of causes,
-    # written without checking what the consumer's code does with 3. Measured 2026-09-09 after
-    # their editorial gate caught it: their tree branches on 3 in THREE places -
-    # check_paths.EXIT_SKIPPED (scope could not be determined), check_briefs.py:572, and
-    # hooks.py:697 ON THE PUSH PATH, where 3 means "the ledger REACHED and REFUSED this record
-    # - a DECISION, not an outage". NEITHER is a contested panel. The definition invented a
-    # meaning the code does not implement and omitted two it does, inside the module built to
-    # end exactly that. A vocabulary that enumerates CAUSES is a second copy of its callers.
     3: ("UNDETERMINED - it ran and could not return a finding-or-clean answer. Must never "
         "collapse into 0 or 1; that collapse is the defect this whole vocabulary exists to "
-        "make unrepresentable. WHAT SPECIFICALLY made it undetermined is the CHECKER's to say, "
-        "in that checker, mapped onto this - never enumerated here."),
+        "make unrepresentable. ⚠ THIS IS ABOUT THE CONTENT, NOT ABOUT RECORDING: a verdict "
+        "that was reached and could not be RECORDED is 2 or 4, never this. WHAT SPECIFICALLY "
+        "made it undetermined is the CHECKER's to say, in that checker, mapped onto this - "
+        "never enumerated here."),
+    4: ("ASKED AND REFUSED - the ledger was reached, it DECIDED, and it said no. NOT a "
+        "finding, and never 0 or 1. ⛔ TERMINAL: NEVER RETRY IT. A refusal is a rule being "
+        "applied, so the same call will be refused again; retrying is how a caller under "
+        "pressure gets past a rule it should have obeyed. Read the rule the server named and "
+        "fix the call or the content. "
+        "⭐ THIS VALUE EXISTS BECAUSE 2 USED TO CARRY BOTH HALVES AND THEY DIFFER ON THE ONE "
+        "AXIS `error_type` SAYS MUST NEVER BE COLLAPSED - `unavailable` is RETRYABLE and "
+        "`validation` is TERMINAL. Until 2026-09-10 both exited 2 and differed only in printed "
+        "prose, so the vocabulary told callers to 'read the line' - dispatch on text, which is "
+        "the fix this fleet forbids everywhere else. A DIFFERENT VALUE, NOT A DIFFERENT "
+        "MESSAGE. "
+        "⚠ THE CONSUMER GOT HERE FIRST AND THAT IS EVIDENCE, NOT COINCIDENCE. ZeroParadox's "
+        "`check_briefs.classify_record_failure` had already split the code itself, and built "
+        "`record.reachable()` - a SECOND network call - to recover a distinction `emit` "
+        "already knew and threw away at its return. A workaround in the consumer is evidence "
+        "of a gap here. ⛔ It chose 3 for this, which collides with 3's meaning above AND with "
+        "`ci_report.SKIPPED_RC = 3`, where a 3 renders as **skipped** - a non-failure. That "
+        "collision is why this is a NEW value rather than a widening of 3."),
 }
 
 # ⛔⛔ NOT EVERY TABLE ABOVE IS BOUND TO CODE, AND UNTIL 2026-09-10 NOTHING SAID SO.

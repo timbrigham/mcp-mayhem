@@ -11,12 +11,30 @@ implementation to drift.
 BLOCKS. Never a warning, never a pass, never a local fallback write — a local
 fallback is the two-route design returning through the back door.
 
-    rid = record.emit(...)
-    if rid is None:
-        print("UNDECIDED: ledger unavailable or record rejected"); sys.exit(2)
+⛔⛔ USE `emit_ex` AND EXIT 2-vs-4. `emit` collapses two DIFFERENT failures into one
+`None`, and they differ on the one axis `error_type` says must never be collapsed —
+an outage is RETRYABLE, a refusal is TERMINAL.
 
-⚠ EXIT 2, NEVER 0, NEVER 1. Distinguish "the check failed" (1) from "the check
-could not be recorded" (2), or the pipeline cannot tell a finding from an outage.
+    rid, failure = record.emit_ex(...)
+    if failure == "refused":
+        sys.exit(4)          # asked and REFUSED — terminal, never retry
+    if failure:
+        sys.exit(2)          # could not ask — retryable
+
+⚠ EXIT 2 OR 4, NEVER 0, NEVER 1. Distinguish "the check failed" (1) from "the check
+could not be recorded" (2 or 4), or the pipeline cannot tell a finding from an outage.
+
+⭐ WHY `emit_ex` EXISTS — MEASURED 2026-09-10, AND THE CONSUMER GOT HERE FIRST. `emit`
+already KNEW which failure it had: the refusal branch carries the comment "A refusal is
+TERMINAL. Do not retry it." and then returns the SAME `None` as a timeout. The
+information existed and was destroyed at the return. So ZeroParadox built
+`record.reachable()` — a SECOND NETWORK CALL — to recover a distinction this function
+had already made, and `check_briefs.classify_record_failure` remapped the exit code on
+the strength of it. **A workaround in the consumer is evidence of a gap here, not a
+substitute for closing it.**
+
+⚠ `emit` IS UNCHANGED AND STILL RETURNS id-or-None. Existing installed copies keep
+working; nothing breaks by not upgrading. `emit_ex` is additive.
 
 Measured 2026-08-22: streamable-HTTP MCP over urllib works — initialize,
 notifications/initialized, tools/call; session id from the Mcp-Session-Id response
@@ -194,6 +212,23 @@ def emit(step, tier, verdict, subjects, basis, reason=None,
          inputs=(), decided=None, cost=None, revision=0, evidence=()):
     """Append one record. Returns its id, or None if refused or unreachable.
 
+    ⚠ THIS SIGNATURE IS FROZEN FOR THE INSTALLED COPIES. It cannot tell a refusal from an
+    outage — call `emit_ex` when you need to choose an exit code, which is every caller
+    that gates on the result.
+    """
+    return emit_ex(step, tier, verdict, subjects, basis, reason=reason, inputs=inputs,
+                   decided=decided, cost=cost, revision=revision, evidence=evidence)[0]
+
+
+def emit_ex(step, tier, verdict, subjects, basis, reason=None,
+            inputs=(), decided=None, cost=None, revision=0, evidence=()):
+    """Append one record. Returns `(record_id, failure)`.
+
+    `failure` is None on success, "refused" when the ledger DECIDED and said no, and
+    "unreachable" when it was never asked. ⛔ The two map onto exit 4 and exit 2 and must
+    never be merged: a refusal is a RULE being applied, so retrying it is how a caller gets
+    past a rule it should have obeyed.
+
     `subjects` is a list of {"path", "git_blob_id"} — WHAT THIS VERDICT IS ABOUT, not
     everything the step glanced at. A step that examined forty files and failed on
     one emits a PASS over the thirty-nine and a FAIL over the one; that is what
@@ -227,17 +262,17 @@ def emit(step, tier, verdict, subjects, basis, reason=None,
                 time.sleep(_BACKOFF * (attempt + 1))
                 continue
             print(f"UNDECIDED: verdictLedger unreachable at {URL} ({exc})")
-            return None
+            return None, "unreachable"
         if out is None:
             print("UNDECIDED: verdictLedger returned no usable payload")
-            return None
+            return None, "unreachable"
         if out.get("ok"):
-            return out.get("id")
+            return out.get("id"), None
         # A refusal is TERMINAL. Do not retry it.
         errs = out.get("errors") or [out.get("error", "unknown")]
         print("UNDECIDED: record refused by verdictLedger:")
         for e in errs:
             print(f"  - {e}")
-        return None
+        return None, "refused"
     print(f"UNDECIDED: verdictLedger unreachable ({last_error})")
-    return None
+    return None, "unreachable"

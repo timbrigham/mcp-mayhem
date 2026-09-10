@@ -115,6 +115,42 @@ label beside it would make the next reader's arithmetic wrong by an hour in Dece
 value displayed next to a misleading label is one reader away from `DC-44`** — the same shape as
 a record id sitting next to a step name, which is what the whole 2026-09-09 arc was pulling on.
 
+## An exit code names WHAT HAPPENED, never merely whether it happened
+
+⭐⭐ Tim, 2026-09-10: *"as a design schematic, we should never have, for example zero and
+non-zero as the appropriate exit codes. they need to be specific as to exactly what they mean.
+that's true, both on your side and on zeroparadox."*
+
+**It binds BOTH repositories.** A caller that branches on `rc != 0` has thrown away the answer
+and kept only the alarm — and the remedies behind those codes are not the same action. `1` says
+fix the content. `2` says the ledger never answered, so try again. `3` says it ran and could not
+decide. `4` says a rule was applied and retrying is how you get past a rule you should have
+obeyed. **Collapsing them tells a caller to do SOMETHING while refusing to say what.**
+
+⛔ **THE VOCABULARY IS `mcpcommon/vocabulary.py:EXIT_CODES` AND IT IS SERVED BOTH WAYS** — the
+`vocabulary()` TOOL and `docs://*/vocabulary`, one source. Do not restate the values anywhere;
+a restatement is the copy that will be wrong.
+
+⚠ **`4` WAS ADDED 2026-09-10 AND THE REASON IS THE RULE ABOVE.** `2` used to mean both "could not
+ask" and "asked and REFUSED", which differ on the one axis `error_type` says must never be
+collapsed — `unavailable` is RETRYABLE, `validation` is TERMINAL. While they shared a code the
+only remedy the vocabulary could offer was *"read the line"*: dispatch on prose, which this fleet
+forbids everywhere else. **A DIFFERENT VALUE, NOT A DIFFERENT MESSAGE.**
+
+⭐ THE CONSUMER GOT THERE FIRST AND THAT IS EVIDENCE, NOT COINCIDENCE. `check_briefs.
+classify_record_failure` had already split the code, on the strength of `record.reachable()` — a
+SECOND network call recovering a distinction `emit` had already made and destroyed at its return.
+**A workaround in the consumer dates the gap here.** It chose `3`, which collides with `3`'s
+published meaning AND with `ci_report.SKIPPED_RC = 3`, where a `3` renders as `**skipped**`, a
+non-failure. That collision is why `4` is a new value rather than a widening of `3`.
+
+⛔ **KNOWN LIVE INSTANCE ON THIS SIDE, NOT YET FIXED: `gitRobot/core/gates.py`.**
+`GateResult.passed` is `self.ran and self.exit_code == 0`, so every non-zero — a finding, an
+outage, an undetermined, a refusal, and the `124` this file sets itself on timeout — renders
+identically as `passed: False`. ⚠ It fails CLOSED, so it is a REMEDY defect and not a safety
+hole: the caller is correctly blocked and cannot learn whether to retry, fix content, or read a
+rule. The `exit_code` IS kept on the audit row; `passed` is the field everything branches on.
+
 ## The MCP surface is a contract, not a docstring
 
 Measured 2026-09-05 across all four live servers: **84 tools, zero annotations, zero

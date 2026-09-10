@@ -107,42 +107,98 @@ def test_exit_codes_our_own_client_emits_are_published():
         % unpublished)
 
 
-def test_exit_code_2_covers_BOTH_the_outage_and_the_refusal_path():
-    """⛔⛔ MEASURED 2026-09-10, AND IT FALSIFIED THE FIX MADE EARLIER THE SAME DAY. Entry 2
-    was corrected to say "2 means no verdict reached the ledger at all". A test session then
-    ran the refusal path — ledger REACHABLE, `record.py --step <unregistered>`:
+def test_exit_code_2_no_longer_carries_the_refusal_it_used_to():
+    """⛔⛔ THE SPLIT, 2026-09-10. Entry 2 used to admit BOTH "none was reached" AND "one was
+    reached and REJECTED", and two earlier versions of this test PINNED that — first to a
+    phrasing, then to the property. Both were right about the code at the time and both were
+    guarding a collapse rather than a distinction.
 
-        exit 2 / "UNDECIDED: record refused by verdictLedger: - V8: step ... not registered"
+    ⚠ The two halves differ on the one axis `error_type` says must never be collapsed:
+    `unavailable` is RETRYABLE, `validation` is TERMINAL. While they shared a code the only
+    remedy the vocabulary could offer was "read the line" — dispatch on prose, which this
+    fleet forbids everywhere else. A DIFFERENT VALUE, NOT A DIFFERENT MESSAGE.
 
-    The ledger was REACHED. It DECIDED. It decided NO. And the code is 2. So the broad clause
-    admitted the refusal while the discriminator excluded it — one sentence contradicting the
-    one before it, in the entry I had just corrected for being too specific.
-
-    ⚠ THIS TEST NOW ASSERTS THE PROPERTY, NOT MY WORDING. Its first version required the
-    literal string "could not be recorded" and went red on a correction that made the entry
-    MORE accurate — a guard pinned to a phrasing rather than a behaviour, which is the same
-    brittleness as the defect it watches."""
+    ⭐ THE CONSUMER HAD ALREADY DONE THIS AND ITS WORKAROUND IS WHAT DATED THE GAP.
+    `check_briefs.classify_record_failure` split the code itself, on the strength of a second
+    network call (`record.reachable()`) recovering what `emit` already knew and discarded.
+    """
     two = EXIT_CODES[2].lower()
-    assert "reached" in two and ("reject" in two or "refus" in two), (
-        "entry 2 must admit BOTH paths: no verdict reached, AND one reached and rejected")
-    assert "3" in two, "entry 2 must say how it differs from 3, or the two collapse"
+    # ⚠ THE FIRST DRAFT OF THIS ASSERTION BANNED THE WORD "refus" ANYWHERE IN ENTRY 2 AND WENT
+    # RED ON A CORRECT ENTRY — because 2 legitimately POINTS AT 4 ("4 is asked AND REFUSED"),
+    # and a cross-reference is not a claim. That is the same brittleness as the version of
+    # this test that pinned a phrasing rather than a behaviour, two drafts ago. The property
+    # is that 2 no longer names the refusal as one of ITS OWN outcomes.
+    assert "reached and rejected" not in two, (
+        "entry 2 still claims the refusal as its own outcome — that is 4 now, and an entry "
+        "claiming both is the collapse this split removed")
+    assert "could not ask" in two, "entry 2 must lead with the half it kept"
+    assert "retry" in two, "entry 2 must still say it is the RETRYABLE half"
+    assert "4" in two, "entry 2 must name 4, or a reader cannot find the other half"
+    assert "3" in two, "entry 2 must still say how it differs from 3, or the two collapse"
 
 
-def test_exit_code_2_warns_that_it_collapses_retryable_and_terminal():
-    """⛔⛔ THE R-ZERONULL FINDING, AND IT IS THE MOST SERIOUS THING ARM 1 RETURNED. An outage
-    and a refusal return THE SAME VALUE and differ only in printed prose.
+def test_exit_code_4_is_the_terminal_refusal_and_says_never_retry():
+    """⛔ 4 IS TERMINAL AND THE WORD MUST BE THERE. A refusal is a RULE being applied, so the
+    same call will be refused again; retrying is how a caller under pressure gets past a rule
+    it should have obeyed. `error_type` documents that exact failure as the reason `unavailable`
+    and `validation` may never share a code."""
+    four = EXIT_CODES[4].lower()
+    assert "refus" in four, "4 must name the refusal it prices"
+    assert "terminal" in four, "4 must say it is terminal"
+    assert "retry" in four, "4 must tell the caller not to retry"
+    assert "reject" not in EXIT_CODES[3].lower(), (
+        "3 is CONTENT-undetermined; a refused RECORD is 2 or 4 and must not leak into it")
 
-    ⚠ THOSE TWO MAP ONTO THE ONE DISTINCTION THIS FLEET'S OWN `error_type` TABLE SAYS MUST
-    NEVER BE COLLAPSED — `unavailable` is RETRYABLE, `validation` is TERMINAL, and conflating
-    them is documented there as "how a rule gets retried past". A caller branching on the exit
-    code alone cannot tell "the ledger is down, try again" from "the ledger said no, stop".
 
-    ⭐ The consumer already built `reachable()` to split one exit code in two. A workaround in
-    the consumer is EVIDENCE of a gap here, not a substitute for naming it. Until the code
-    space can carry the difference, the vocabulary must at least say it cannot."""
-    two = EXIT_CODES[2].lower()
-    assert "retry" in two, (
-        "entry 2 must warn that the code alone does not distinguish retryable from terminal")
+def test_our_client_actually_distinguishes_a_refusal_from_an_outage():
+    """⛔⛔ THE FIRST VERSION OF THIS TEST WAS PROSE COVERAGE AND A CONTROL CAUGHT IT.
+
+    It asserted the literals `"refused"` and `"unreachable"` appeared in record.py's SOURCE.
+    Arming a control — making `emit_ex`'s refusal branch return "unreachable" — did NOT fail it,
+    because the word `"refused"` still appeared in the DOCSTRING. A test that greps the file for
+    a string it also documents cannot tell an implementation from its own description. That is
+    the defect this whole session kept finding: a test pinning a shape while looking like cover.
+
+    ⭐ THIS ONE EXERCISES THE BRANCHES. A published value nothing can emit is the defect, not
+    the fix — `config` sat in ERROR_TYPES published and unused until 2026-09-10, and adding 4
+    while the client could only ever produce one code would have been the same shape.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_record_under_test", _ROOT / "verdictLedger" / "client" / "record.py")
+    record = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(record)
+
+    calls = {"n": 0}
+
+    def refuses(*_a, **_k):
+        calls["n"] += 1
+        return {"ok": False, "errors": ["V8: step 'nope' is not registered"]}
+
+    def unreachable(*_a, **_k):
+        calls["n"] += 1
+        raise OSError("connection refused")
+
+    args = ("step", "tier", "PASS", [], "basis")
+
+    record._call = refuses
+    rid, failure = record.emit_ex(*args)
+    assert rid is None and failure == "refused", (
+        "a ledger that ANSWERED and said no must be tagged terminal, not as an outage — "
+        "got %r" % (failure,))
+    before = calls["n"]
+
+    record._call = unreachable
+    rid, failure = record.emit_ex(*args)
+    assert rid is None and failure == "unreachable", (
+        "a transport failure must be tagged retryable — got %r" % (failure,))
+    assert calls["n"] > before + 1, (
+        "the unreachable path must RETRY; a refusal must not. If these retry alike, the "
+        "terminal/retryable split exists in the tag and not in the behaviour")
+
+    # And the codes those two map onto must both be published.
+    assert 2 in EXIT_CODES and 4 in EXIT_CODES
 
 
 def test_exit_code_0_does_not_claim_the_check_found_nothing():
