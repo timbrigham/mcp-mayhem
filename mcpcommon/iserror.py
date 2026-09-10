@@ -31,10 +31,33 @@ consumer built an instrumented brace-slice fallback to survive the prefixed shap
 route means that fallback stays at ZERO firings, which is their measurement that this
 landed. A non-zero count after this is a defect, not noise.
 
-⚠ `ok` IS THE ONLY SIGNAL, AND IT IS ALREADY UNIVERSAL. Every tool on these servers goes
-through a `_guard` that returns `{"ok": True, ...}` or `{"ok": False, "error_type": ...}`.
-This reads that one key and nothing else — it does not re-derive success, and it never
-inspects `error_type`, because a tool that answers `ok: false` has already decided.
+⛔⛔ THIS DOCSTRING USED TO SAY "`ok` IS THE ONLY SIGNAL, AND IT IS ALREADY UNIVERSAL", AND
+`CLAUDE.md` SAID THE OPPOSITE IN BOLD ON THE SAME DAY: "`ok` IS NOT UNIVERSAL AND MUST NOT BE
+ASSUMED — sjv's reads do not have it at all." Two documents in one repository contradicting
+each other about the contract, and this one was the one running.
+
+⛔ WHAT IT COST, measured 2026-09-10 by a test session sweeping the read-only surface:
+`sjv.check_head` returned `isError: true`, NO `structuredContent`, and NO `error_type`, while
+its body was a COMPLETE DOMAIN REPORT — the check ran, it worked, it found 1717 unresolvable
+entries. A strict client got nothing at all from a call that succeeded.
+
+⭐⭐ THE CAUSE IS ONE OVERLOADED KEY, AND IT IS THE UNITS DEFECT AT THE TRANSPORT LAYER.
+`check_head`'s `ok` is the FINDING axis — `core/cli.py` reads it as `return 0 if report["ok"]
+else 1`, which is exit-code 0-vs-1, "found nothing" versus "found something". This handler read
+the same key as the REFUSAL axis, "the call was accepted" versus "the call was refused". Same
+name, two axes, and `mcpcommon/vocabulary.py` forbids exactly this collapse one layer down:
+exit 1 is "a real finding, NOT an error".
+
+⭐ SO THE DISCRIMINATOR IS `error_type`, NOT `ok` ALONE, and it is structurally safe rather
+than conventional: `_guard` on verdictLedger and gitRobot has exactly two failure branches and
+BOTH stamp `error_type`, and every exception class in each `errors.py` sets it through `_kind()`,
+which RAISES on a value the fleet has not published. A refusal without `error_type` is therefore
+not a thing this fleet can currently emit — and `test_a_refusal_always_carries_error_type` keeps
+it that way, so the ambiguous case fails loudly instead of quietly becoming a success.
+
+⚠ A DOMAIN RESULT MAY SAY `ok: false` AND MEAN IT. That is now part of the contract rather than
+an accident: `ok: false` WITHOUT `error_type` is a finding, keeps its `structuredContent`, and
+is not an error at the protocol layer.
 """
 
 from __future__ import annotations
@@ -168,7 +191,20 @@ def install(mcp) -> None:
         # ⚠ A tool that does not return a dict cannot be judged, so it is reported as a
         # success rather than guessed at. Every tool here returns `_guard`'s dict; if one
         # ever does not, silence is the honest answer and `isError` stays false.
-        refused = isinstance(result, dict) and result.get("ok") is False
+        #
+        # ⛔⛔ `ok is False` ALONE WAS THE TEST UNTIL 2026-09-10 AND IT MISCLASSIFIED A WHOLE
+        # TOOL. `sjv.check_head` answers `ok: false` to mean "I ran and FOUND DRIFT" — the
+        # finding axis, the same one `core/cli.py` turns into exit 0-vs-1 — and this handler
+        # read it as the refusal axis and stripped the report's `structuredContent`. One key,
+        # two axes: the units defect, at the transport layer, in the module written to stop a
+        # refusal looking like a success.
+        #
+        # ⭐ `error_type` is the honest discriminator because it is STRUCTURAL: `_guard` has two
+        # failure branches and both stamp it, and every `errors.py` class sets it via `_kind()`,
+        # which raises on an unpublished value. A refusal cannot currently reach here without it.
+        refused = (isinstance(result, dict)
+                   and result.get("ok") is False
+                   and result.get("error_type") is not None)
 
         # ⚠⚠ `structuredContent` ON SUCCESS ONLY, AND THE ASYMMETRY IS THE POINT. A declared
         # `outputSchema` describes what a SUCCESSFUL call returns; a refusal has a different

@@ -956,3 +956,39 @@ def test_a_failed_resource_read_says_which_kind_of_failure_it_was():
             "error message)" % type(exc).__name__)
     else:
         raise AssertionError("an unknown resource did not raise at all")
+
+
+# -- the refusal discriminator, and the assumption it now rests on -------------
+
+def test_a_refusal_always_carries_error_type():
+    """⛔⛔ THE ASSUMPTION `mcpcommon/iserror.py` NOW DEPENDS ON, MADE FAILABLE.
+
+    Since 2026-09-10 the handler treats a result as REFUSED only when `ok is False` AND
+    `error_type` is present — because `check_head` answers `ok: false` to mean "I ran and
+    FOUND DRIFT", the finding axis, and was being transported as a protocol error with its
+    `structuredContent` stripped.
+
+    ⚠ THAT FIX IS SAFE ONLY WHILE EVERY REFUSAL CARRIES `error_type`. If one ever does not,
+    it stops being an error at the protocol layer and silently becomes a success — the
+    dangerous direction, and the one this whole module exists to close. So the assumption is
+    asserted here rather than trusted: both `_guard` failure branches on both servers stamp
+    the field, and every `errors.py` class sets it through `_kind()`, which raises on an
+    unpublished value.
+
+    ⭐ A false SUCCESS is never revisited; a false FAILURE gets re-run and discovers itself.
+    This test guards the direction that does not self-correct."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    for rel in ("verdictLedger/ledger_server/server.py",
+                "gitRobot/gitrobot_server/server.py"):
+        src = (root / rel).read_text(encoding="utf-8")
+        guard = re.search(r"async def _guard\(.*?(?=\nasync def |\n@mcp\.|\ndef )", src, re.S)
+        assert guard, "no _guard found in %s" % rel
+        body = guard.group(0)
+        failures = re.findall(r'return \{"ok": False[^}]*\}', body)
+        assert failures, "no ok:False return found in %s's _guard" % rel
+        for f in failures:
+            assert "error_type" in f, (
+                "%s has an ok:False path with no error_type: %s — iserror.py would read "
+                "this as a DOMAIN result and let a refusal through as success" % (rel, f[:90]))

@@ -145,8 +145,18 @@ Every tool on every server here:
   `openWorldHint`. On servers whose value is *capability removal*, this is the field that
   expresses it. Classify from the CODE, never the name: `ledger_subjects` reads like a
   read and is Tier 2, because `write-tree` materialises objects.
-- **sets `isError` on a refusal.** A failed call must never be protocol-identical to a
-  successful one. ⚠ FastMCP has no seam for this — `call_tool` returns content or a dict,
+- **sets `isError` TRUE on a refusal.** A failed call must never be protocol-identical to a
+  successful one. ⛔ **THE WORD `TRUE` IS LOAD-BEARING AND WAS MISSING UNTIL 2026-09-10.**
+  Measured that day across all three servers: **`isError` is present on EVERY response,
+  carrying `false` on success.** So a client testing for the KEY treats every success as a
+  failure — and the earlier wording, "sets `isError` on a refusal", reads as presence.
+  ⭐ Found only because a control call was made on the SUCCESS path: without it, "isError
+  present on refusals" is indistinguishable from "isError present always".
+  ⚠ AND `ok: false` IS NOT THE DISCRIMINATOR. `sjv.check_head` answers `ok: false` to mean
+  "I ran and FOUND DRIFT" — the FINDING axis, which `core/cli.py` turns into exit 0-vs-1 —
+  and it was being transported as a protocol error with its `structuredContent` stripped.
+  A refusal is now `ok: false` **AND** `error_type` present; `ok: false` alone is a finding
+  and keeps its structured body. ⚠ FastMCP has no seam for this — `call_tool` returns content or a dict,
   never a `CallToolResult` — so the only route is raising, and the low-level server
   REWRITES the text to `Error executing tool <name>: <msg>`, which is no longer JSON.
   Flipping it unilaterally silently collapses every structured refusal the consumer
