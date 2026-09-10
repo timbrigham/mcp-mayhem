@@ -324,11 +324,31 @@ def test_rely_is_not_admitted_at_commit_or_push_but_still_gates_a_tag():
     remediation plan (guards.py, required.v2.json, the checker sweep) edits
     `tools/verify/`, so the loop deadlocked.
 
-    ⚠ AND IT WAS UNSATISFIABLE BY CONSTRUCTION besides: the registry declares scope
-    `tools/verify/*` (60 files) while `rely.md`'s own pre-flight says "SCOPE IT … Do
-    not run it at `full`." A gate required to cover a scope its own brief forbids
-    covering can never be SATISFIED — a contradiction between registry and brief, not
-    a missing declaration.
+    ⚠ AND THE REGISTRY CONTRADICTS THE BRIEF: the registry declares scope
+    `tools/verify/*` while `rely.md`'s own pre-flight says "SCOPE IT … Do not run it
+    at `full`." That contradiction is real and is a fact about the registry, not a
+    missing declaration.
+
+    ⛔⛔ CORRECTED 2026-09-09 -- THE CONTRADICTION IS REAL, THE CONCLUSION IS CONDITIONAL.
+    "Can never be SATISFIED" assumes a step must COVER its scope to pass. It does not:
+    `coverage.require_complete` is FALSE, so partial coverage satisfies. Measured against
+    the live stream and registry:
+
+        rely verdicts        40 FAIL and 6 PASS. It HAS been satisfied, six times.
+        rely at `tag`        ADMITTED, and blocking there on verdict FAIL -- not on any
+                             inability to be satisfied.
+        rely scope           three globs, not one: tools/verify/*, tools/process/*,
+                             .github/workflows/*
+        require_complete     FALSE
+
+    ⭐ SO THE HONEST FORM IS CONDITIONAL: the registry-versus-brief contradiction WOULD make
+    `rely` unsatisfiable IF `coverage.require_complete` were flipped to true. Today it is
+    not, and the bare phrase "unsatisfiable by construction" claimed a property of the TYPE
+    when it is a property of a CONFIG SWITCH that is currently off.
+
+    ⚠ THIS SENTENCE HAD PROPAGATED TO SIX SITES, quoted between them as authority, and no
+    author re-measured it -- which is the descriptor-drift shape exactly: a document
+    describing executable behaviour that nobody executed, agreed on by several copies.
 
     ⚠⚠ IT IS NOT DELETED, AND THIS TEST EXISTS SO IT IS NOT DELETED LATER EITHER.
     `rely` is the only agent that EXECUTES rather than reads, and its measured law is

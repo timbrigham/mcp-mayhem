@@ -1476,7 +1476,10 @@ def heal_plan(*, config, records, action: str, files: dict, admission: list) -> 
     # REGISTERED, but `admission.v1.json` deliberately removed it from commit and push — its
     # scope is `tools/verify/*`, so every fix to the tooling stales it while it gates the
     # commit carrying that fix, and its declared 60-file scope contradicts its own brief's
-    # "do not run it at full". It is documented there as unsatisfiable BY CONSTRUCTION. A heal
+    # "do not run it at full". ⛔ CORRECTED 2026-09-09: that contradiction makes `rely`
+    # unsatisfiable only IF `coverage.require_complete` is true. It is FALSE, and `rely` has
+    # 6 PASS records and is admitted at `tag`. The exclusion from commit/push is a fact about
+    # `admission.v1.json`, not a property of the type. A heal
     # plan that stays silent about it lets someone burn rounds on a gate that cannot close and
     # was never asked to. Listed, and explicitly marked as not gating this action.
     not_gating_failing = []

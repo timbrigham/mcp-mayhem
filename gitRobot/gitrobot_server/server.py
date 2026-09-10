@@ -331,8 +331,28 @@ async def requirements(action: str = "push") -> RequirementsResult:
     Measured 2026-08-30, and it is why this tool exists: for `push` both lists are 20 entries
     and they DIFFER — the ledger marks `rely` required, gitRobot admits `build` instead. Same
     count, 19 shared, so a reader comparing sizes concludes they agree. A caller following the
-    ledger's list burns rounds converging `rely`, which is excluded precisely because it is
-    unsatisfiable by construction.
+    ledger's list burns rounds converging `rely`, which this server does not admit here.
+
+    ⛔⛔ AND THE "UNSATISFIABLE" HALF OF THAT WAS FALSE, MEASURED 2026-09-09. Corrected
+    rather than deleted, because the claim was the stated REASON for an exclusion and a
+    reader who believed it would draw the wrong conclusion about the exclusion:
+
+        rely scope           ['tools/verify/*', 'tools/process/*', '.github/workflows/*']
+                             THREE globs. The prose said "all of tools/verify/*", one.
+        rely verdicts        40 FAIL and **6 PASS** in the stream.
+        rely at tag          ADMITTED, and blocking there on verdict FAIL -- not on
+                             any inability to be satisfied.
+        require_complete     FALSE, so PARTIAL coverage satisfies a step.
+
+    ⭐ SO IT IS SATISFIABLE AND HAS BEEN SATISFIED SIX TIMES. It would be unsatisfiable
+    only if `coverage.require_complete` were flipped to true -- which is a CONDITIONAL on a
+    config switch, not a property of the type, and "by construction" claimed the second.
+
+    ⚠ WHY `rely` IS ABSENT FROM THE COMMIT AND PUSH SETS IS A FACT ABOUT
+    `admission.v1.json`, WHICH IS TIM'S FILE. This prose invented a mechanism to explain a
+    config choice, and then that invention was quoted as authority in two other places. A
+    served descriptor asserting a mechanism nobody executed is the defect class this fleet
+    keeps finding; it is worse here because the sentence was load-bearing.
 
     Ask this before deciding what blocks you."""
     return await _guard(_robot().requirements, action)

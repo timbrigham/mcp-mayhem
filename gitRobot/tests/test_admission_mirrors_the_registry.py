@@ -20,7 +20,14 @@ the conflict, is a rule that fires only when somebody happens to look.
     "for `push` both lists are 20 entries and they DIFFER — the ledger marks `rely` required,
      gitRobot admits `build` instead. **Same count, 19 shared, so a reader comparing sizes
      concludes they agree.** A caller following the ledger's list burns rounds converging
-     `rely`, which is excluded precisely because it is unsatisfiable by construction."
+     `rely`, which this server does not admit here."
+
+⛔ THE QUOTE ABOVE USED TO END "...excluded precisely because it is unsatisfiable by
+construction", and that half was FALSE -- measured 2026-09-09: `rely` carries 6 PASS records,
+is ADMITTED at `tag`, and `coverage.require_complete` is false so partial coverage satisfies.
+This test QUOTED the false clause as authority, which is the third control in two days found
+asserting the thing it was written to police. Corrected at the source and here together,
+because a quotation is a copy and copies are what this file exists to catch.
 
 Two sets of the SAME SIZE differing in membership — the units defect at its purest, where the
 count is a true measurement of the wrong property, and the cheapest check anyone would reach

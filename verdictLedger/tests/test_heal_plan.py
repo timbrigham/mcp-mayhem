@@ -125,7 +125,14 @@ def test_a_failing_step_that_does_not_gate_is_named_not_hidden(ledger):
     reported heal_plan for dropping a FAIL. It had not: `rely` is FAILING and REGISTERED but
     deliberately NOT in the push admission set — `admission.v1.json` removed it because its
     scope is `tools/verify/*`, so every fix to the tooling stales it while it gates the commit
-    carrying that fix. It is documented there as unsatisfiable BY CONSTRUCTION.
+    carrying that fix.
+
+    ⛔ CORRECTED 2026-09-09. This used to end "documented there as unsatisfiable BY
+    CONSTRUCTION", quoting another docstring as authority. Measured: `rely` carries 6 PASS
+    records, is ADMITTED at `tag`, and `coverage.require_complete` is FALSE so partial
+    coverage satisfies. The exclusion is a config choice in `admission.v1.json`, not a
+    property of the type. The behaviour this test pins is unaffected -- a failing step that
+    does not gate must still be NAMED -- and only the borrowed explanation was wrong.
 
     Silence was defensible (it does not gate, so it is not work) and was still wrong: a caller
     who believes a failing step blocks them will burn rounds on a gate that cannot close. Name
