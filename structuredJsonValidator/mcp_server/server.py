@@ -744,8 +744,9 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
     export still happens; `head_check.matches` tells you whether what you just
     published still matches the source tree, and the top-level `ok` does NOT --
     it is the CALL axis and stays true for a successful export that found drift.
-    `head_check.ok` carries the same value as `matches` for now and is retained
-    only so existing callers do not break; branch on `matches`.
+    `head_check` does NOT carry an `ok`: the finding is `matches`, and the only
+    `ok` in the response is the top-level call status. They meant different things
+    one nesting level apart, which is the collision this removal ends.
 
     `head_check.describes_exported_bytes` says whether the check actually saw the
     bytes that were published. The check reads the source, then the export reads
@@ -802,6 +803,9 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
             # reads of the same value, which is the only shape that catches the window.
             pre_source_sha = _store_bytes.hash_file(st.data_path)
             head_check = head_correspondence(st.load(), root=head_root, tier="paths")
+            # Captured BEFORE the key is dropped below; `head_correspondence`'s own `ok` is the
+            # FINDING axis and is republished under its fleet-consistent name, `matches`.
+            report_matches = head_check.get("ok")
         result = {"ok": True, **st.export_full(dest)}
         if head_check is not None:
             # ⚠ `matches` IS PUBLISHED BESIDE `ok`, AND THE DUPLICATION IS DELIBERATE AND
@@ -838,9 +842,30 @@ def export_full(dest: str, head_root: Optional[str] = None) -> ExportResult:
             # does not, and the caller is TOLD so rather than left to assume -- because a check
             # that silently failed to describe the artifact is indistinguishable from one that
             # passed, and that is the whole defect class this fleet exists to remove.
-            head_check = {**head_check,
-                          "matches": head_check.get("ok"),
-                          "describes_exported_bytes": pre_source_sha == result.get("source_sha256")}
+            # ⛔⛔ THE INNER `ok` IS REMOVED, NOT ALIASED, AND THE REASON IS THE COLLISION --
+            # not consumer migration, which was already complete. Settled 2026-09-10 after the
+            # zptester session pointed out that the measurement had stopped governing:
+            #
+            #   MEASURED  grep over BOTH repos -> ZERO tracked files reference `head_check`,
+            #             ZERO code branches on it. Every hit is prose in gitignored notes.
+            #             So the stated termination condition was ALREADY MET, and keeping the
+            #             key on that condition meant publishing a measurable rule that did
+            #             not decide anything -- correct, re-runnable, and decorative.
+            #   THE REAL  a pinning test can tie the inner `ok` to `matches`, but it CANNOT tie
+            #   REASON    the inner `ok` to the OUTER `ok`, because those genuinely mean
+            #             different things: call axis outside, finding axis inside, one nesting
+            #             level apart, in one body. The collision ends exactly when the inner
+            #             `ok` ends and not one commit sooner.
+            #
+            # ⚠ THE ARGUMENT FOR KEEPING IT WAS THAT AGENT READERS HAD CITED `head_check.ok` IN
+            # PROSE. That protects the class of reader LEAST able to be harmed: an agent meeting
+            # a missing key re-reads the docstring, which documents `matches`; it does not hold
+            # a stale expectation the way compiled code does. The compiled-consumer risk was the
+            # serious one and it measured zero.
+            head_check = {k: v for k, v in head_check.items() if k != "ok"}
+            head_check["matches"] = report_matches
+            head_check["describes_exported_bytes"] = (
+                pre_source_sha == result.get("source_sha256"))
             result["head_check"] = head_check
         return result
     except OperationError as exc:

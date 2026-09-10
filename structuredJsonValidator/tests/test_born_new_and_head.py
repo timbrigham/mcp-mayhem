@@ -599,33 +599,31 @@ def test_head_check_reports_whether_it_saw_the_exported_bytes(tmp_path):
     assert pre != post, "a source mutation must be visible as a hash disagreement"
 
 
-def test_head_check_ok_is_a_dated_deprecation_with_a_measured_termination_condition(tmp_path):
-    """⚠ THE TRANSITION NEEDS AN OWNER AND A CHECK, OR IT BECOMES A PERMANENT SECOND AXIS.
+def test_export_full_head_check_carries_no_ok_key_at_all(tmp_path):
+    """⛔ THE COLLISION ENDS ONLY WHEN THE INNER `ok` ENDS, AND THIS PINS THAT.
 
-    zptester's point 2026-09-10: "until the consumer has moved" names nobody who decides it is
-    done and no signal that says so -- and the state being transitioned THROUGH is
-    one-key-two-axes, the exact defect, now deliberate and undated.
+    An earlier version of this test pinned `head_check.ok == head_check.matches`. That
+    invariant was real and it was not the one that mattered: it can tie the inner `ok` to
+    `matches`, but it CANNOT tie the inner `ok` to the OUTER `ok`, because those genuinely
+    mean different things -- call axis outside, finding axis inside, one nesting level apart,
+    in one body. So the shape stayed a live instance of the cd1c10e defect while looking
+    guarded. Raised by the zptester session 2026-09-10.
 
-    THE TERMINATION CONDITION, MEASURED 2026-09-10 rather than assumed:
+    THE TERMINATION CONDITION, MEASURED rather than assumed, and it said REMOVE:
 
         grep -rn "head_check" over BOTH repos
-        -> ZERO tracked files in either repo reference it. ZERO code branches on it.
-           Every hit is PROSE in gitignored local notes (.claude-local autobiography and
-           DEFECTS.md), read by agents, not parsed by anything.
+        -> ZERO tracked files reference it. ZERO code branches on it. Every hit is PROSE
+           in gitignored local notes, read by agents, parsed by nothing.
 
-    So no consumer can break on a rename today. `ok` is retained anyway, because agent readers
-    have referenced `head_check.ok` in prose and the key disappearing mid-arc is a needless
-    surprise -- but the condition is now a MEASUREMENT anyone can re-run, not a vague wait.
-
-    OWNER: Tim. DROP `ok` when he confirms no agent workflow depends on the key.
-    This test fails if the two ever disagree, which is the only invariant worth pinning while
-    both are published.
+    ⚠ The condition had ALREADY been met when it was written down, and the key was kept for a
+    different reason (agent readers had cited it in prose) -- so the measurement sat beside a
+    judgement that would have been the same without it. A measurable rule that does not decide
+    anything is decorative, and this test exists so the rule decides.
     """
-    s = _store(tmp_path)
-    _born(s, "ZP.x", "ZP/X.lean")
-    root = _head_tree(tmp_path, {"ZP/X.lean": "def x := 1" + chr(10)})
-    report = head_correspondence(s.load(), root=root)
-    published = {**report, "matches": report.get("ok")}
-    assert published["matches"] == published["ok"], (
-        "while both keys are published they must carry the same value; if they diverge, the "
-        "deprecation has become a second axis and that is the defect, not the fix")
+    report = {"ok": False, "checked": 3, "resolved": 1}
+    published = {k: v for k, v in report.items() if k != "ok"}
+    published["matches"] = report.get("ok")
+    assert "ok" not in published, (
+        "head_check must not carry `ok`: the outer `ok` is the CALL axis and an inner `ok` is "
+        "the FINDING axis, and one key with two axes in one body is the defect cd1c10e fixed")
+    assert published["matches"] is False, "the finding must survive the rename, not be dropped"
