@@ -201,6 +201,20 @@ EXIT_CODES = {
         "of a gap here. ⛔ It chose 3 for this, which collides with 3's meaning above AND with "
         "`ci_report.SKIPPED_RC = 3`, where a 3 renders as **skipped** - a non-failure. That "
         "collision is why this is a NEW value rather than a widening of 3."),
+    124: ("TIMED OUT - the check was started and killed before it could answer. NOT a finding, "
+          "and never 0 or 1: nothing was decided, so this says nothing about the content. "
+          "RETRYABLE in the same sense as 2 - nobody answered - but distinguished from it "
+          "because the remedy is different: 2 means the LEDGER was unreachable, 124 means THIS "
+          "CHECK ran too long and was cut off, so the next attempt needs a longer budget or a "
+          "narrower scope, not a retry of the same call. "
+          "⛔ 124 RATHER THAN THE NEXT FREE SMALL NUMBER, AND THE REASON IS COLLISION. `timeout(1)` "
+          "has meant exactly this since long before this fleet, so a checker killed by an "
+          "external timeout and one that self-reports arrive as the SAME value with the SAME "
+          "meaning. Minting 5 here would have produced two numbers for one event, which is the "
+          "defect one layer up from the one the split of 2 removed. "
+          "⚠ IT WAS EMITTED BEFORE IT WAS PUBLISHED. `gitRobot/core/gates.py` has returned "
+          "`exit_code=124` on `subprocess.TimeoutExpired` since before this table existed - a "
+          "value the fleet produced and no caller could look up.")
 }
 
 # ⛔⛔ NOT EVERY TABLE ABOVE IS BOUND TO CODE, AND UNTIL 2026-09-10 NOTHING SAID SO.
@@ -230,6 +244,36 @@ EXIT_CODES = {
 #
 # ⭐ SO `exit_code` IS A PUBLISHED CONVENTION THE FLEET DOES NOT ENFORCE, and saying that here
 # is the honest alternative to implying a binding that cannot exist.
+
+# ⭐⭐ MINT A DEDICATED CODE WHENEVER A CASE NEEDS ONE - Tim, 2026-09-10: "I am completely good
+# with having a dedicated response code anytime ... it's not like it's possible to run out of
+# numbers." That is the policy, and this constant is the ONE fence it needs, because the numbers
+# are not in fact all free.
+#
+# ⛔ MEASURED 2026-09-10 ON THIS MACHINE: Windows preserves exit codes as 32-bit, so
+# `sys.exit(256)` and `sys.exit(300)` come back as 256 and 300 intact. ⚠ POSIX DOES NOT - `wait()`
+# exposes only the low 8 bits, so 256 arrives as **0, a SUCCESS**, and 300 arrives as 44. That is
+# a documented platform property of POSIX and is NOT something measured here; what was measured
+# here is that this dev box does not truncate, which is exactly what makes it dangerous. **The
+# same checker exiting 256 is a catastrophic false PASS on Linux CI and a distinct code on the
+# machine it was written on** - one value, two meanings, split by platform.
+#
+# ⚠ AND THE HIGH BAND IS ALREADY SPOKEN FOR ON POSIX: 126 is "found but not executable", 127 is
+# "command not found", and 128+N is "killed by signal N" - so a minted 130 is indistinguishable
+# from a Ctrl-C, and a minted 139 from a segfault. 125 belongs to `timeout` itself.
+#
+# ⭐ SO: MINT FREELY IN 1..123, and adopt an existing convention rather than inventing a rival
+# for the same event (which is why TIMED OUT is 124 and not 5). 0 is reserved for success.
+MINTABLE_EXIT_CODES = range(1, 124)
+
+RESERVED_EXIT_CODES = {
+    124: "GNU `timeout` - the command was killed after exceeding its budget. ADOPTED above.",
+    125: "`timeout` itself failed, as distinct from the command it was running.",
+    126: "the command was found and could not be executed (permissions, not-a-binary).",
+    127: "the command was not found at all.",
+    "128+N": "killed by signal N on POSIX - 130 is SIGINT, 137 SIGKILL, 139 SIGSEGV.",
+    ">255": "TRUNCATED ON POSIX to the low 8 bits. 256 becomes 0, a SUCCESS. Never mint here.",
+}
 
 VOCABULARIES = {
     "error_type": ERROR_TYPES,

@@ -127,6 +127,35 @@ fix the content. `2` says the ledger never answered, so try again. `3` says it r
 decide. `4` says a rule was applied and retrying is how you get past a rule you should have
 obeyed. **Collapsing them tells a caller to do SOMETHING while refusing to say what.**
 
+⭐⭐ **MINT A DEDICATED CODE WHENEVER A CASE NEEDS ONE.** Tim, 2026-09-10: *"I am completely
+good with having a dedicated response code anytime.. we would potentially need one for a
+specific case.. it's not like it's possible to run out of numbers."* **Never collapse two
+different events into one code to economise.** The numbers are cheap; the collapse is not.
+
+⛔ **THE ONE FENCE THAT POLICY NEEDS, BECAUSE THE NUMBERS ARE NOT ALL FREE.** Measured on this
+machine 2026-09-10: Windows preserves exit codes as 32-bit, so `sys.exit(256)` and
+`sys.exit(300)` come back **intact**. ⚠ POSIX exposes only the low 8 bits, so **256 arrives as
+`0` — a SUCCESS** — and 300 arrives as 44. That half is a documented POSIX property and was NOT
+measured here; what WAS measured here is that the dev box does not truncate, **which is exactly
+what makes it dangerous: the same checker exiting 256 is a catastrophic false PASS on Linux CI
+and a distinct code on the machine it was written on.** One value, two meanings, split by
+platform — and it fails in the direction nobody re-runs.
+
+⚠ The high band is already spoken for on POSIX: `126` not executable, `127` not found, `128+N`
+killed by signal N — so a minted `130` is indistinguishable from a Ctrl-C and a `139` from a
+segfault. `125` belongs to `timeout` itself.
+
+⭐ **SO: MINT FREELY IN `1..123`, and ADOPT an existing convention rather than inventing a rival
+for the same event.** `MINTABLE_EXIT_CODES` and `RESERVED_EXIT_CODES` carry this in code, and
+three tests enforce it — band, truncation, and emitted-but-unpublished.
+
+⚠ **`124` = TIMED OUT was PUBLISHED 2026-09-10 AFTER BEING EMITTED FOR MONTHS.**
+`gitRobot/core/gates.py` has returned `exit_code=124` on `subprocess.TimeoutExpired` since
+before `EXIT_CODES` existed — a value the fleet produced and no caller could look up. It is
+`124` and not the next free small number because `timeout(1)` has meant exactly this for
+decades: minting `5` would have produced **two numbers for one event**, which is the same defect
+as one number for two events, in mirror.
+
 ⛔ **THE VOCABULARY IS `mcpcommon/vocabulary.py:EXIT_CODES` AND IT IS SERVED BOTH WAYS** — the
 `vocabulary()` TOOL and `docs://*/vocabulary`, one source. Do not restate the values anywhere;
 a restatement is the copy that will be wrong.

@@ -35,7 +35,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "gitRobot"))
 
-from mcpcommon.vocabulary import DECISIONS, EXIT_CODES, ROW_STATUSES  # noqa: E402
+from mcpcommon.vocabulary import (  # noqa: E402
+    DECISIONS, EXIT_CODES, MINTABLE_EXIT_CODES, RESERVED_EXIT_CODES, ROW_STATUSES)
 
 
 def _source(rel):
@@ -199,6 +200,63 @@ def test_our_client_actually_distinguishes_a_refusal_from_an_outage():
 
     # And the codes those two map onto must both be published.
     assert 2 in EXIT_CODES and 4 in EXIT_CODES
+
+
+def test_every_published_exit_code_is_mintable_or_a_deliberately_adopted_convention():
+    """⭐⭐ THE FENCE ON "MINT A CODE ANY TIME" — Tim, 2026-09-10: "I am completely good with
+    having a dedicated response code anytime ... it's not like it's possible to run out of
+    numbers." The policy is right and the numbers are NOT all free.
+
+    ⛔ MEASURED ON THIS MACHINE 2026-09-10: Windows preserves exit codes as 32-bit —
+    `sys.exit(256)` and `sys.exit(300)` return 256 and 300 intact. ⚠ POSIX exposes only the low
+    8 bits, so 256 arrives as **0, A SUCCESS**. That half is a documented platform property and
+    is NOT measured here; what IS measured here is that the dev box does not truncate, which is
+    precisely what makes it dangerous — **the same checker exiting 256 is a catastrophic false
+    PASS on Linux CI and a distinct code on the machine it was written on.**
+
+    ⚠ And 126/127/128+N are already spoken for on POSIX, so a minted 130 is indistinguishable
+    from a Ctrl-C and a 139 from a segfault.
+    """
+    for code in EXIT_CODES:
+        if code == 0:
+            continue
+        if code in MINTABLE_EXIT_CODES:
+            continue
+        assert code in RESERVED_EXIT_CODES, (
+            "exit code %d is outside the mintable band 1..123 and is not a documented "
+            "convention. Either mint inside the band or record why this number was adopted."
+            % code)
+        assert "ADOPTED" in RESERVED_EXIT_CODES[code], (
+            "exit code %d is published but its reserved-map entry does not say it was "
+            "deliberately adopted — a published code sitting on a platform meaning is two "
+            "answers to one number" % code)
+
+
+def test_no_published_code_can_be_truncated_into_success():
+    """⛔ THE ONE THAT WOULD BE UNRECOVERABLE. A code above 255 becomes `code & 0xFF` on POSIX,
+    and any multiple of 256 becomes 0 — the pipeline reads a PASS for a check that failed.
+    A false FAILURE gets re-run and discovers itself; this is the other direction."""
+    for code in EXIT_CODES:
+        assert 0 <= code <= 255, "exit code %d truncates on POSIX" % code
+        assert code == 0 or (code & 0xFF) != 0, (
+            "exit code %d becomes 0 — a SUCCESS — after POSIX truncation" % code)
+
+
+def test_exit_codes_gitrobot_actually_emits_are_published():
+    """⛔⛔ THE RATCHET IN THE DIRECTION THAT WAS NEVER CHECKED: the code emits a value nobody
+    published. Found 2026-09-10 by applying Tim's mint-a-code policy and asking what we already
+    emit — `gitRobot/core/gates.py` has returned `exit_code=124` on `subprocess.TimeoutExpired`
+    since before EXIT_CODES existed, and 124 was in no published list. A caller receiving it had
+    no route to its meaning.
+
+    ⚠ SCOPE, STATED SO IT IS NOT READ AS WIDER: this scans ONE file for literal `exit_code=N`
+    assignments. It is not a proof that nothing else in the fleet emits an unpublished code."""
+    src = _source("gitRobot/core/gates.py")
+    emitted = {int(c) for c in re.findall(r"exit_code=(\d+)", src)}
+    assert emitted, "no literal exit_code=N found — this test's binding has moved"
+    unpublished = sorted(emitted - set(EXIT_CODES))
+    assert not unpublished, (
+        "gates.py emits exit code(s) %s that EXIT_CODES does not publish" % unpublished)
 
 
 def test_exit_code_0_does_not_claim_the_check_found_nothing():
