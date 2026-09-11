@@ -454,3 +454,40 @@ def test_merge_refuses_when_the_working_copy_differs_by_even_one_byte(robot, rep
     assert "would be lost" in str(caught.value) or "NOT what the merge would produce" in str(caught.value)
     # ⚠ THE BYTES, NOT JUST THE REFUSAL. The edit must still be there.
     assert (repo / "tracked.txt").read_text(encoding="utf-8") == "FROM FEATURE, EDITED" + chr(10)
+
+
+def test_a_reconcile_is_rolled_back_when_the_gate_aborts_the_merge(robot, repo):
+    """⛔⛔ A RECONCILE IS ONLY NET-ZERO IF THE MERGE COMPLETES, AND THIS IS WHERE IT DOES NOT.
+
+    Reported by the ZeroParadox session 2026-09-11, who explicitly did NOT ask for a change --
+    which is why it gets one. The reconcile restored four paths from HEAD on the promise that
+    the merge would write the target blobs straight back; the gate then aborted, so it never
+    did. Their working tree held LESS than before the call, and those edits survived only in a
+    DETACHED commit anchored by a worktree that reaps at 48h.
+
+    ⚠ "Nothing can be lost" was stated unconditionally and was conditional. Footnoting it in
+    the receipt would have been the cheap fix; making it TRUE is the right one.
+
+    ⭐ THE BYTES ARE THE ASSERTION. A test that only checked the refusal would pass while the
+    caller's file sat truncated.
+    """
+    _install_content_gate(repo)
+    _feature_branch(repo, {"tracked.txt": "FROM FEATURE" + chr(10)})
+    (repo / "tracked.txt").write_text("FROM FEATURE" + chr(10), encoding="utf-8")
+
+    # Make the GATE fail on the merge RESULT, after the reconcile has already acted.
+    (repo / "tools" / "verify" / "hooks.py").write_text(
+        "import sys" + chr(10) + "sys.exit(1)" + chr(10), encoding="utf-8")
+
+    with pytest.raises(RefusalError):
+        robot.merge("feature", reason="gate will abort after the reconcile")
+
+    # ⛔ THE WORKING COPY MUST BE BACK. Not HEAD's content -- the content the caller had.
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "FROM FEATURE" + chr(10), (
+        "the reconcile was not rolled back: the caller's working copy was consumed by a "
+        "merge that never completed")
+    # ⚠ AND THE INDEX MUST BE CLEAN. `checkout <rev> -- path` stages what it writes; leaving
+    # that would hand the caller a dirty INDEX they never created, which is the one state that
+    # blocks their next merge outright.
+    staged = robot.git.run(["diff", "--cached", "--name-only"]).output.split()
+    assert "tracked.txt" not in staged, "rollback left the path staged: %s" % staged

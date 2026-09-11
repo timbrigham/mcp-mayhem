@@ -1805,22 +1805,63 @@ class GitRobot:
         gate_records = [gate.record()]
         if not gate.passed:
             self.git.run(["merge", "--abort"], timeout=300)
+            # ⛔⛔ A RECONCILE IS ONLY NET-ZERO IF THE MERGE COMPLETES, AND THIS PATH IS WHERE IT
+            # DOES NOT. Reported by the ZeroParadox session 2026-09-11, who explicitly did NOT
+            # ask for a change -- which is why it gets one. The reconcile restored four paths
+            # from HEAD on the promise that the merge would write the target blobs straight
+            # back; the gate then aborted, so it never did. Net effect: the caller's working
+            # tree held LESS than before the call, and those edits existed ONLY in a DETACHED
+            # commit anchored by a worktree that reaps at 48h.
+            #
+            # ⚠ "Nothing can be lost" was stated unconditionally and was conditional. The fix
+            # is to make it unconditional rather than to footnote it: put the proved blobs
+            # back. We know them exactly -- the reconcile recorded the blob id it verified --
+            # so this restores the same bytes it removed, not an approximation of them.
+            if reconciled:
+                restored_back, failed_back = [], []
+                for entry in reconciled:
+                    r = self.git.run(
+                        ["checkout", branch, "--", entry["path"]], timeout=120)
+                    (restored_back if r.ok else failed_back).append(entry["path"])
+                # ⚠ And the index must not keep what `checkout <rev> -- path` stages, or the
+                # caller is left with a dirty INDEX they never created -- which is the one
+                # state that blocks their next merge outright.
+                if restored_back:
+                    self.git.run(["reset", "-q", "HEAD", "--", *restored_back], timeout=120)
+                reconcile_rollback = {"restored": restored_back, "failed": failed_back}
+            else:
+                reconcile_rollback = None
             self.audit.append(
                 actor=self.actor, op="merge", args=args, decision="refused",
                 head=self.git.head(), branch=self.git.branch(),
                 tree=self.git.tree_state(), gates=gate_records, reason=reason,
-                detail="pre-commit gate did not pass on the merge result",
+                # ⚠ `detail`, not an `extra=` kwarg: `_receipt` takes `extra`, `audit.append`
+                # does NOT. The first draft invented one by analogy with the sibling call --
+                # the read-the-analogue defect again, inside a fix for a mis-stated remedy.
+                detail=("pre-commit gate did not pass on the merge result"
+                        + ("; reconcile ROLLED BACK for %s" % (reconcile_rollback,)
+                           if reconcile_rollback else "")),
             )
             raise RefusalError(
                 f"the pre-commit gate did not pass on the RESULT of merging {branch!r}, "
                 f"so the merge was ABORTED and nothing was committed.\n\n"
                 f"{gate.note or ''}\n{gate.output[-4000:]}",
                 alternative=(
-                    f"The findings are in the merged content, not necessarily in either "
-                    f"branch alone — a merge can produce a tree neither side ever had. Fix "
-                    f"them on {branch!r} (or on this branch) and commit through commit(...) "
-                    f"so they are recorded, then merge again. There is no skip: a merge "
-                    f"commit is a commit, and it is gated like one."),
+                    (("Your working tree also holds UNCOMMITTED changes to %d path(s). This "
+                      "gate scans the WORKING TREE, so findings can originate there -- in "
+                      "files present in NEITHER branch and not in the merge result. Check the "
+                      "named paths against the finding list BEFORE editing either branch: "
+                      "editing a commit that does not contain the finding cannot clear it. "
+                      % len(carried.get("uncommitted_work") or []))
+                     if (carried.get("uncommitted_work") or []) else "")
+                    + f"Otherwise the findings are in the merged content, not necessarily in "
+                    f"either branch alone — a merge can produce a tree neither side ever had; "
+                    f"fix them on {branch!r} or on this branch and commit through commit(...), "
+                    f"then merge again. There is no skip: a merge commit is a commit, and it "
+                    f"is gated like one."
+                    + (" ⚠ %d path(s) reconciled before this attempt have been RESTORED to "
+                       "%s's content, so your working tree is as it was."
+                       % (len(reconciled), branch) if reconciled else "")),
             )
 
         result = self.git.run(["commit", "--no-edit"], timeout=600)
