@@ -264,6 +264,37 @@ EXIT_CODES = {
 #
 # ⭐ SO: MINT FREELY IN 1..123, and adopt an existing convention rather than inventing a rival
 # for the same event (which is why TIMED OUT is 124 and not 5). 0 is reserved for success.
+# ⭐ A SHORT LABEL PER CODE, FOR PLACES THAT NEED A FIELD RATHER THAN A PARAGRAPH.
+# `gitRobot/core/gates.py` renders `outcome` from this: a gate result used to flatten every
+# non-zero into `passed: False`, so a finding, an outage, an UNDETERMINED, a terminal refusal
+# and its own 124 all read identically to anything branching on it.
+#
+# ⛔ THE KEY SETS ARE BOUND TO EACH OTHER BY A TEST, IN BOTH DIRECTIONS. A published code with
+# no label, or a label for a code nobody publishes, fails the suite -- otherwise this is a
+# second copy of the key set and the two drift, which is the defect the whole module exists to
+# end. The MEANING lives in EXIT_CODES and is not restated here.
+EXIT_CODE_LABELS = {
+    0: "clean",
+    1: "finding",
+    2: "could_not_ask",
+    3: "undetermined",
+    4: "refused",
+    124: "timed_out",
+}
+
+
+def exit_code_label(code):
+    """The short label, or an explicit UNPUBLISHED marker naming the code.
+
+    ⛔ AN UNKNOWN CODE MUST NEVER RENDER AS A KNOWN ONE, AND ESPECIALLY NEVER AS CLEAN.
+    A checker is free to return something nobody published; that is a finding about the
+    checker, and it has to look like one rather than silently borrowing a neighbour's meaning.
+    """
+    if code is None:
+        return "did_not_run"
+    return EXIT_CODE_LABELS.get(code, "unpublished_%s" % (code,))
+
+
 MINTABLE_EXIT_CODES = range(1, 124)
 
 RESERVED_EXIT_CODES = {

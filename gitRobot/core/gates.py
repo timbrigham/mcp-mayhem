@@ -21,6 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+_root = Path(__file__).resolve().parents[2]
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from mcpcommon.vocabulary import exit_code_label  # noqa: E402
+
 # The project's single pipeline entry point, relative to the repo root, and the
 # phases it accepts. If this path moves, gitRobot must fail loudly rather than
 # silently skip the gate — see `available()`.
@@ -75,10 +80,35 @@ class GateResult:
     def passed(self) -> bool:
         return self.ran and self.exit_code == 0
 
+    @property
+    def outcome(self) -> str:
+        """WHAT happened, not merely whether it happened.
+
+        ⭐⭐ Tim, 2026-09-10: "as a design schematic, we should never have, for example zero and
+        non-zero as the appropriate exit codes. they need to be specific as to exactly what they
+        mean." `passed` is exactly that zero-versus-non-zero collapse, at the gate that guards
+        every commit and every push: a FINDING, an outage, an UNDETERMINED, a terminal REFUSAL
+        and the 124 this file sets ITSELF on timeout all render as `passed: False`.
+
+        ⚠ IT FAILS CLOSED, so this was never a safety hole — the caller is correctly blocked.
+        It is a REMEDY hole: the four non-zero states have four different next actions (fix the
+        content · retry · investigate · read the rule the server named · widen the budget) and
+        a boolean cannot carry any of them. The `exit_code` was already on the audit row; it was
+        simply thrown away before anything could branch on it.
+
+        ⛔ `passed` IS UNCHANGED AND STAYS THE GATE. This is additive: every existing caller
+        keeps its exact meaning, and nothing is permitted that was not permitted before.
+        Rendered from `mcpcommon.vocabulary`, so the labels cannot drift from the published
+        exit codes — and an UNPUBLISHED code renders as `unpublished_<n>` rather than silently
+        borrowing a neighbour's meaning, because a code nobody published is a finding about the
+        checker and has to look like one.
+        """
+        return exit_code_label(self.exit_code if self.ran else None)
+
     def record(self) -> dict:
         """The shape stored in the audit log."""
         return {"phase": self.phase, "ran": self.ran, "exit_code": self.exit_code,
-                "passed": self.passed, "note": self.note,
+                "passed": self.passed, "outcome": self.outcome, "note": self.note,
                 "output": _clip(self.output)}
 
 

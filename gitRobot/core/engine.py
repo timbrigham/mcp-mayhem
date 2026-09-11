@@ -1048,6 +1048,15 @@ class GitRobot:
             reason=reason, detail="push started", run_id=run_id,
         )
 
+        # ⭐ WHAT THIS PUSH DOES **NOT** PUBLISH, NAMED RATHER THAN COUNTED. A push publishes
+        # HEAD, so uncommitted work is in none of it -- which is exactly why a dirty tree has
+        # never gated a push, and exactly why "what was left behind" is the question a caller
+        # asks afterwards. `tree_state` already records staged/unstaged/untracked COUNTS; a
+        # count cannot say WHICH, and which is the whole value of documenting.
+        # ⚠ SAMPLED HERE, BEFORE THE WORKER STARTS, so it describes the tree at the moment the
+        # push was authorised rather than whenever the background thread happened to look.
+        not_published = self._carried_forward(target)
+
         def _do_push() -> dict:
             # ⚠⚠ THE TIMEOUT MUST CLEAR THE HOOK, NOT THE NETWORK. This was 900s, chosen
             # when the pre-push pipeline took ~155s. It is the BACKSTOP hook — it runs on
@@ -1060,7 +1069,8 @@ class GitRobot:
             return self._receipt(
                 "push", push_args, decision, gates=None, reason=reason,
                 detail=result.output, run_id=run_id,
-                extra={"output": result.output, "ok": result.ok, "run_id": run_id},
+                extra={"output": result.output, "ok": result.ok, "run_id": run_id,
+                       "not_published": not_published},
                 target=target)
 
         push_args = args
@@ -1431,7 +1441,8 @@ class GitRobot:
             "uncommitted_work": work[:limit],
             "uncommitted_work_total": len(work),
             "truncated": len(expected) > limit or len(work) > limit,
-            "note": ("These paths were in the working tree and are NOT part of this commit. "
+            "note": ("These paths were in the working tree and are NOT part of what this "
+                     "operation recorded or published. "
                      "`expected_local` matched the expected-local-state convention; "
                      "`uncommitted_work` did not, and is work that is still uncommitted."),
         }

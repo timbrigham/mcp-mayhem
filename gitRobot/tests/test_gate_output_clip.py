@@ -90,3 +90,49 @@ def test_the_receipt_detail_is_clipped_not_only_the_gate_record(robot, repo):
     assert detail.rstrip().endswith("pipeline chatter"), (
         "the TAIL must survive — a failing gate states its reason at the end, which is why "
         "_clip keeps both ends rather than truncating")
+
+
+# -- an exit code names WHAT happened, not merely whether it happened ----------
+
+def test_gate_outcome_distinguishes_every_non_zero_state():
+    """⭐⭐ Tim, 2026-09-10: "we should never have, for example zero and non-zero as the
+    appropriate exit codes. they need to be specific as to exactly what they mean."
+
+    `GateResult.passed` was exactly that collapse, at the gate guarding every commit and every
+    push: a FINDING, an outage, an UNDETERMINED, a terminal REFUSAL and the 124 gates.py sets
+    ITSELF on timeout all rendered as `passed: False`.
+
+    ⚠ It fails CLOSED, so it was never a safety hole -- a remedy hole. Those states have
+    different next actions (fix the content / retry / investigate / read the rule / widen the
+    budget) and a boolean carries none of them.
+    """
+    from core.gates import GateResult
+
+    def g(rc, ran=True):
+        return GateResult(phase="pre-commit", ran=ran, exit_code=rc, output="")
+
+    seen = {rc: g(rc).outcome for rc in (0, 1, 2, 3, 4, 124)}
+    assert seen == {0: "clean", 1: "finding", 2: "could_not_ask",
+                    3: "undetermined", 4: "refused", 124: "timed_out"}
+    assert len(set(seen.values())) == len(seen), "two codes collapsed to one label"
+
+    # ⛔ AN UNPUBLISHED CODE MUST NOT BORROW A NEIGHBOUR'S MEANING, AND ESPECIALLY NOT `clean`.
+    assert g(7).outcome == "unpublished_7"
+    assert g(None, ran=False).outcome == "did_not_run"
+
+
+def test_outcome_is_additive_and_passed_is_untouched():
+    """⛔ THE GATE ITSELF MUST NOT HAVE MOVED. `outcome` is a new field; `passed` keeps its
+    exact prior meaning, so nothing that branches on it permits anything it did not before.
+    A change that loosened the gate while claiming to only describe it would be the worst
+    possible version of this."""
+    from core.gates import GateResult
+
+    for rc in (0, 1, 2, 3, 4, 7, 124):
+        r = GateResult(phase="pre-commit", ran=True, exit_code=rc, output="")
+        assert r.passed is (rc == 0), "passed changed meaning for exit %s" % rc
+    assert GateResult(phase="p", ran=False, exit_code=None, output="").passed is False
+
+    # and the audit row carries it, or nothing downstream can ever read it
+    rec = GateResult(phase="pre-commit", ran=True, exit_code=4, output="x").record()
+    assert rec["outcome"] == "refused" and rec["passed"] is False and rec["exit_code"] == 4

@@ -311,3 +311,26 @@ def test_exit_code_0_does_not_claim_the_check_found_nothing():
         "0 must say what it actually certifies — that nothing is OWED, not that nothing exists")
     assert "enumeration" in zero or "advisory" in zero, (
         "0 must name the advisory-enumeration case, or an intended WARN reads as clean")
+
+
+def test_exit_code_labels_are_bound_to_the_published_codes_in_both_directions():
+    """⛔⛔ A SHORT LABEL PER CODE IS A SECOND COPY OF THE KEY SET, AND SECOND COPIES DRIFT.
+    `gitRobot/core/gates.py` renders its `outcome` field from EXIT_CODE_LABELS, so the two must
+    never disagree: a published code with no label would render as `unpublished_<n>` despite
+    being published, and a label for a code nobody publishes is a meaning with no definition.
+
+    ⚠ BOTH DIRECTIONS, because a one-directional check lets debt sit forever -- the same rule
+    this file's header states for every other table here.
+    """
+    from mcpcommon.vocabulary import EXIT_CODE_LABELS, exit_code_label
+
+    assert set(EXIT_CODE_LABELS) == set(EXIT_CODES), (
+        "EXIT_CODE_LABELS and EXIT_CODES disagree: only-in-labels=%s only-in-codes=%s"
+        % (sorted(set(EXIT_CODE_LABELS) - set(EXIT_CODES)),
+           sorted(set(EXIT_CODES) - set(EXIT_CODE_LABELS))))
+    assert len(set(EXIT_CODE_LABELS.values())) == len(EXIT_CODE_LABELS), (
+        "two codes share a label, which re-creates the collapse the labels exist to remove")
+    # ⛔ absence renders as its own state, never as a neighbour's
+    assert exit_code_label(999).startswith("unpublished_")
+    assert exit_code_label(None) == "did_not_run"
+    assert "clean" not in exit_code_label(999), "an unknown code must never read as clean"
