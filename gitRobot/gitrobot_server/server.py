@@ -399,7 +399,21 @@ async def switch(branch: str, create: bool = False, reason: Optional[str] = None
 @mcp.tool(title='Merge a branch',
           annotations=ToolAnnotations(title='Merge a branch', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def merge(branch: str, reason: str) -> ReceiptResult:
-    """Merge a branch into HEAD (--no-ff). REFUSED while the tree is dirty; reason required.
+    """Merge a branch into HEAD (--no-ff). Reason required; gated like any other commit.
+
+    ⭐ A DIRTY TREE DOES NOT BLOCK THIS. Uncommitted work is carried forward untouched and
+    NAMED in the receipt's `carried_forward`, split into `expected_local` and
+    `uncommitted_work`. Documenting what rode along beats refusing the operation, and git
+    already refuses the case that would actually lose anything.
+
+    ⚠ A STAGED change IS refused -- by GIT, not by gitRobot -- because `--no-commit` would
+    sweep the index into the merge commit. That refusal is reported separately from a content
+    conflict: a dirty index needs commit(...) or unstage(...), a conflict needs a decision in
+    a private checkout, and handing a caller the wrong one sends them to resolve a conflict
+    that does not exist.
+
+    ⚠ `switch`, `rebase` and `squash` still refuse a dirty tree. They move you to another
+    branch or rewrite history under your working tree; a merge leaves you where you were.
 
     No squash, no strategy overrides, no --no-verify: a merge needing those is a decision,
     not a mechanical step."""

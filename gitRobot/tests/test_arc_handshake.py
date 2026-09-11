@@ -237,10 +237,17 @@ def test_a_bumped_round_does_not_block_a_merge(robot, repo, tmp_path, committed_
         f"a round bump blocked the merge that ends the arc: {out}")
 
 
-def test_real_dirt_still_blocks_a_merge(robot, repo, tmp_path):
+def test_real_dirt_still_blocks_a_branch_move(robot, repo, tmp_path):
     """⚠ THE CONTROL, AND IT IS WHAT KEEPS THE EXEMPTION FROM BEING A HOLE. Only the arc-state
     file is exempt. Genuine uncommitted work must still refuse, or the narrowing has quietly
-    removed the guard rather than corrected it."""
+    removed the guard rather than corrected it.
+
+    ⚠ RETARGETED FROM `merge` TO `switch` ON 2026-09-10, AND THE CONTROL IS UNWEAKENED. `merge`
+    stopped refusing dirty trees that day -- git already refuses the only dangerous case, a
+    dirty INDEX -- so merge is no longer an instrument for measuring this exemption. `switch`
+    is: it still refuses, the guard's rationale still fits it (you end up on another branch),
+    and it reads the SAME `_ARC_STATE` carve-out. The subject of this test is the EXEMPTION,
+    not the verb, and using a verb that no longer refuses would make it pass vacuously."""
     from core.errors import RefusalError
 
     _track_arc(repo)
@@ -251,7 +258,7 @@ def test_real_dirt_still_blocks_a_merge(robot, repo, tmp_path):
     (repo / "tracked.txt").write_text("PRECIOUS EDIT\n", encoding="utf-8")   # NOT exempt
 
     with pytest.raises(RefusalError):
-        robot.merge("side2", reason="should refuse")
+        robot.switch("side2", reason="should refuse")
 
 
 def test_the_refusal_names_the_repo_and_never_claims_staged(robot, repo, tmp_path):

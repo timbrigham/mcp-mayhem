@@ -42,7 +42,13 @@ def _branch(repo, name, *, commit=True):
 
 # -- dirty-tree refusal, and its named escape ---------------------------------
 
-@pytest.mark.parametrize("call", ["switch", "merge", "rebase"])
+# ⛔ `merge` LEFT THIS SET 2026-09-10 AND IT IS A GROUPING CORRECTION, NOT A RELAXATION.
+# The guard's own rationale is "carried across a branch change, so it ends up committed on a
+# branch it was never written for" -- but a merge brings another branch INTO HEAD and leaves you
+# where you were. switch and rebase still move you, and both keep the refusal.
+# ⭐ Tim, 2026-09-10: "maybe documentation when files are carried forward at most .. but
+# blocking them... that's bad design."
+@pytest.mark.parametrize("call", ["switch", "rebase"])
 def test_branch_movement_refused_while_dirty(robot, repo, dirty, call):
     _branch(repo, "feature")
     kwargs = {"reason": "r"} if call in ("merge", "rebase") else {}

@@ -208,13 +208,80 @@ def test_an_up_to_date_merge_is_a_no_op_not_an_error(robot, repo):
     assert _is_clean(robot)
 
 
-def test_merge_still_refuses_a_dirty_tree_before_any_of_this(robot, repo, dirty):
-    """⚠ THE PRE-EXISTING GUARD IS UNCHANGED AND RUNS FIRST. Uncommitted work must not be
-    swept into a merge — and because `--no-commit` now stages the merge, a dirty tree would
-    also make "restore on failure" impossible to define."""
-    with pytest.raises(RefusalError, match="tree is dirty"):
-        robot.merge("feature", reason="merging onto uncommitted work")
-    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "PRECIOUS EDIT\n"
+def test_merge_proceeds_on_a_dirty_tree_and_reports_what_it_carried(robot, repo, dirty):
+    """⭐⭐ MERGE NO LONGER REFUSES A DIRTY TREE, AND GIT IS WHY IT DOES NOT NEED TO.
+
+    Measured 2026-09-10 in a scratch repo rather than reasoned from the analogue:
+
+        UNSTAGED change to an unrelated file -> git ALLOWS the merge
+        STAGED   change to an unrelated file -> git REFUSES it ITSELF
+
+    So the dangerous case -- a dirty INDEX, whose contents `--no-commit` would sweep into the
+    merge commit -- is already refused by git, and the safe case was all the guard was still
+    stopping. `_require_clean`'s own docstring conceded it: "Git already refuses the cases that
+    would overwrite a file."
+
+    ⚠ AND THE RATIONALE NEVER FIT MERGE. It is "carried across a branch change, so it ends up
+    committed on a branch it was never written for" -- but a merge brings another branch INTO
+    HEAD and leaves you where you were. A grouping error, not a relaxation; switch and rebase
+    still refuse.
+
+    ⭐ Tim, 2026-09-10: "maybe documentation when files are carried forward at most .. but
+    blocking them... that's bad design."
+
+    ⛔ THE DOCUMENT IS THE WHOLE BARGAIN. Replacing a refusal with a silent carry-forward would
+    be strictly worse than the refusal, so this asserts the receipt NAMES the file.
+    """
+    _install_content_gate(repo)
+    _feature_branch(repo, {"harmless.txt": "fine" + chr(10)})
+    # ⚠ RE-DIRTY AFTER THE BRANCH SETUP, AND THE REASON IS ITSELF THE HAZARD UNDER TEST.
+    # `_feature_branch` runs `git add -A` and commits, which SWEEPS the `dirty` fixture's
+    # uncommitted work onto the feature branch -- the exact "committed where it was never
+    # written" shape `stage` refuses bulk adds over. Without this line the tree is clean by
+    # the time merge runs and the assertion below passes vacuously on an empty report.
+    # ⚠ AND IT MUST BE DIFFERENT BYTES. Writing the SAME content back produces no diff, so the
+    # tree is clean and this test passes vacuously on an empty report -- which is exactly what
+    # it did on the first attempt. A fixture that restores the string but not the DIRTINESS is
+    # a control that measures nothing.
+    (repo / "tracked.txt").write_text("PRECIOUS EDIT, CARRIED" + chr(10), encoding="utf-8")
+
+    receipt = robot.merge("feature", reason="a dirty tree must not block a merge")
+    assert receipt["decision"] == "allowed"
+    assert receipt["merged"] is True
+
+    carried = receipt.get("carried_forward")
+    assert carried, "a merge over a dirty tree must report what it carried forward"
+    assert "tracked.txt" in set(carried["uncommitted_work"]), (
+        "the modified file rode along uncommitted and the receipt did not name it: %r"
+        % (carried["uncommitted_work"],))
+
+    # ⚠ THE BYTES, NOT JUST THE DECISION. Carrying rather than blocking is only correct if the
+    # work is still there afterwards.
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "PRECIOUS EDIT, CARRIED" + chr(10)
+    assert (repo / "untracked.txt").exists()
+
+
+def test_uncommitted_work_survives_a_merge_that_the_gate_rejects(robot, repo, dirty):
+    """⛔⛔ THE OLD TEST HERE ASSERTED THE DIRTY-TREE REFUSAL, AND ITS DOCSTRING NAMED THE REAL
+    WORRY: "because `--no-commit` now stages the merge, a dirty tree would also make 'restore
+    on failure' impossible to define." The worry outlived the refusal, so this pins the
+    PROPERTY rather than the guard that used to stand in for it.
+
+    ⭐ GIT'S OWN PRECONDITION IS WHAT MAKES IT DEFINABLE, and it is why dropping the refusal was
+    safe: git allows a merge over an UNSTAGED change to an unrelated file and REFUSES one over a
+    STAGED change. So by the time gitRobot merges, the dirty paths are provably ones the merge
+    does not touch, and `merge --abort` restores the index and the merged paths while leaving
+    those alone. The overlapping case, where abort could destroy local work, is the case git
+    never let start.
+
+    ⚠ THE ASSERTION IS ON THE BYTES. A test that only checked "it refused" would still pass if
+    the abort silently ate the file.
+    """
+    with pytest.raises(RefusalError):
+        robot.merge("feature", reason="gate will reject this merge")
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "PRECIOUS EDIT" + chr(10), (
+        "the uncommitted work did not survive the aborted merge")
+    assert (repo / "untracked.txt").exists(), "the untracked file did not survive"
 
 
 def test_a_missing_gate_pipeline_refuses_the_merge(robot, repo):

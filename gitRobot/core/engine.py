@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from fnmatch import fnmatch
 import os
 import shutil
 import tempfile
@@ -1176,6 +1177,17 @@ class GitRobot:
     # why it is set here, at the one place that creates worktrees.
     _ARC_STATE = "gate_round.json"
 
+    # ⭐⭐ EXPECTED LOCAL STATE, AS A CONVENTION RATHER THAN ONE HARD-CODED FILENAME.
+    # Tim, 2026-09-10: "maybe documentation when files are carried forward at most .. but
+    # blocking them... that's bad design. merge plus subtree naming convention would make
+    # sense to allow."
+    #
+    # ⚠ THIS CLASSIFIES FOR THE RECEIPT. IT GATES NOTHING. A path matching one of these is
+    # reported as expected local state; a path not matching is reported as uncommitted work.
+    # Both are REPORTED and neither is refused. `_require_clean` still uses `_ARC_STATE`
+    # alone, because switch/rebase/squash keep their existing behaviour unchanged.
+    _EXPECTED_LOCAL = ("gate_round.json", ".claude-local/*", "*.local.json")
+
     def _seal_arc_state(self, worktree: Path) -> dict:
         """Mark the arc handshake file skip-worktree in a fresh worktree, so its local round
         bumps can never be staged. A no-op when the file is not tracked (it is not, yet)."""
@@ -1394,6 +1406,36 @@ class GitRobot:
                 reason=reason, target=target)
         return inv
 
+    def _carried_forward(self, target, *, limit: int = 20) -> dict:
+        """What the working tree holds that this operation will NOT commit. A REPORT.
+
+        ⭐ Tim, 2026-09-10, on the dirty-tree block: "maybe documentation when files are
+        carried forward at most .. but blocking them... that's bad design."
+
+        ⚠ COUNTS ALONE WERE NOT ENOUGH AND A LIST ALONE IS TOO MUCH. `tree_state()`
+        deliberately records counts, because "a 1000-line status dump per record would bury
+        the signal it exists to keep" — but a count cannot tell a reader WHICH files rode
+        along, which is the entire point of documenting instead of blocking. So this is a
+        BOUNDED list with the remainder counted, and it is split by the convention above.
+        """
+        expected, work = [], []
+        for line in target.porcelain():
+            path = line[3:].strip().strip('"')
+            if not path:
+                continue
+            bucket = expected if any(fnmatch(path, pat) for pat in self._EXPECTED_LOCAL) else work
+            bucket.append(path)
+        return {
+            "expected_local": expected[:limit],
+            "expected_local_total": len(expected),
+            "uncommitted_work": work[:limit],
+            "uncommitted_work_total": len(work),
+            "truncated": len(expected) > limit or len(work) > limit,
+            "note": ("These paths were in the working tree and are NOT part of this commit. "
+                     "`expected_local` matched the expected-local-state convention; "
+                     "`uncommitted_work` did not, and is work that is still uncommitted."),
+        }
+
     # -- branch movement: refused while the tree is dirty ----------------------
 
     def _require_clean(self, op: str, args: Any, what: str, *,
@@ -1460,8 +1502,15 @@ class GitRobot:
                              extra={"output": result.output, "ok": result.ok})
 
     def merge(self, branch: str, *, reason: str) -> dict:
-        """Merge another branch into HEAD. Refused while dirty, and GATED like any
-        other commit.
+        """Merge another branch into HEAD. GATED like any other commit.
+
+        ⭐ A DIRTY TREE DOES NOT BLOCK THIS, AND THE RECEIPT SAYS WHAT RODE ALONG.
+        Uncommitted work is carried forward untouched and listed in the receipt's
+        `carried_forward`, split into `expected_local` (matching the expected-local-state
+        convention) and `uncommitted_work`. A STAGED change is refused -- by GIT, not by
+        gitRobot -- because `--no-commit` would sweep the index into the merge commit; that
+        refusal is classified separately from a content conflict, because the remedies are
+        opposites.
 
         No `--no-verify`, no `--squash`, no strategy overrides: a merge that needs
         those is a decision, not a mechanical step.
@@ -1506,7 +1555,30 @@ class GitRobot:
         if not (isinstance(reason, str) and reason.strip()):
             raise UsageError("merge requires a non-empty reason")
         args = {"branch": branch}
-        self._require_clean("merge", args, f"merging {branch!r}", reason=reason)
+        # ⛔⛔ MERGE NO LONGER REFUSES A DIRTY TREE, AND GIT IS WHY IT DOES NOT NEED TO.
+        # Measured 2026-09-10 in a scratch repo, because reasoning from the analogue is the
+        # defect this file keeps finding:
+        #
+        #   UNSTAGED change to an unrelated file -> git ALLOWS the merge
+        #                                           "Automatic merge went well; stopped
+        #                                            before committing as requested"
+        #   STAGED   change to an unrelated file -> git REFUSES it ITSELF
+        #                                           "Your local changes to the following
+        #                                            files would be overwritten by merge"
+        #
+        # So the dangerous case — a dirty INDEX, whose contents `--no-commit` would sweep
+        # into the merge commit — is already refused by git, and the safe case was the only
+        # thing this guard was still stopping. ⭐ `_require_clean`'s own docstring said as
+        # much all along: "Git already refuses the cases that would overwrite a file."
+        #
+        # ⚠ AND THE RATIONALE NEVER FIT MERGE ANYWAY. It is "carried across a branch change,
+        # so it ends up committed on a branch it was never written for" — but a merge brings
+        # another branch INTO HEAD and leaves you where you were. switch/rebase/squash are
+        # unchanged; this was a grouping error, not a relaxation.
+        #
+        # Tim, 2026-09-10: "maybe documentation when files are carried forward at most ..
+        # but blocking them... that's bad design."
+        carried = self._carried_forward(self.git)
 
         merged = self.git.run(["merge", "--no-ff", "--no-commit", branch], timeout=600)
 
@@ -1526,6 +1598,30 @@ class GitRobot:
                 # gitRobot has no conflict-resolution path to offer, so it cannot be the
                 # thing that left one behind.
                 self.git.run(["merge", "--abort"], timeout=300)
+            # ⛔⛔ A DIRTY INDEX IS NOT A CONFLICT, AND SENDING IT THE CONFLICT REMEDY WOULD BE
+            # A TRUE MESSAGE ABOUT THE WRONG OBJECT. Now that merge no longer refuses a dirty
+            # tree itself, git's own refusal is what a caller meets -- and git uses "Your local
+            # changes to the following files would be overwritten by merge" for a dirty INDEX,
+            # not only for a content conflict. Measured 2026-09-10: a STAGED change to an
+            # UNRELATED file produces exactly that string, with no MERGE_HEAD.
+            #
+            # The remedies are OPPOSITES. A conflict needs a human decision in a private
+            # checkout. A dirty index needs commit(...) or unstage(...) and the same merge
+            # again. Handing the conflict advice to a staged file sends the caller to resolve
+            # a conflict that does not exist.
+            if "would be overwritten by merge" in (merged.output or "") and not in_progress:
+                raise self._refuse(
+                    "merge", args,
+                    f"git refused to merge {branch!r} because the INDEX is dirty. This is NOT "
+                    f"a content conflict and nothing was merged:\n\n"
+                    f"{merged.output[-2000:]}",
+                    "Clear the index and merge again: commit(...) the staged work if it "
+                    "belongs on this branch, or unstage(paths=[...]) if it does not. "
+                    "UNSTAGED changes do NOT block a merge and are carried forward -- only "
+                    "STAGED ones do, because --no-commit would sweep them into the merge "
+                    "commit. A successful merge receipt lists what was carried.",
+                    reason=reason,
+                )
             raise self._refuse(
                 "merge", args,
                 f"merging {branch!r} did not apply cleanly, so nothing was merged and the "
@@ -1543,7 +1639,8 @@ class GitRobot:
             return self._receipt("merge", args, "allowed", reason=reason,
                                  detail=merged.output,
                                  extra={"output": merged.output, "ok": True,
-                                        "merged": False})
+                                        "merged": False,
+                                        "carried_forward": carried})
 
         gate = self.gates.run("pre-commit")
         gate_records = [gate.record()]
@@ -1571,7 +1668,8 @@ class GitRobot:
         return self._receipt("merge", args, "allowed" if result.ok else "failed",
                              gates=gate_records, reason=reason, detail=result.output,
                              extra={"output": merged.output + result.output,
-                                    "ok": result.ok, "merged": True})
+                                    "ok": result.ok, "merged": True,
+                                    "carried_forward": carried})
 
     def rebase(self, onto: str, *, reason: str) -> dict:
         """Rebase HEAD onto another ref. Refused while dirty, AND refused when it
