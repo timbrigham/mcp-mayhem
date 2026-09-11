@@ -312,7 +312,22 @@ CLAIM_FIELDS = {
         "read against the WRONG OBJECT. ⛔ THE TEST: could two people who agree on every word "
         "of the claim still be measuring different things? Then the object is not named. "
         "'27 unpushed' fails it; '27 on origin/illustrated..illustrated, which is what the push "
-        "publishes' does not."),
+        "publishes' does not. "
+        "⭐ THE REMEDY, EARNED FROM THREE MEASURED INSTANCES IN ONE DAY AND THE SAME MOVE EVERY "
+        "TIME: GO TO THE SERVED SURFACE AND READ WHAT IT ACTUALLY ACCEPTS, RATHER THAN WHAT THE "
+        "FAMILIAR THING ACCEPTS. 2026-09-10: `git commit -- <path>` semantics were read onto "
+        "gitRobot's `commit`, whose published parameters are only "
+        "(message_file, reason, repo_mode, worktree) - `tools/list` refutes it in one call. "
+        "'MCP works in subagents' was true of `status` and false of `vocabulary`, and the "
+        "deferred registry says which. A relayed 'expects a clean tree' was true of `merge` and "
+        "false of `push`, and `_require_clean`'s caller list says which. ⚠ THE FAILURE MODE IS "
+        "ALWAYS REASONING FROM THE ANALOGUE: the familiar tool, the sibling server, the "
+        "remembered shape. A published contract is the only thing that answers for THIS object, "
+        "and it is one call away. ⛔ AND THE SUBJECT DECIDES THE OBJECT, NOT THE CONVENTION: a "
+        "gate over files an agent READS AT RUNTIME must examine the WORKING TREE, because that "
+        "is what gets read - while a verdict about them may still only indict bytes at the ref. "
+        "What a checker EXAMINES and what a verdict may INDICT are different questions, and "
+        "fusing them is this field's defect wearing a design decision."),
     "instrument": (
         "HOW it was measured, named as the TOOL and not just the query -- because the query is "
         "what you chose and the SCOPE IS WHAT THE INSTRUMENT CHOSE FOR YOU. ⛔ Measured "
