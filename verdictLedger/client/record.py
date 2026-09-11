@@ -1,6 +1,26 @@
 """verdictLedger client for ZeroParadox checkers. STDLIB ONLY, NO RULES.
 
-Install as `tools/verify/record.py` in the ZP repo. Every checker calls `emit`.
+⛔⛔ DO NOT INSTALL THIS OVER A CONSUMER'S `tools/verify/record.py`. THIS HEADER USED TO SAY
+"Install as tools/verify/record.py in the ZP repo" AND FOLLOWING IT DESTROYS WORK.
+
+Measured 2026-09-10, this file against the copy actually running in ZeroParadox:
+
+    this file   278 lines    "outstanding|failing" appears  0 times
+    theirs     1165 lines    "outstanding|failing" appears 60 times
+
+and EIGHT public functions exist only in theirs -- stale_or_missing, step_status, owing_paths,
+read_ref, reachable, build_record, check, and `_cli`, which every gate brief shells out to.
+⚠ So this is NOT a newer version of that file. It is a THINNER, OLDER, DIFFERENT object that
+has never been what they run, and it cannot express `failing` -- which CLAUDE.md calls
+load-bearing, because a FAIL indicts the subset it NAMES rather than everything it examined.
+
+⭐ THE INSTRUCTION WAS ACTED ON AND CAUGHT MID-APPLY BY THE CONSUMER, not by us. Blast radius
+was measured afterwards: `ZPLEDGER_URL` appears in exactly two files on this machine, so only
+one consumer ever took it.
+
+WHAT THIS FILE IS: the REFERENCE for the append protocol and the emit/emit_ex contract -- read
+it, port from it, never copy it wholesale. A consumer that already has a record.py takes the
+DELTA. Every checker calls `emit`; nothing about that changed.
 
 ⚠⚠ THIS FILE HOLDS NO VALIDATION LOGIC. It serialises and posts; the rules live in
 the server, in exactly one place. That is what makes the mirror defect
