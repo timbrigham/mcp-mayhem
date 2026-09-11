@@ -405,16 +405,28 @@ async def merge(branch: str, reason: str) -> ReceiptResult:
     receipt's `carried_forward`, split into `expected_local` and `uncommitted_work`.
     Documenting what rode along beats refusing the operation.
 
-    ⚠ CARRIED FORWARD MEANS PATHS THIS MERGE DOES NOT TOUCH. Git refuses the two cases that
-    could lose work, and they need DIFFERENT remedies, so the refusal says which:
+    ⚠ CARRIED FORWARD MEANS PATHS THIS MERGE DOES NOT TOUCH. Four things can stop a merge and
+    they need FOUR DIFFERENT remedies, so the refusal says which — three of them print nearly
+    the same git text, and handing a caller the wrong remedy sends them where there is nothing
+    to do:
       · STAGED content            `--no-commit` would sweep the index into the merge commit.
                                   commit(...) it or unstage(paths=[...]), then merge again.
       · UNSTAGED edits to a path  the index is CLEAN, so unstaging is a NO-OP. Commit the
         the merge must update     edits, or work from worktree(action='add'). Retrying does
                                   not help: git refuses before the merge begins.
+      · UNTRACKED files occupying the file is in neither index nor HEAD, so neither unstage
+        paths the merge creates   nor commit applies. Move or delete them yourself; this
+                                  server will not delete an untracked file for you.
       · a real content CONFLICT   decide it in a private checkout; gitRobot cannot choose.
-    All three are distinguished by the server, because the first two print the SAME git
-    message and handing a caller the wrong remedy sends them somewhere there is nothing to do.
+
+    ⭐ ONE CASE RESOLVES ITSELF, AND ONLY BECAUSE IT IS PROVABLE. If every colliding path is
+    ALREADY byte-identical to what the merge would write — HEAD's blob equals the merge-base
+    blob, so the merge takes the target's version wholesale, AND the working copy already IS
+    that blob — then restoring and re-merging changes NOTHING on disk. Those paths are
+    reconciled automatically and listed in the receipt's `reconciled` with the blob id that was
+    proved identical. ⛔ If ANY path differs by one byte, nothing is touched and the refusal
+    stands: this cannot be aimed at content that would be lost, which is what separates it from
+    an `allow_dirty` flag under a longer name.
 
     ⚠ `switch`, `rebase` and `squash` still refuse a dirty tree. They move you to another
     branch or rewrite history under your working tree; a merge leaves you where you were.

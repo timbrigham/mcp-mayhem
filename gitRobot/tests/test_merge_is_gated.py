@@ -387,10 +387,10 @@ def test_an_unstaged_collision_is_not_reported_as_a_dirty_index(robot, repo):
     neither leaves a MERGE_HEAD, so reading the text cannot separate them. The INDEX can.
     """
     _install_content_gate(repo)
-    _feature_branch(repo, {"shared.txt": "FROM FEATURE" + chr(10)})
+    _feature_branch(repo, {"tracked.txt": "FROM FEATURE" + chr(10)})
 
     # An UNSTAGED edit to the very path the merge must update. Index stays clean.
-    (repo / "shared.txt").write_text("LOCAL EDIT" + chr(10), encoding="utf-8")
+    (repo / "tracked.txt").write_text("LOCAL EDIT" + chr(10), encoding="utf-8")
 
     with pytest.raises(RefusalError) as caught:
         robot.merge("feature", reason="unstaged collision")
@@ -404,3 +404,53 @@ def test_an_unstaged_collision_is_not_reported_as_a_dirty_index(robot, repo):
     assert "unstaging changes nothing" in msg.lower() or "does NOT help" in alt, (
         "the remedy must say unstaging is a no-op here, or a caller loops on it")
     assert "worktree" in alt and "commit" in alt, "the two real exits must be named"
+
+
+def test_merge_reconciles_a_working_copy_that_is_already_the_merge_result(robot, repo):
+    """⭐⭐ THE CONSUMER'S STUCK STATE, 2026-09-11, AND WHY IT IS NOT A BYPASS.
+
+    They committed four files through the gate in a worktree (green, 11/11), then could not
+    carry the SHA back: their working tree held copies BYTE-IDENTICAL to what that commit
+    contains, and git refuses a merge that would overwrite local changes REGARDLESS of whether
+    the overwrite would change anything -- it compares against HEAD, never against the merge
+    result. Every exit was a Tier 1 operation this server refuses.
+
+    ⛔ THE DIFFERENCE FROM A BYPASS IS THAT NOTHING CAN BE LOST, PROVED BY HASH:
+        HEAD:path == BASE:path   -> the merge takes the TARGET's version wholesale
+        worktree  == TARGET:path -> the working copy IS that result
+    Restoring from HEAD and re-merging is then a NET-ZERO change to the bytes on disk.
+    """
+    _install_content_gate(repo)
+    # ⚠ tracked.txt EXISTS on illustrated. An untracked path produces a DIFFERENT git
+    # message ("untracked working tree files would be overwritten") and a different case;
+    # the first draft of this test used one and measured that instead.
+    _feature_branch(repo, {"tracked.txt": "FROM FEATURE" + chr(10)})
+
+    # The working copy is EXACTLY what the merge would write. HEAD never touched it.
+    (repo / "tracked.txt").write_text("FROM FEATURE" + chr(10), encoding="utf-8")
+
+    receipt = robot.merge("feature", reason="working copy already equals the merge result")
+    assert receipt["decision"] == "allowed"
+    assert [e["path"] for e in receipt["reconciled"]] == ["tracked.txt"]
+    assert receipt["reconciled"][0]["blob"], "the receipt must name the blob it proved identical"
+    # the bytes are what they always were
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "FROM FEATURE" + chr(10)
+
+
+def test_merge_refuses_when_the_working_copy_differs_by_even_one_byte(robot, repo):
+    """⛔ THE CONTROL, AND IT IS WHAT KEEPS THE RECONCILE FROM BEING `allow_dirty` RENAMED.
+
+    One byte of difference means the working copy is NOT the merge result, so discarding it
+    would lose a real edit. Nothing is reconciled and the refusal stands. If this ever passes,
+    the mechanism has stopped proving and started assuming.
+    """
+    _install_content_gate(repo)
+    _feature_branch(repo, {"tracked.txt": "FROM FEATURE" + chr(10)})
+
+    (repo / "tracked.txt").write_text("FROM FEATURE, EDITED" + chr(10), encoding="utf-8")
+
+    with pytest.raises(RefusalError) as caught:
+        robot.merge("feature", reason="a real local edit must not be discarded")
+    assert "would be lost" in str(caught.value) or "NOT what the merge would produce" in str(caught.value)
+    # ⚠ THE BYTES, NOT JUST THE REFUSAL. The edit must still be there.
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "FROM FEATURE, EDITED" + chr(10)

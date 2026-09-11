@@ -1416,6 +1416,66 @@ class GitRobot:
                 reason=reason, target=target)
         return inv
 
+    def _lossless_reconcilable(self, target_rev: str) -> dict:
+        """Colliding paths whose working copy IS ALREADY the merge result. Proven, not asserted.
+
+        ⛔⛔ WHY THIS EXISTS. Measured 2026-09-11: the consumer committed four files through the
+        gate in a worktree (f6a19d2, 11/11 checks green), then could not carry the SHA back --
+        their working tree held copies BYTE-IDENTICAL to what that commit contains, and git
+        refuses a merge that would overwrite local changes REGARDLESS of whether the overwrite
+        would change anything. Git compares against HEAD, never against the merge result. Every
+        exit was a Tier 1 operation this server refuses, and they correctly declined to
+        hand-roll one: "the work provably exists in f6a19d2" is the argument every bypass makes.
+
+        ⭐ THE DIFFERENCE BETWEEN THIS AND A BYPASS IS THAT NOTHING CAN BE LOST, AND IT IS
+        PROVED BY HASH RATHER THAN BELIEVED. Two conditions, per path, both required:
+
+            HEAD:path == BASE:path    HEAD has not touched it since the merge base, so the
+                                      merge takes the TARGET's version wholesale -- which makes
+                                      the target blob the merge RESULT for this path
+            worktree  == TARGET:path  the working copy is ALREADY that result
+
+        When both hold, restoring the path from HEAD and letting the merge write the target blob
+        back is a NET-ZERO CHANGE to the bytes on disk. ⚠ If EITHER fails for ANY path, nothing
+        is reconciled and the refusal stands -- this cannot be aimed at content that would be
+        lost, which is what keeps it from being an `allow_dirty` flag with a longer name.
+        """
+        base = self.git.run(["merge-base", "HEAD", target_rev], timeout=60)
+        if not base.ok:
+            return {"reconcilable": [], "blocked": [], "reason": "no merge base"}
+        base_rev = base.output.strip().splitlines()[0].strip() if base.output.strip() else ""
+        if not base_rev:
+            return {"reconcilable": [], "blocked": [], "reason": "no merge base"}
+
+        def _names(args):
+            r = self.git.run(args, timeout=120)
+            return {ln.strip() for ln in (r.output or "").splitlines() if ln.strip()} if r.ok else set()
+
+        # ⚠ COMPUTED, NOT PARSED OUT OF GIT'S ERROR TEXT. That message is locale-dependent and
+        # its layout is not a contract; the two path sets are.
+        unstaged = _names(["diff", "--name-only"])
+        touched = _names(["diff", "--name-only", "HEAD", target_rev])
+        colliding = sorted(unstaged & touched)
+        if not colliding:
+            return {"reconcilable": [], "blocked": [], "reason": "no colliding paths"}
+
+        def _blob(rev, path):
+            r = self.git.run(["rev-parse", "%s:%s" % (rev, path)], timeout=30)
+            return r.output.strip() if r.ok else None
+
+        ok_paths, blocked = [], []
+        for path in colliding:
+            head_b, base_b, targ_b = _blob("HEAD", path), _blob(base_rev, path), _blob(target_rev, path)
+            wt = self.git.run(["hash-object", "--", path], timeout=30)
+            wt_b = wt.output.strip() if wt.ok else None
+            if head_b and base_b and targ_b and wt_b and head_b == base_b and wt_b == targ_b:
+                ok_paths.append({"path": path, "blob": wt_b})
+            else:
+                blocked.append({"path": path,
+                                "head_is_base": bool(head_b and base_b and head_b == base_b),
+                                "worktree_is_target": bool(wt_b and targ_b and wt_b == targ_b)})
+        return {"reconcilable": ok_paths, "blocked": blocked, "base": base_rev}
+
     def _carried_forward(self, target, *, limit: int = 20) -> dict:
         """What the working tree holds that this operation will NOT commit. A REPORT.
 
@@ -1593,6 +1653,7 @@ class GitRobot:
         # Tim, 2026-09-10: "maybe documentation when files are carried forward at most ..
         # but blocking them... that's bad design."
         carried = self._carried_forward(self.git)
+        reconciled = []
 
         merged = self.git.run(["merge", "--no-ff", "--no-commit", branch], timeout=600)
 
@@ -1647,6 +1708,26 @@ class GitRobot:
                 # ⚠ `self.git`, not `target`: merge acts on the MAIN repo and has no
                 # `target` binding. The first draft used push's variable name -- the
                 # analogue defect in miniature, caught by the test rather than by reading.
+                # ⛔ A FOURTH VARIANT SHARES THE SAME MESSAGE FAMILY: an UNTRACKED file the
+                # merge would CREATE. git says "The following untracked working tree files
+                # would be overwritten by merge" -- not "Your local changes". Its remedy is
+                # neither unstage nor commit: the file is not in git at all, so it must be
+                # moved or deleted. Found 2026-09-11 when a test fixture produced it and the
+                # unstaged-collision text described it wrongly, which is the same defect this
+                # whole branch exists to fix, one variant further out.
+                if "untracked working tree files" in (merged.output or ""):
+                    raise self._refuse(
+                        "merge", args,
+                        f"git refused to merge {branch!r} because UNTRACKED files in the "
+                        f"working tree occupy paths this merge would create. They are not in "
+                        f"git, so nothing has them but the disk. Nothing was merged:"
+                        f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
+                        "Move or delete the named files, then merge again. unstage(...) and "
+                        "commit(...) do not apply -- an untracked file is in neither the index "
+                        "nor HEAD. If you want to KEEP them, move them outside the repository "
+                        "first: this server will not delete an untracked file for you.",
+                        reason=reason,
+                    )
                 index_dirty = not self.git.run(
                     ["diff", "--cached", "--quiet"], timeout=30).ok
                 if index_dirty:
@@ -1662,31 +1743,54 @@ class GitRobot:
                         "are listed in the receipt.",
                         reason=reason,
                     )
+                # ⭐⭐ BEFORE REFUSING: ARE THE COLLIDING COPIES ALREADY THE MERGE RESULT?
+                # If every colliding path is byte-identical to what the merge would write, then
+                # restoring from HEAD and re-merging changes NOTHING on disk -- so refusing
+                # costs the caller the operation and protects no bytes. Proven per path by
+                # hash; if ANY path fails, nothing is touched and the refusal stands.
+                recon = self._lossless_reconcilable(branch)
+                if recon["reconcilable"] and not recon["blocked"]:
+                    paths = [e["path"] for e in recon["reconcilable"]]
+                    restored = self.git.run(["checkout", "HEAD", "--", *paths], timeout=300)
+                    if restored.ok:
+                        merged = self.git.run(
+                            ["merge", "--no-ff", "--no-commit", branch], timeout=600)
+                        in_progress = self.git.run(
+                            ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok
+                        reconciled = recon["reconcilable"]
+                if not merged.ok and not in_progress:
+                    raise self._refuse(
+                        "merge", args,
+                        f"git refused to merge {branch!r} because UNSTAGED changes in the "
+                        f"WORKING TREE collide with paths this merge must update, and their "
+                        f"content is NOT what the merge would produce -- so real edits would "
+                        f"be lost. The index is CLEAN, so unstaging changes nothing. NOT a "
+                        f"content conflict -- no merge was begun:"
+                        f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
+                        "The colliding paths are named above. Either commit those edits so the "
+                        "merge resolves against them -- commit(...) runs the gate, so that is "
+                        "the honest route -- or make the change where their content is not "
+                        "already modified: worktree(action='add') starts from a ref with a "
+                        "clean tree. Unstaging does NOT help here, and neither does retrying: "
+                        "git refuses before beginning, so there is nothing to resolve.",
+                        reason=reason,
+                    )
+            # ⚠ CONDITIONAL, BECAUSE THE RECONCILE ABOVE MAY HAVE RE-RUN THE MERGE SUCCESSFULLY.
+            # The first draft left this raise unconditional, so a reconcile that WORKED still
+            # reported a content conflict -- the fix's own success path falling into the failure
+            # path. Caught by the new test, not by reading.
+            if not merged.ok:
                 raise self._refuse(
                     "merge", args,
-                    f"git refused to merge {branch!r} because UNSTAGED changes in the WORKING "
-                    f"TREE collide with paths this merge must update. The index is CLEAN, so "
-                    f"unstaging changes nothing. NOT a content conflict -- no merge was begun:"
-                    f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
-                    "The colliding paths are named above. Either commit those edits so the "
-                    "merge resolves against them -- commit(...) runs the gate, so that is the "
-                    "honest route -- or make the change where their content is not already "
-                    "modified: worktree(action='add') starts from a ref with a clean tree. "
-                    "Unstaging does NOT help here, and neither does retrying: git refuses "
-                    "before beginning, so there is nothing to resolve.",
+                    f"merging {branch!r} did not apply cleanly, so nothing was merged and the "
+                    f"tree was restored:\n\n{merged.output[-2000:]}",
+                    "Resolve this outside the mechanical path: a conflict is a decision about "
+                    "which content is correct, and gitRobot has no way to make that safely. "
+                    "Take a private checkout — worktree(action='add', ref=<ref>) — resolve "
+                    "there, commit through commit(...) so the gate still runs, and merge the "
+                    "result.",
                     reason=reason,
                 )
-            raise self._refuse(
-                "merge", args,
-                f"merging {branch!r} did not apply cleanly, so nothing was merged and the "
-                f"tree was restored:\n\n{merged.output[-2000:]}",
-                "Resolve this outside the mechanical path: a conflict is a decision about "
-                "which content is correct, and gitRobot has no way to make that safely. "
-                "Take a private checkout — worktree(action='add', ref=<ref>) — resolve "
-                "there, commit through commit(...) so the gate still runs, and merge the "
-                "result.",
-                reason=reason,
-            )
 
         if not in_progress:
             # Nothing was merged, so there is nothing to gate and nothing to commit.
@@ -1694,7 +1798,8 @@ class GitRobot:
                                  detail=merged.output,
                                  extra={"output": merged.output, "ok": True,
                                         "merged": False,
-                                        "carried_forward": carried})
+                                        "carried_forward": carried,
+                                        "reconciled": reconciled})
 
         gate = self.gates.run("pre-commit")
         gate_records = [gate.record()]
@@ -1723,7 +1828,8 @@ class GitRobot:
                              gates=gate_records, reason=reason, detail=result.output,
                              extra={"output": merged.output + result.output,
                                     "ok": result.ok, "merged": True,
-                                    "carried_forward": carried})
+                                    "carried_forward": carried,
+                                    "reconciled": reconciled})
 
     def rebase(self, onto: str, *, reason: str) -> dict:
         """Rebase HEAD onto another ref. Refused while dirty, AND refused when it
