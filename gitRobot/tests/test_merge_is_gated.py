@@ -363,3 +363,44 @@ def test_the_arc_round_bump_survives_a_gated_merge_uncommitted(robot, repo):
     assert '"round": 0' in committed, (
         "the merge commit swept in the local round bump — the arc file's whole contract is "
         "'differs locally, never commits'")
+
+
+def test_an_unstaged_collision_is_not_reported_as_a_dirty_index(robot, repo):
+    """⛔⛔ THE THIRD CASE, FOUND BY THE CONSUMER ~1h AFTER THE DIRTY-TREE BLOCK CAME OUT.
+
+    They unstaged everything -- `staged: 0`, from a gitRobot receipt ONE CALL EARLIER -- merged,
+    and were told "the INDEX is dirty" with the remedy "clear the index and merge again", which
+    is the thing they had just done. A false cause and a no-op remedy that loops.
+
+    ⚠ MY OWN CHANGE MADE IT REACHABLE. Relaxing the block invites merging with a dirty tree,
+    which is exactly when this fires.
+
+    THREE CASES SHARE ONE GIT MESSAGE and the first version of the classifier modelled two:
+
+        STAGED change, unrelated path      diff --cached DIRTY   commit or unstage
+        UNSTAGED change, path the merge    diff --cached CLEAN   unstaging is a NO-OP; the
+        must update                                              collision is with the WORKING
+                                                                 TREE, refused before starting
+        real content conflict              MERGE_HEAD present    decide it in a checkout
+
+    Both of the first two print "Your local changes ... would be overwritten by merge" and
+    neither leaves a MERGE_HEAD, so reading the text cannot separate them. The INDEX can.
+    """
+    _install_content_gate(repo)
+    _feature_branch(repo, {"shared.txt": "FROM FEATURE" + chr(10)})
+
+    # An UNSTAGED edit to the very path the merge must update. Index stays clean.
+    (repo / "shared.txt").write_text("LOCAL EDIT" + chr(10), encoding="utf-8")
+
+    with pytest.raises(RefusalError) as caught:
+        robot.merge("feature", reason="unstaged collision")
+
+    msg = str(caught.value)
+    alt = caught.value.alternative or ""
+    assert "index is CLEAN" in msg, (
+        "the refusal must not claim a dirty index when the index is clean: %s" % msg[:200])
+    assert "INDEX is dirty" not in msg, "misclassified as the staged case"
+    # ⛔ THE REMEDY MUST NOT BE THE THING THE CALLER ALREADY DID.
+    assert "unstaging changes nothing" in msg.lower() or "does NOT help" in alt, (
+        "the remedy must say unstaging is a no-op here, or a caller loops on it")
+    assert "worktree" in alt and "commit" in alt, "the two real exits must be named"

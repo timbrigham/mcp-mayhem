@@ -401,16 +401,20 @@ async def switch(branch: str, create: bool = False, reason: Optional[str] = None
 async def merge(branch: str, reason: str) -> ReceiptResult:
     """Merge a branch into HEAD (--no-ff). Reason required; gated like any other commit.
 
-    ⭐ A DIRTY TREE DOES NOT BLOCK THIS. Uncommitted work is carried forward untouched and
-    NAMED in the receipt's `carried_forward`, split into `expected_local` and
-    `uncommitted_work`. Documenting what rode along beats refusing the operation, and git
-    already refuses the case that would actually lose anything.
+    ⭐ A DIRTY TREE DOES NOT BLOCK THIS. Uncommitted work is carried forward and NAMED in the
+    receipt's `carried_forward`, split into `expected_local` and `uncommitted_work`.
+    Documenting what rode along beats refusing the operation.
 
-    ⚠ A STAGED change IS refused -- by GIT, not by gitRobot -- because `--no-commit` would
-    sweep the index into the merge commit. That refusal is reported separately from a content
-    conflict: a dirty index needs commit(...) or unstage(...), a conflict needs a decision in
-    a private checkout, and handing a caller the wrong one sends them to resolve a conflict
-    that does not exist.
+    ⚠ CARRIED FORWARD MEANS PATHS THIS MERGE DOES NOT TOUCH. Git refuses the two cases that
+    could lose work, and they need DIFFERENT remedies, so the refusal says which:
+      · STAGED content            `--no-commit` would sweep the index into the merge commit.
+                                  commit(...) it or unstage(paths=[...]), then merge again.
+      · UNSTAGED edits to a path  the index is CLEAN, so unstaging is a NO-OP. Commit the
+        the merge must update     edits, or work from worktree(action='add'). Retrying does
+                                  not help: git refuses before the merge begins.
+      · a real content CONFLICT   decide it in a private checkout; gitRobot cannot choose.
+    All three are distinguished by the server, because the first two print the SAME git
+    message and handing a caller the wrong remedy sends them somewhere there is nothing to do.
 
     ⚠ `switch`, `rebase` and `squash` still refuse a dirty tree. They move you to another
     branch or rewrite history under your working tree; a merge leaves you where you were.

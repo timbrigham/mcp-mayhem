@@ -1443,6 +1443,9 @@ class GitRobot:
             "truncated": len(expected) > limit or len(work) > limit,
             "note": ("These paths were in the working tree and are NOT part of what this "
                      "operation recorded or published. "
+                     "⚠ For a MERGE, carrying forward is a statement about paths the merge does NOT "
+                     "touch: an unstaged change to a path the merge must update makes "
+                     "git refuse before it begins. "
                      "`expected_local` matched the expected-local-state convention; "
                      "`uncommitted_work` did not, and is work that is still uncommitted."),
         }
@@ -1621,16 +1624,56 @@ class GitRobot:
             # again. Handing the conflict advice to a staged file sends the caller to resolve
             # a conflict that does not exist.
             if "would be overwritten by merge" in (merged.output or "") and not in_progress:
+                # ⛔⛔ THREE CASES SHARE ONE GIT MESSAGE AND THE FIRST VERSION MODELLED TWO.
+                # Found by the ZeroParadox session ~1h after the dirty-tree block was removed,
+                # with the refusal body: they unstaged everything (`staged: 0`, from a receipt
+                # ONE CALL EARLIER), merged, and were told THE INDEX IS DIRTY and to "clear the
+                # index" -- which they had just done. The named cause was false and the remedy
+                # was a no-op that loops.
+                #
+                # ⚠ AND MY OWN CHANGE MADE IT REACHABLE: relaxing the dirty-tree block invites
+                # merging with a dirty tree, which is exactly when this fires. The fix admitted
+                # the defect.
+                #
+                # THE DISCRIMINATOR IS THE INDEX ITSELF, NOT THE MESSAGE TEXT. Measured in a
+                # scratch repo 2026-09-11:
+                #   STAGED change, unrelated path   -> diff --cached DIRTY -> commit or unstage
+                #   UNSTAGED change to a path the merge MUST UPDATE
+                #                                   -> diff --cached CLEAN -> unstaging is a
+                #                                      no-op; the collision is with the WORKING
+                #                                      TREE and git refuses before starting
+                # Both print "Your local changes ... would be overwritten by merge" and neither
+                # leaves a MERGE_HEAD, so the text alone cannot separate them.
+                # ⚠ `self.git`, not `target`: merge acts on the MAIN repo and has no
+                # `target` binding. The first draft used push's variable name -- the
+                # analogue defect in miniature, caught by the test rather than by reading.
+                index_dirty = not self.git.run(
+                    ["diff", "--cached", "--quiet"], timeout=30).ok
+                if index_dirty:
+                    raise self._refuse(
+                        "merge", args,
+                        f"git refused to merge {branch!r} because the INDEX is dirty -- staged "
+                        f"content that --no-commit would sweep into the merge commit. NOT a "
+                        f"content conflict, and nothing was merged:"
+                        f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
+                        "commit(...) the staged work if it belongs on this branch, or "
+                        "unstage(paths=[...]) if it does not, then merge again. Unstaged "
+                        "changes to paths this merge does NOT touch are carried forward and "
+                        "are listed in the receipt.",
+                        reason=reason,
+                    )
                 raise self._refuse(
                     "merge", args,
-                    f"git refused to merge {branch!r} because the INDEX is dirty. This is NOT "
-                    f"a content conflict and nothing was merged:\n\n"
-                    f"{merged.output[-2000:]}",
-                    "Clear the index and merge again: commit(...) the staged work if it "
-                    "belongs on this branch, or unstage(paths=[...]) if it does not. "
-                    "UNSTAGED changes do NOT block a merge and are carried forward -- only "
-                    "STAGED ones do, because --no-commit would sweep them into the merge "
-                    "commit. A successful merge receipt lists what was carried.",
+                    f"git refused to merge {branch!r} because UNSTAGED changes in the WORKING "
+                    f"TREE collide with paths this merge must update. The index is CLEAN, so "
+                    f"unstaging changes nothing. NOT a content conflict -- no merge was begun:"
+                    f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
+                    "The colliding paths are named above. Either commit those edits so the "
+                    "merge resolves against them -- commit(...) runs the gate, so that is the "
+                    "honest route -- or make the change where their content is not already "
+                    "modified: worktree(action='add') starts from a ref with a clean tree. "
+                    "Unstaging does NOT help here, and neither does retrying: git refuses "
+                    "before beginning, so there is nothing to resolve.",
                     reason=reason,
                 )
             raise self._refuse(
