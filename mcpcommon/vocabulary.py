@@ -354,12 +354,60 @@ CLAIM_FIELDS = {
         "work of an assertion and cannot go false."),
 }
 
+# ⭐⭐ THE SIXTH TABLE, AND IT IS THE AXIS EVERY CONFUSION OF 2026-09-10/11 TURNED ON.
+# Tim: "I think I was just getting clean up on working tree versus head."
+#
+# ⛔ THREE DIFFERENT OBJECTS ARE IN PLAY AT ALL TIMES and English calls all three "the files".
+# A claim like "the tree is clean", "it is blocked", or "that file is fine" is UNFALSIFIABLE
+# until it says WHICH. Measured instances, all in ~24 hours, all the same shape:
+#
+#   "a dirty tree blocks a push"       WORKING TREE asserted; push keys to HEAD. Twice relayed.
+#   check_figures blocked a commit     it read the WORKING TREE; the commit carries the INDEX
+#   the FAIL could not be recorded     it indicted WORKING TREE bytes; subjects key to a REF
+#   "merge is refused while dirty"     true of the WORKING TREE until it was not; HEAD unmoved
+#   record.py "modified in the worktree since it was staged"   WORKING TREE vs INDEX, exactly
+#
+# ⭐ THE PRINCIPLE WAS ALREADY WRITTEN, ONCE, IN ONE COMMENT -- gitRobot engine.py: "Read from
+# the index (`:path`), never the working tree -- the question is what a commit would carry."
+# That is the whole rule and it had no canonical home, so it could not be cited, only re-derived.
+TREE_OBJECTS = {
+    "working_tree": (
+        "THE BYTES ON DISK RIGHT NOW. What an editor shows and what any process that opens the "
+        "file reads. ⭐ IT IS THE OPERATIVE OBJECT FOR ANYTHING READ AT RUNTIME: a spawned agent "
+        "reads its brief from DISK, not from the index, so a gate over agent-read files must "
+        "examine this one or it is blind where its subject lives. ⛔ IT IS NOT WHAT A COMMIT "
+        "CARRIES. A finding here can be entirely real and still concern bytes that are in no "
+        "commit and no push. Fleet operations that key to it: gitRobot's dirty-tree guard for "
+        "switch/rebase/squash, and `carried_forward` on a merge receipt - which REPORTS and "
+        "does not block."),
+    "index": (
+        "WHAT A COMMIT WOULD CARRY - the staged content, `git show :<path>`. ⛔ THE QUESTION A "
+        "COMMIT GATE IS ACTUALLY ASKING, and the reason gitRobot reads `:path` rather than the "
+        "file. Fleet operations that key to it: `ledger_subjects(ref='INDEX')` - the DEFAULT, so "
+        "a verdict's subjects are index blobs unless a caller says otherwise - and the staged "
+        "arc-round read. ⚠ A path whose working tree differs from its index cannot be a subject: "
+        "the ledger refuses to let a verdict, or an indictment, travel to bytes that are not at "
+        "the ref. ⭐ AND GIT ITSELF FENCES THIS ONE: a merge over a dirty INDEX is refused by "
+        "git, because `--no-commit` would sweep the index into the merge commit; a merge over "
+        "unstaged changes is allowed, because they are not in it."),
+    "head": (
+        "THE LAST COMMIT - what is already recorded, and what a push PUBLISHES. ⛔ UNCOMMITTED "
+        "WORK IS IN NONE OF IT, which is why a dirty working tree is irrelevant to a push and "
+        "why gitRobot has never gated a push on tree state. Fleet operations that key to it: "
+        "`_require_inventory`, which refuses a push unless the ledger is green for the EXACT "
+        "HEAD hash, and every audit receipt's `head` field. ⚠ THE COMMONEST ERROR IN THIS "
+        "FLEET IS PRICING ONE OF THESE THREE AND NAMING ANOTHER: a verdict recorded against "
+        "INDEX blobs does not describe HEAD, and a push evaluates HEAD - so recording while "
+        "the index and HEAD disagree produces rows that read STALE, correctly, and refuse."),
+}
+
 VOCABULARIES = {
     "error_type": ERROR_TYPES,
     "decision": DECISIONS,
     "row_status": ROW_STATUSES,
     "exit_code": EXIT_CODES,
     "claim_field": CLAIM_FIELDS,
+    "tree_object": TREE_OBJECTS,
 }
 
 

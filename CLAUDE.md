@@ -115,6 +115,40 @@ label beside it would make the next reader's arithmetic wrong by an hour in Dece
 value displayed next to a misleading label is one reader away from `DC-44`** — the same shape as
 a record id sitting next to a step name, which is what the whole 2026-09-09 arc was pulling on.
 
+## WORKING TREE, INDEX, HEAD — SAY WHICH, BECAUSE ENGLISH CALLS ALL THREE "THE FILES"
+
+⭐⭐ Tim, 2026-09-11: *"I think I was just getting clean up on working tree versus head."* That
+was the axis under EVERY cross-session confusion of 2026-09-10/11, and it is now published as
+`tree_object` through `vocabulary()` and `docs://*/vocabulary`.
+
+⛔ **A CLAIM LIKE "THE TREE IS CLEAN", "IT IS BLOCKED", OR "THAT FILE IS FINE" IS UNFALSIFIABLE
+UNTIL IT SAYS WHICH OF THE THREE.** Measured instances, all within ~24 hours, all one shape:
+
+    "a dirty tree blocks a push"      WORKING TREE asserted; push keys to HEAD. Relayed TWICE.
+    check_figures blocked a commit    it read the WORKING TREE; a commit carries the INDEX
+    the FAIL could not be recorded    it indicted WORKING TREE bytes; subjects key to a REF
+    "merge is refused while dirty"    true of the WORKING TREE until it was not; HEAD unmoved
+    record.py "modified in the worktree since it was staged"    WORKING TREE vs INDEX, exactly
+
+    working_tree   the bytes on disk NOW. What a spawned agent reads its brief from — so a gate
+                   over agent-read files must examine THIS or it is blind where its subject
+                   lives. NOT what a commit carries.
+    index          WHAT A COMMIT WOULD CARRY (`git show :<path>`). `ledger_subjects` DEFAULTS
+                   here, so a verdict's subjects are index blobs unless the caller says
+                   otherwise. Git fences it: a merge over a dirty INDEX is refused BY GIT.
+    head           the last commit — what a push PUBLISHES. `_require_inventory` keys to the
+                   EXACT HEAD hash, which is why a dirty tree is irrelevant to a push.
+
+⭐ **THE PRINCIPLE WAS ALREADY WRITTEN, ONCE, IN ONE COMMENT** — `gitRobot/core/engine.py`:
+*"Read from the index (`:path`), never the working tree — the question is what a commit would
+carry."* It had no canonical home, so it could not be CITED, only re-derived. That is the whole
+argument for publishing it: a rule with one copy in a comment is a rule nobody downstream can
+point at.
+
+⚠ **AND THE COMMONEST ERROR IS PRICING ONE AND NAMING ANOTHER.** A verdict recorded against
+INDEX blobs does not describe HEAD, and a push evaluates HEAD — so recording while the index and
+HEAD disagree produces rows that read STALE, correctly, and refuse.
+
 ## A CLAIM IS NOT A MEASUREMENT UNTIL IT NAMES ITS OBJECT, INSTRUMENT, SCOPE AND PROVENANCE
 
 ⭐⭐ Tim, 2026-09-10: *"shouldn't you be able to standardize this? I mean quite frankly that's
