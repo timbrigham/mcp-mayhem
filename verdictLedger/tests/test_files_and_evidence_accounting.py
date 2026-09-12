@@ -663,3 +663,72 @@ def test_an_unbarred_step_is_untouched_but_disclosed(tmp_path, config_dir):
         "no declared bar must change nothing — this is the non-breaking half")
     unbarred = {u["step"] for u in led.config.coverage_unbarred}
     assert "check_prose" in unbarred, "but the absence must be NAMED on policy()"
+
+
+def test_evidence_citing_an_APPROVED_blob_is_not_stale(ledger):
+    """⛔⛔ TWO RULES, EACH RIGHT ALONE, WHOSE CONJUNCTION WAS UNSATISFIABLE.
+
+    `evidence_stale` compared the evidence blob ONLY against the blob AT THE REF. `V16c`
+    compares it against `approved_modules`. Where a checker has moved since the ref, those
+    are DIFFERENT VALUES and no record could satisfy both:
+
+        evidence cites the blob at the ref  ->  matches here, V16c REFUSES the append
+        evidence cites the approved blob    ->  appends, and this still counted it stale
+
+    Measured on a live block 2026-09-11/12: `guards@e730a049` sat at 16/17 with an
+    `evidence_stale: 1` that no ordinary record could discharge. The ZeroParadox session
+    characterised it correctly, I talked them out of it with the wrong instrument
+    (`validate` sees V1-V21; `evidence_stale` is resolution-time and V1-V21 never sees it),
+    and they proved it by appending a conforming record that did not heal.
+
+    ⭐ THE QUESTION THIS FIELD IS FOR is "has the PRODUCER changed, so the verdict may no
+    longer hold" -- not "would the pipeline have done this at that commit". A record citing
+    the CURRENT APPROVED checker is the strongest evidence available, not stale evidence.
+    """
+    step = "pdf_coupling"
+    spec = (ledger.config.required.get("types") or {}).get(step)
+    assert isinstance(spec, dict), "fixture assumption moved: %r has no spec" % step
+
+    # Pin the step to an APPROVED build that is NOT the blob at this ref.
+    spec = dict(spec)
+    spec["module"] = "tools/verify/common.py"
+    spec["approved_modules"] = ["APPROVED"]
+    types = dict(ledger.config.required.get("types") or {})
+    types[step] = spec
+    ledger.config.required["types"] = types
+
+    # At the ref the producer is OLD; the record cites the APPROVED build.
+    files = {"one.pdf": "p1", "tools/verify/common.py": "OLD_AT_REF"}
+    inv = _pdfish(ledger, files, subjects=[("one.pdf", "p1")],
+                  evidence=[("tools/verify/common.py", "APPROVED")])
+    row = next(r for r in inv["rows"] if r["step"] == step)
+
+    assert row["evidence_stale"] == 0, (
+        "a record citing the APPROVED producer must not read as stale merely because the "
+        "ref carries an older build -- that is the unsatisfiable pair")
+    assert row["evidence_moved"] == []
+
+
+def test_evidence_citing_an_UNAPPROVED_blob_is_still_stale(ledger):
+    """⛔ THE CONTROL, AND IT IS WHAT KEEPS THE FIX FROM BEING 'NEVER STALE'.
+
+    Only an APPROVED blob earns the exemption. A record citing some other build -- neither
+    the ref's nor an approved one -- must still stale the row, or `evidence_stale` has
+    stopped detecting the thing it exists for and the gate quietly stops noticing.
+    """
+    step = "pdf_coupling"
+    spec = dict((ledger.config.required.get("types") or {}).get(step) or {})
+    spec["module"] = "tools/verify/common.py"
+    spec["approved_modules"] = ["APPROVED"]
+    types = dict(ledger.config.required.get("types") or {})
+    types[step] = spec
+    ledger.config.required["types"] = types
+
+    files = {"one.pdf": "p1", "tools/verify/common.py": "OLD_AT_REF"}
+    inv = _pdfish(ledger, files, subjects=[("one.pdf", "p1")],
+                  evidence=[("tools/verify/common.py", "SOME_OTHER_BUILD")])
+    row = next(r for r in inv["rows"] if r["step"] == step)
+
+    assert row["evidence_stale"] == 1, (
+        "an UNAPPROVED, non-matching producer must still stale the row")
+    assert row["evidence_moved"] == ["tools/verify/common.py"]

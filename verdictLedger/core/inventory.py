@@ -522,13 +522,52 @@ def build(*, config, records, action: str, files: dict,
         # phantom SUBJECT (wrong, and it would misreport which content moved)? Merged
         # into one bucket the two were indistinguishable in the row. They are counted
         # apart now, and the `why` says which one it was.
+        # ⭐⭐ EVIDENCE CITING AN **APPROVED** BLOB IS NOT STALE, AND UNTIL 2026-09-12 IT WAS.
+        # This compared the evidence blob ONLY against `files[path]` -- the blob AT THIS REF --
+        # while `V16c` compares it against `approved_modules`. Where the checker has moved
+        # since the ref, those are DIFFERENT VALUES and NO RECORD CAN SATISFY BOTH:
+        #
+        #     evidence cites the blob at the ref  ->  matches here, V16c REFUSES the append
+        #     evidence cites the approved blob    ->  appends, and this still counted it stale
+        #
+        # Measured on a live block 2026-09-11/12: `guards@e730a049` sat at 16/17 with
+        # `evidence_stale: 1` that no ordinary record could discharge. ⛔ Each rule was right
+        # alone; their CONJUNCTION was unsatisfiable, which is the failure mode a rule cannot
+        # detect about itself.
+        #
+        # ⚠ AND THE REMEDY TEXT MADE IT WORSE by naming an outcome the procedure cannot
+        # produce -- "the fresh record will cite the current checker". A checker derives its
+        # repo from `__file__`, so it always reads the tree it LIVES in: placing the current
+        # build in a worktree at an old ref makes it differ from that ref, and running the
+        # worktree's own copy cites the old blob. Unreachable by construction, not merely
+        # awkward. Found by the ZeroParadox session, whose layer owns that half.
+        #
+        # ⭐ THE QUESTION THIS FIELD IS FOR is "has the PRODUCER changed, so the verdict may no
+        # longer hold" -- not "would the pipeline have done this at that commit". A record
+        # citing the CURRENT APPROVED checker is the strongest evidence available, not stale
+        # evidence. So an approved blob counts as fresh no matter which ref it is read at.
+        _approved_blobs = set()
+        _spec_ev = (config.required.get("types") or {}).get(step)
+        if isinstance(_spec_ev, dict):
+            _a = _spec_ev.get("approved_modules")
+            if isinstance(_a, str):
+                _approved_blobs = {_a}
+            elif _a:
+                _approved_blobs = set(_a)
+
         ev_stale, ev_moved = 0, []
         for path in sorted(ev_set):
             if path not in files:
                 continue
-            if (step, path, files[path]) not in ev_content:
-                ev_stale += 1
-                ev_moved.append(path)
+            if (step, path, files[path]) in ev_content:
+                continue
+            # ⚠ Approved-and-cited counts as fresh. `ev_content` holds (step, path, blob) for
+            # every blob any record cited, so this asks whether SOME record cited an approved
+            # build of this producer -- never whether one merely exists.
+            if any((step, path, _b) in ev_content for _b in _approved_blobs):
+                continue
+            ev_stale += 1
+            ev_moved.append(path)
 
         record = covered_rec or stale_rec
         legacy_hit = next((legacy_tips[(step, p)] for p in files
