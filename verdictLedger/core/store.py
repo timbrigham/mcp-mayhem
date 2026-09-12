@@ -25,10 +25,12 @@ plain `def` and a hard-threshold wait trips the supervisor precisely.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -56,6 +58,22 @@ class Store:
         # grown a shape — that counter is ONE GLOBAL INTEGER and cannot say which step, which
         # rule, or when.
         self._refusals_path = Path(str(self.path) + ".refusals.json")
+        # ⛔⛔ APPEND-ONLY WAS A PROPERTY OF THE TOOLING AND NOT OF THE FILE, AND NOTHING SAID SO.
+        # Measured 2026-09-12: this server had NO tamper detection of any kind -- no hash chain,
+        # no per-record digest, no file hash. `invalid_appends` counts REFUSED APPENDS, not
+        # edits. So an out-of-band edit to `records.jsonl` was invisible here, while `sjv` -- a
+        # JSON store sitting beside it -- has caught exactly that since it was built.
+        #
+        # ⭐ Tim, 2026-09-12, correcting me after I called an append irreversible: "Append being
+        # permanent is true only in so far as the logic itself goes... These are still json
+        # files and editable outside the core tooling. Not something I suggest in general but
+        # for an emergency flaw restoration, I'm not 100% opposed." **That is exactly why the
+        # detector is worth having and the preventer is not**: the escape hatch stays open, and
+        # using it stops being silent.
+        #
+        # ⚠ DETECTION, NOT PREVENTION -- sjv's own framing, and the honest one. Nothing here can
+        # stop a text editor. What it can do is refuse to keep saying "healthy" afterwards.
+        self._integrity_path = Path(str(self.path) + ".integrity.json")
 
     # -- reading ---------------------------------------------------------------
 
@@ -242,7 +260,72 @@ class Store:
             raise Unavailable(f"could not append to {self.path}: {exc}") from exc
         finally:
             self._lock.release()
+        self._stamp_integrity()
         return record
+
+    # -- integrity -------------------------------------------------------------
+
+    def _file_sha(self) -> Optional[str]:
+        """SHA-256 of the stream as it is on disk right now, or None if absent."""
+        if not self.path.exists():
+            return None
+        h = hashlib.sha256()
+        with open(self.path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _stamp_integrity(self) -> None:
+        """Record the stream's hash after a write we made. Best effort by design.
+
+        ⚠ A FAILED STAMP MUST NOT FAIL THE APPEND. The verdict is already durably on disk and
+        fsynced; losing the sidecar costs a later comparison, while raising here would throw
+        away a record that was accepted. `verify_integrity` renders a missing stamp as its own
+        state rather than as agreement.
+        """
+        try:
+            self._integrity_path.write_text(json.dumps({
+                "sha256": self._file_sha(),
+                "records": sum(1 for _ in self._iter()),
+                # ⚠ UTC WITH AN EXPLICIT OFFSET, like every timestamp this fleet
+                # writes. `ledger.py:_now()` is the same expression; it is not
+                # imported because `ledger` imports `store` and the cycle is worse
+                # than the duplication of one stdlib call.
+                "stamped": datetime.now(timezone.utc).isoformat(),
+            }, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def verify_integrity(self) -> dict:
+        """Compare the stream on disk against the hash stamped after the last append.
+
+        ⛔ THREE OUTCOMES, AND "NEVER STAMPED" IS NOT "MATCHES". A stream that predates this
+        detector has no baseline, and reporting that as agreement would be absence rendering as
+        success -- the defect this whole server exists to remove. It renders as `unstamped`,
+        which is neither healthy nor tampered, and one append fixes it.
+        """
+        live = self._file_sha()
+        if live is None:
+            return {"state": "absent", "sha256": None, "expected": None,
+                    "note": "no stream on disk yet; nothing to compare."}
+        try:
+            doc = json.loads(self._integrity_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"state": "unstamped", "sha256": live, "expected": None,
+                    "note": ("no integrity baseline has been written -- this stream predates "
+                             "the detector, or the sidecar was removed. NOT a statement that "
+                             "the stream is unmodified. The next append stamps it.")}
+        expected = doc.get("sha256")
+        if expected == live:
+            return {"state": "matches", "sha256": live, "expected": expected,
+                    "stamped": doc.get("stamped"), "records": doc.get("records")}
+        return {"state": "MODIFIED", "sha256": live, "expected": expected,
+                "stamped": doc.get("stamped"),
+                "note": ("the stream on disk differs from the hash stamped after the last "
+                         "append. Something wrote to it other than this server. That may be "
+                         "deliberate -- it is still not a thing the ledger did, and every "
+                         "verdict read from here is now a claim about bytes this server did "
+                         "not write.")}
 
     # -- health ----------------------------------------------------------------
 
@@ -270,8 +353,21 @@ class Store:
             probe.unlink()
         except OSError as exc:
             problems.append(f"stream directory is not writable: {exc}")
+        # ⛔⛔ A MODIFIED STREAM MUST BREAK `healthy`, NOT SIT BESIDE IT AS A FIELD NOBODY READS.
+        # `writable` and `healthy` are kept SEPARATE on purpose: the directory being writable is
+        # still true when the stream has been edited out of band, and reporting healthy over
+        # bytes this server did not write is the exact shape of every defect logged here.
+        # ⚠ `unstamped` does NOT break health -- it is the honest state of a stream that
+        # predates the detector, and treating "I have no baseline" as "you were tampered with"
+        # would be its own false claim. It is reported and it does not alarm.
+        integrity = self.verify_integrity()
+        if integrity.get("state") == "MODIFIED":
+            problems.append(
+                "the stream on disk does not match the hash stamped after the last append — "
+                "something wrote to records.jsonl other than this server")
         return {
             "records": count,
+            "integrity": integrity,
             "last_append": (last or {}).get("run", {}).get("started") if last else None,
             "schema": schema.SCHEMA_ID,
             "invalid_appends": self.invalid_appends,

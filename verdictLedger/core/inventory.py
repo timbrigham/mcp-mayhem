@@ -1504,9 +1504,25 @@ def heal_plan(*, config, records, action: str, files: dict, admission: list) -> 
                 "turn a review into a rubber stamp.")
             agent.append(entry)
         else:
+            # ⛔⛔ THIS PARENTHETICAL USED TO PROMISE SOMETHING NO PROCEDURE CAN PRODUCE:
+            # "its evidence moved, so the fresh record will cite the current checker". A
+            # checker derives its repo from `__file__`, so it ALWAYS reads the tree it lives
+            # in -- placing the current build in a worktree at an older ref makes it differ
+            # from that ref, and running the worktree's own copy cites the OLD blob. It was
+            # not merely false at an intermediate ref, it was UNREACHABLE BY CONSTRUCTION,
+            # for a reason in the consumer's layer. Found by the ZeroParadox session
+            # 2026-09-11 after it cost them a blocked push and a wasted heal attempt.
+            #
+            # ⭐ A REMEDY NAMING AN UNREACHABLE SUCCESS CONDITION IS THE ONE THING THE
+            # REFUSAL CONTRACT FORBIDS OUTRIGHT: could a reader construct a passing next
+            # attempt from this alone? There, no -- every attempt led back to the same wall.
+            # It now says WHERE to stand, which is the part that was missing.
             entry["heals_by"] = (
                 "re-running the checker at this basis and recording the result"
-                + (" (its evidence moved, so the fresh record will cite the current checker)"
+                + (" — its PRODUCER moved, so run the APPROVED build and let the record cite "
+                   "that blob. A checker reads the tree it lives in, so this cannot be done "
+                   "by re-running the copy sitting at this ref; a record citing an approved "
+                   "producer is fresh no matter which ref it was read at."
                    if row.get("evidence_stale") else ""))
             auto.append(entry)
 

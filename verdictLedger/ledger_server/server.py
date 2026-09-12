@@ -51,7 +51,7 @@ from ledger_server.results import (  # noqa: E402
     AppendResult, CanPushResult, CoverageGapResult, CoverageResult, CrossrefResult,
     FindResult, GenesisResult, GetResult, HealPlanResult, InventoryResult,
     PolicyResult, ProgressResult, RenderResult, RequirementsResult, SignalsResult,
-    StatusResult, ValidateResult, VocabularyResult)
+    StatusResult, ValidateResult, VerifyIntegrityResult, VocabularyResult)
 
 from core import canpush as canpush_mod
 from core import crossref as crossref_mod
@@ -868,8 +868,41 @@ async def status() -> StatusResult:
     genesis floor, and the steps whose latest verdict is UNDECIDED.
 
     ⚠ Must never report healthy while writes are failing — it proves the stream is
-    readable AND the directory writable, not merely that rows exist."""
+    readable AND the directory writable, not merely that rows exist.
+
+    ⭐ `integrity` compares the stream on disk against the hash stamped after the last
+    append. `MODIFIED` breaks `healthy`: something wrote to records.jsonl other than this
+    server, and every verdict read from it is then a claim about bytes the ledger did not
+    write. `unstamped` is its own state — a stream predating the detector has no baseline,
+    and calling that agreement would be absence rendering as success. DETECTION, NOT
+    PREVENTION: nothing here stops a text editor, it only stops the server saying healthy
+    afterwards."""
     return await _guard(_ledger().status)
+
+
+@mcp.tool(title='Verify the stream was not edited out of band',
+          annotations=ToolAnnotations(title='Verify the stream was not edited out of band', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def verify_integrity() -> VerifyIntegrityResult:
+    """Does records.jsonl still match the hash stamped after the last append?
+
+    ⛔ THIS SERVER HAD NO TAMPER DETECTION OF ANY KIND UNTIL 2026-09-12 — no hash chain, no
+    per-record digest, no file hash. `invalid_appends` counts REFUSED APPENDS, never edits.
+    So an out-of-band edit was invisible here, while `sjv` — a JSON store beside it — has
+    caught exactly that since it was built. The server whose whole value is an append-only
+    audit stream had less integrity checking than the store next door.
+
+    THREE STATES, and the third is the one that matters most:
+      matches    the stream is byte-for-byte what this server last wrote
+      MODIFIED   it is not. Something else wrote to it. `status().healthy` goes false.
+      unstamped  no baseline exists — a stream predating the detector, or a removed
+                 sidecar. ⚠ NOT a statement that the stream is unmodified. One append
+                 stamps it.
+
+    ⚠ DETECTION, NOT PREVENTION, and deliberately so. `records.jsonl` is a file and a file
+    can be edited; append-only is a property of the TOOLING, not of the bytes. Keeping the
+    escape hatch open and making its use visible is a better trade than a lock nobody can
+    open in an emergency."""
+    return await _guard(_ledger().verify_integrity)
 
 
 

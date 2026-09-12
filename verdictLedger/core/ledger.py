@@ -378,6 +378,14 @@ class Ledger:
             out.append(r)
         return {"count": len(out), "returned": len(out[:limit]), "records": out[:limit]}
 
+    def verify_integrity(self) -> dict:
+        """Has anything written to the stream other than this server?
+
+        ⚠ A READ, and it says so: it compares bytes and changes nothing. The facade exists
+        because `store` is not the public surface -- the same reason `status` sits here.
+        """
+        return self.store.verify_integrity()
+
     def status(self) -> dict:
         health = self.store.health()
         genesis = self.store.genesis()

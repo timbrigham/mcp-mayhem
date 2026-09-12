@@ -302,3 +302,19 @@ class VocabularyResult(Result, total=False):
     error_type: str
     error: str
     satisfied_when: str
+
+
+class VerifyIntegrityResult(Result, total=False):
+    """Whether the stream on disk is what this server last wrote.
+
+    ⚠ `state` is the field to branch on, never the presence of `expected`: an `unstamped`
+    stream has no expected hash, and reading that absence as agreement is the defect this
+    tool exists to remove.
+    """
+
+    state: str          # "matches" | "MODIFIED" | "unstamped" | "absent"
+    sha256: Any         # the stream's hash right now, or None when there is no stream
+    expected: Any       # the hash stamped after the last append, or None when unstamped
+    stamped: str        # UTC, with offset
+    records: int        # row count at stamp time
+    note: str
