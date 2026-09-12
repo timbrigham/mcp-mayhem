@@ -397,7 +397,18 @@ CLAIM_FIELDS = {
         "was re-derived correctly and its CONSEQUENCE was inherited unchecked, and the "
         "inherited half became a recommendation to widen a permission surface. ⭐ Outcome never "
         "retroactively upgrades evidence: a question carrying a discriminating test does the "
-        "work of an assertion and cannot go false."),
+        "work of an assertion and cannot go false. "
+        "⛔⛔ AND A PROVENANCE CLAIM NEEDS THE PROVENANCE RECORD, NEVER THE DIFF. A field "
+        "present in one commit and absent in another is a fact about BYTES and says nothing "
+        "about whether anyone CHOSE it. ⚠ Measured 2026-09-11 by the ZeroParadox session, who "
+        "retracted it themselves: they diffed two blobs, found fields that had 'come back' "
+        "after a migration, and reported an accidental leak -- the word `came back` asserting "
+        "recurrence. The commit's own subject line said 'Commit the arc counter so its reset is "
+        "on the record, not in the tree'. Deliberate, single file, reason stated. They had the "
+        "SHA and never asked what the commit SAID. ⭐ INFERRING INTENT FROM STATE IS THE SAME "
+        "SHAPE AS READING A TOOL'S BEHAVIOUR OFF ITS ANALOGUE: both substitute a thing you can "
+        "see for the thing you are claiming. The record of a decision is the only evidence that "
+        "a decision was made, and it is usually one command away."),
 }
 
 # ⭐⭐ THE SIXTH TABLE, AND IT IS THE AXIS EVERY CONFUSION OF 2026-09-10/11 TURNED ON.
