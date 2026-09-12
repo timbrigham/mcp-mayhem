@@ -358,7 +358,21 @@ CLAIM_FIELDS = {
         "gate over files an agent READS AT RUNTIME must examine the WORKING TREE, because that "
         "is what gets read - while a verdict about them may still only indict bytes at the ref. "
         "What a checker EXAMINES and what a verdict may INDICT are different questions, and "
-        "fusing them is this field's defect wearing a design decision."),
+        "fusing them is this field's defect wearing a design decision. "
+        "⛔⛔ AND THE WRONG-OBJECT ERRORS THAT SURVIVE ARE SELECTED FOR BEING CONVENIENT. "
+        "**A wrong referent that CREATES work gets found; one that REMOVES work does not.** "
+        "The ZeroParadox session's line, 2026-09-12, and their own instance: they computed NET "
+        "lines changed (+32) against a trigger threshold defined on INSERTIONS (>=50), "
+        "concluded a review gate did not apply, and the error survived until the pre-push hook "
+        "refused the range -- the commit carried 124 insertions. ⚠ Contrast every wrong "
+        "referent measured on this side the same week: each one CREATED work -- a refusal that "
+        "made no sense, a test that would not pass, a remedy that looped -- and each was found "
+        "within minutes, because reality kept pushing back until someone looked. "
+        "⭐ THE COROLLARY BINDS THE REVIEWER RATHER THAN THE AUTHOR: **a measurement that "
+        "happens to EXCUSE you is the one to re-derive.** One that inconveniences you needs no "
+        "special scrutiny, because the world will supply it. This is why an audit that only "
+        "chases the findings people report is biased toward the errors that were already "
+        "costing someone something."),
     "instrument": (
         "HOW it was measured, named as the TOOL and not just the query -- because the query is "
         "what you chose and the SCOPE IS WHAT THE INSTRUMENT CHOSE FOR YOU. ⛔ Measured "
