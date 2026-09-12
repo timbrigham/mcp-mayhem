@@ -366,7 +366,22 @@ CLAIM_FIELDS = {
         "answers, because the second honours .gitignore and said only 'No files found'. ⚠ AND "
         "TWO INSTRUMENTS IS NOT ENOUGH: two that share a scope restriction agree perfectly and "
         "are both wrong, and agreement then reads as CORROBORATION, which is worse than a lone "
-        "probe. You must know WHICH IS WIDER AND WHY."),
+        "probe. You must know WHICH IS WIDER AND WHY. "
+        "⭐⭐ AND PREFER A DETECTOR WHOSE VERB IS **RUN** OVER ONE WHOSE VERB IS **READ**. "
+        "Measured by the ZeroParadox session across ~20 agent runs: every BEDROCK finding came "
+        "from EXECUTING something and every ORDINARY one from READING something, WITHOUT "
+        "EXCEPTION. Corroborated independently here 2026-09-11 -- every real finding that day "
+        "came from RUNNING (git's actual merge behaviour in a scratch repo; a guard's behaviour "
+        "when its subject is renamed away; three exit codes at three invocations), and every "
+        "WRONG claim came from READING: `git commit -- <path>` semantics read onto a tool with "
+        "no pathspec, `target` read onto a method that binds `self.git`, an `extra=` kwarg read "
+        "onto a function that has none, and a four-branch defect claim derived from control flow "
+        "where exactly one branch was wrong. "
+        "⚠ THE COROLLARY BINDS WHOEVER CANNOT RUN IT: when the thing lives in another layer, "
+        "'I cannot measure this' makes it a QUESTION, not a finding. Asking costs the other "
+        "party one measurement; asserting costs them a measurement AND a correction -- and an "
+        "overstated finding is not a conservative error, it MANUFACTURES HISTORY the next "
+        "reader inherits as fact."),
     "scope": (
         "WHAT WAS AND WAS NOT COVERED, including the exclusions you did not type. A checker's "
         "answer is only as scoped as its caller made it -- the same pipeline printed opposite "
