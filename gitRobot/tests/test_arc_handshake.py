@@ -314,3 +314,90 @@ def test_the_refusal_never_tells_the_caller_to_hand_write_zero(robot, repo, tmp_
         "the refusal still instructs a hand-written zero, which erases that a cap was reached")
     assert "hand-writing 0" in msg or "hand-written zero" in msg, (
         "the refusal must say WHY a hand-written zero is wrong, not merely offer the alternative")
+
+
+def test_not_tracked_and_could_not_read_are_different_answers(robot, repo):
+    """⛔⛔ `R-ZERONULL` IN THIS LAYER, raised by the ZeroParadox session 2026-09-11.
+
+    Every `git show :<path>` failure used to return None, and the guard's
+    `if staged_round is not None` read all of them as "nothing to refuse": an absent path, a
+    git error, an unreadable index, alike. A file that is NOT TRACKED genuinely stages no round
+    and is safe. A read that FAILED tells us nothing about what the commit would carry, and an
+    unknown count beside a cap must fail closed.
+
+    ⭐ Their matching instance, which is why the shape is worth pinning: `check_ssot` returned
+    `True, "no ssot.json in tree"` for months, two functions below `check_purity`, which had
+    the identical case right and said "(failing closed)" in its message. The more complete the
+    coverage looked, the less had been read.
+
+    ⚠ AND THE DISCRIMINATOR IS STRUCTURAL. `git show` names the absent case in prose, but
+    matching that text is locale-dependent and is the mistake the merge classifier made this
+    same week. `ls-files --error-unmatch` answers by EXIT CODE.
+    """
+    import json as _json
+
+    def _add(name):
+        subprocess.run(["git", "add", name], cwd=repo, capture_output=True, text=True)
+
+    # 1. NOT TRACKED -> None -> allowed. Nothing can be staged, so there is nothing to refuse.
+    assert robot._staged_arc_round(robot.git) is None, (
+        "an untracked handshake must read as None (nothing staged), not as a refusal")
+
+    # 2. TRACKED but unreadable -> -1 -> the guard refuses.
+    (repo / "gate_round.json").write_text("{ this is not json", encoding="utf-8")
+    _add("gate_round.json")
+    assert robot._staged_arc_round(robot.git) == -1, (
+        "a tracked-but-unreadable handshake must be the COULD-NOT-LOOK sentinel, not None")
+
+    # 3. TRACKED and zero -> 0 -> allowed.
+    (repo / "gate_round.json").write_text(_json.dumps({"round": 0}), encoding="utf-8")
+    _add("gate_round.json")
+    assert robot._staged_arc_round(robot.git) == 0
+
+    # 4. TRACKED and non-zero -> refused, as before.
+    (repo / "gate_round.json").write_text(_json.dumps({"round": 3}), encoding="utf-8")
+    _add("gate_round.json")
+    assert robot._staged_arc_round(robot.git) == 3
+
+
+def test_a_failed_index_read_is_not_the_same_as_an_untracked_file(robot):
+    """⛔⛔ THE BRANCH THE PREVIOUS TEST DOES NOT REACH, AND A CONTROL PROVED IT.
+
+    `test_not_tracked_and_could_not_read_are_different_answers` exercises malformed JSON --
+    but that path has `git show` SUCCEEDING and the -1 coming from the parser, which was
+    already correct. Removing the not-tracked/could-not-look split left that test GREEN.
+    A test that looks like coverage, found by arming the control rather than by reading it.
+
+    ⭐ THE REACHABLE CASE IS A FAILED READ OF A TRACKED FILE -- a `git show` timeout being the
+    realistic one, since `run(..., timeout=30)` returns not-ok without telling the caller why.
+    It cannot be staged from a fixture, so it is stubbed: this is a unit test of the
+    CLASSIFICATION, which is the thing that was wrong.
+
+    ⚠ `ls-files --error-unmatch` is the discriminator BY EXIT CODE, never by matching git's
+    prose -- that text is locale-dependent and is the mistake the merge classifier made this
+    same week.
+    """
+    class _Res:
+        def __init__(self, ok, output=""):
+            self.ok, self.output = ok, output
+
+    class _FakeGit:
+        """show always fails; ls-files answers whether the path is tracked."""
+        def __init__(self, tracked):
+            self.tracked = tracked
+        def run(self, args, **kw):
+            if args[0] == "show":
+                return _Res(False, "fatal: could not read index")
+            if args[0] == "ls-files":
+                return _Res(self.tracked, "")
+            return _Res(False, "")
+
+    # TRACKED but the read failed -> COULD NOT LOOK -> the refusing sentinel.
+    assert robot._staged_arc_round(_FakeGit(tracked=True)) == -1, (
+        "a failed read of a TRACKED handshake must refuse: the count this commit would "
+        "publish is unknown, and an unknown count beside a cap fails closed")
+
+    # NOT tracked -> nothing can be staged -> safe, and not a refusal.
+    assert robot._staged_arc_round(_FakeGit(tracked=False)) is None, (
+        "an untracked handshake stages no round; refusing it would block every repo that "
+        "has not migrated the file")

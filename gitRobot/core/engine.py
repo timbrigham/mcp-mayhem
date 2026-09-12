@@ -644,8 +644,11 @@ class GitRobot:
                  f"must stay at 0. ⚠ This is read from the INDEX, so it fires whether or not you "
                  f"staged anything — a tracked file already at a non-zero round reads the same "
                  f"way." if staged_round >= 0 else
-                 f"the index copy of {where} has an unreadable `round`, so the count this commit "
-                 f"would publish is UNKNOWN — an unknown count next to a cap fails closed."),
+                 f"the index copy of {where} could not be read as a round — it is TRACKED but "
+                 f"its index entry is unreadable, or its `round` is missing or not an integer. "
+                 f"So the count this commit would publish is UNKNOWN, and an unknown count next "
+                 f"to a cap fails closed. ⚠ This is NOT the same as the file being untracked, "
+                 f"which stages no round and is allowed."),
                 (f"⚠ CHECK THE REPO NAMED ABOVE — {repo_mode or 'main'} — not whichever tree "
                  f"you are looking at. There is a separate {self._ARC_STATE} per repo, and a "
                  f"clean main checkout tells you nothing about the one this read.\n"
@@ -1213,14 +1216,37 @@ class GitRobot:
                 "reason": None if res.ok else (res.output or "").strip()[:200]}
 
     def _staged_arc_round(self, target) -> Optional[int]:
-        """The `round` in the INDEX copy of the handshake, or None if absent/unreadable.
+        """The `round` in the INDEX copy of the handshake. None = NOT TRACKED. -1 = COULD NOT READ.
 
         ⚠ Read from the index (`:path`), never the working tree — the question is what a commit
         WOULD carry, and those differ by exactly the local bump this exists to keep out.
+
+        ⛔⛔ "NOT TRACKED" AND "COULD NOT LOOK" ARE DIFFERENT FACTS AND ONLY ONE OF THEM IS SAFE.
+        Until 2026-09-11 every `git show` failure returned None, and the guard's
+        `if staged_round is not None` read all of them as "nothing to refuse" — an absent path,
+        a git error, an unreadable index, alike. A file that is not tracked genuinely stages no
+        round and is safe; a read that FAILED tells us nothing about what the commit carries,
+        and an unknown count next to a cap must fail closed.
+
+        ⭐ Raised by the ZeroParadox session, who named it as `R-ZERONULL` in this layer and
+        gave the matching instance from theirs: `check_ssot` returned `True, "no ssot.json in
+        tree"` for months, two functions below `check_purity`, which had the identical case
+        right and said "(failing closed)" in its message. **The more complete the coverage
+        looked, the less had been read.**
+
+        ⚠ THE DISCRIMINATOR IS STRUCTURAL, NOT THE MESSAGE TEXT. `git show` prints "does not
+        exist (neither on disk nor in the index)" for the absent case, but matching that is
+        locale-dependent and its wording is not a contract — the same mistake the merge
+        classifier made this week. `ls-files --error-unmatch` answers the tracked question by
+        exit code, which is one.
         """
         res = target.run(["show", f":{self._ARC_STATE}"], timeout=30)
         if not res.ok:
-            return None
+            tracked = target.run(
+                ["ls-files", "--error-unmatch", self._ARC_STATE], timeout=30)
+            if not tracked.ok:
+                return None          # genuinely not tracked: no round can be committed
+            return -1                # tracked and unreadable: COULD NOT LOOK -> refuse
         try:
             doc = json.loads(res.output)
         except (ValueError, TypeError):
