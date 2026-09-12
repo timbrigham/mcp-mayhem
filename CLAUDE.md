@@ -627,10 +627,38 @@ date, the numbers, what broke. Prefer "measured 2026-09-02, this condemned an en
 
 ## Working with the ZeroParadox session
 
-A peer Claude session owns the consumer project and is hook-fenced out of these repos. It is a
+A peer Claude session owns the consumer project. It is a
 **research assistant**; Tim is the author. Coordinate by message; never patch across the boundary.
 Its `CLAUDE.md` is a durable carrier for its conventions — a rule agreed in conversation binds only
 the participants, so check whether a convention was ever written where the other side can read it.
+
+⛔⛔ **"HOOK-FENCED OUT OF THESE REPOS" WAS THIS FILE'S WORDING AND IT OVERSTATED THE FENCE.**
+Measured 2026-09-12 by the ZeroParadox session, reading their own `.claude/settings.json`, and
+re-verified here: **the guard covers SHELL and not FILE WRITES.**
+
+    PreToolUse matchers    Bash · PowerShell · PowerShell(gh api graphql *)
+                           PowerShell(Get-Content build.log*)
+    covering Edit/Write/NotebookEdit    NONE
+    permissions.deny       42 entries, EVERY ONE a tool-name deny. ZERO path patterns.
+    defaultMode            dontAsk
+
+`block_git_gh.ps1` inspects `tool_input.command` and it genuinely works — it fired on them
+mid-session for a `python -c` that merely MENTIONED a server name. But `Edit`, `Write` and
+`NotebookEdit` address files by `file_path`: no matcher sees them and no deny names a path.
+
+⚠ **THE WRITE HALF IS THE HALF THE FENCE IS FOR.** The whole argument for blocking the shell
+route is that an agent able to edit the enforcement code can switch off the guard constraining
+it — and that argument does not care which tool does the editing. The guard prices the cheap
+route and leaves the direct one open.
+
+⭐ **AND THE BOUNDARY IS ASYMMETRIC AND PARTLY CONVENTIONAL, WHICH THIS FILE ALSO IMPLIED IT
+WAS NOT.** Nothing fences THIS session out of `C:\Workspace\ZeroParadox` — the rule against
+patching across is a prompt-level instruction, not a hook, and reads succeed here routinely.
+**Treat the boundary as a convention both sides keep, not a wall either side is held behind.**
+
+⚠ THE PREMISE IS MEASURED; THE CONSEQUENCE IS NOT. Nobody has shown an `Edit` actually landing
+in these repos from that session, and demonstrating it would MEAN doing it — the claim can only
+be falsified by violating it. So it is treated as true. ⛔ Do not "test" it.
 
 **⛔ NEVER `/clear` BOTH SESSIONS IN THE SAME WINDOW** (Tim, 2026-09-06). A handoff is PROSE: a
 fresh session inherits a *description* of how the tooling behaves, never the experience of
