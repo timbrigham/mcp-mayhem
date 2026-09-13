@@ -153,7 +153,8 @@ def check(*, records: list, config, repo: Optional[str] = None,
         if not files:
             continue
         inv = inventory_mod.build(config=config, records=records, action=action,
-                                  files=files, ref=commit, admission=admission)
+                                  files=files, ref=commit, admission=admission,
+                                  repo=repo)
         # "Did anything examine THIS CONTENT?" is independent of what would have
         # been SUFFICIENT.
         #

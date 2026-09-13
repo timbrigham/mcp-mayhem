@@ -21,6 +21,9 @@ paid review rounds. "Re-run everything, always" wears the costume of rigour.
 from __future__ import annotations
 
 import fnmatch
+import json
+import os
+import subprocess
 from typing import Optional
 
 
@@ -207,10 +210,63 @@ def convergence_bar(config) -> dict:
                      "numbers to mean less than they did.")}
 
 
+def registry_types_at(config, repo: Optional[str], files: dict) -> tuple:
+    """`(types, basis)`: the REGISTRY AS COMMITTED IN `files`, for judging producer pins.
+
+    ⛔⛔ WHY THIS EXISTS: RLY-PIN-5, measured by ZeroParadox 2026-09-13 and reproduced
+    here. `guards.py@2775fcf6` was approved long enough for nine intermediates to record
+    under it, then unpinned at 548b1216. A commit reverting guards.py to 2775fcf6 on top of
+    the unpin (dad75d6b, never pushed) read ALLOWED 19/19 with ZERO new records. V16c
+    refused a new record from that build at APPEND; nothing asked at READ.
+
+    ⭐ WHY THE REGISTRY AT THE REF, NOT TODAY'S (Tim's ruling, option C). At every commit in
+    that arc the committed registry approved exactly the checker blob the commit carried
+    (929a9f89: guards 2775fcf6, decls c39bb97b). So "was this producer approved WHEN THIS
+    CONTENT WAS COMMITTED" is the question history can answer honestly. Judged against
+    TODAY's registry instead, simulated over the live stream: 13/20 of the already-pushed
+    arc and 86/93 of the last 93 commits went stale, and every future checker edit would
+    need the approve, record, unpin sequence. The per-ref rule cost 3/20 and 54/93 against
+    today's 50/93.
+
+    Works for the INDEX as well as a commit: `files` maps the registry's repo path to the
+    blob a commit would carry, and the blob is read by id.
+
+    ⚠ ABSENCE IS NEVER SUCCESS. When the committed registry cannot be read, the CURRENT
+    registry's pins apply (the stricter reading), and `basis` names why. `repo=None` means
+    the caller could not say where the content lives; the read-time check is then NOT
+    applied, and `basis` says so rather than implying it ran.
+    """
+    current = config.required.get("types") or {}
+    if not repo:
+        return current, "unchecked: no repository was given, so the read-time pin check did not run"
+    try:
+        rel = os.path.relpath(os.path.realpath(str(config.required_path)),
+                              os.path.realpath(str(repo))).replace(os.sep, "/")
+    except ValueError:                      # a different drive on Windows
+        rel = ".."
+    if rel.startswith(".."):
+        return current, "current: the registry is not tracked inside the repository"
+    blob = files.get(rel)
+    if not blob:
+        return current, f"current: no committed {rel} at this ref"
+    try:
+        proc = subprocess.run(["git", "cat-file", "-p", blob], cwd=str(repo),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=30)
+        if proc.returncode != 0:
+            raise ValueError(proc.stderr.strip())
+        types = json.loads(proc.stdout).get("types")
+        if not isinstance(types, dict):
+            raise ValueError("no `types` object")
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        return current, f"current: {rel}@{blob[:12]} could not be read ({exc})"
+    return types, f"ref: {rel}@{blob[:12]}"
+
+
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None,
           refusals: Optional[dict] = None,
-          changed: Optional[set] = None) -> dict:
+          changed: Optional[set] = None, repo: Optional[str] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
 
     ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
@@ -237,6 +293,8 @@ def build(*, config, records, action: str, files: dict,
     reqs = config.requirements(action)
     (by_content, by_path, legacy_tips, evidence_paths,
      ev_content, ev_by_subject) = _subject_index(records)
+    pin_types, pin_basis = registry_types_at(config, repo, files)
+    pin_checked = not pin_basis.startswith("unchecked")
 
     rows = []
     _scope_paths, _unexamined_paths = {}, {}
@@ -556,7 +614,11 @@ def build(*, config, records, action: str, files: dict,
         # citing the CURRENT APPROVED checker is the strongest evidence available, not stale
         # evidence. So an approved blob counts as fresh no matter which ref it is read at.
         _approved_blobs = set()
-        _spec_ev = (config.required.get("types") or {}).get(step)
+        # ⭐ The PINS come from the registry committed at this ref when the caller named the
+        # repository; see `registry_types_at`. Scope, family and everything else still come
+        # from the live registry: only the producer pin is judged per ref.
+        _spec_ev = pin_types.get(step)
+        _pinned_module = _spec_ev.get("module") if isinstance(_spec_ev, dict) else None
         if isinstance(_spec_ev, dict):
             _a = _spec_ev.get("approved_modules")
             if isinstance(_a, str):
@@ -564,11 +626,20 @@ def build(*, config, records, action: str, files: dict,
             elif _a:
                 _approved_blobs = set(_a)
 
-        ev_stale, ev_moved = 0, []
+        ev_stale, ev_moved, ev_unapproved = 0, [], []
         for path in sorted(ev_set):
             if path not in files:
                 continue
-            if (step, path, files[path]) in ev_content:
+            # ⛔⛔ THE AT-REF ROUTE IS CLOSED TO A PINNED MODULE WHOSE BLOB HERE IS NOT
+            # APPROVED. RLY-PIN-5: records citing guards.py@2775fcf6 freshened a commit that
+            # reverted to it after the unpin, because this route asks only whether SOME record
+            # cited the producer blob found at this ref. Where the registry pins the module,
+            # a blob it does not approve cannot be fresh evidence however many records cite
+            # it, which is the rule V16c already applies at append.
+            if (pin_checked and _approved_blobs and path == _pinned_module
+                    and files[path] not in _approved_blobs):
+                ev_unapproved.append(path)
+            elif (step, path, files[path]) in ev_content:
                 continue
             # ⚠ Approved-and-cited counts as fresh ONLY WHERE THE CITING RECORD EXAMINED
             # THESE BYTES. Every subject this row covers must have been judged by a record
@@ -672,11 +743,18 @@ def build(*, config, records, action: str, files: dict,
             # that PRODUCED the verdict. Re-running is exactly the right remedy here,
             # unlike LED-2's unclearable case — so the row says so plainly.
             status = "STALE"
-            why = (f"every subject still matches, but the producer changed: "
-                   f"{', '.join(ev_moved[:3])}"
-                   f"{', …' if len(ev_moved) > 3 else ''} moved since this verdict was "
-                   f"recorded. A verdict cannot outlive the code or brief that reached "
-                   f"it — re-run the step.")
+            if ev_unapproved:
+                why = (f"the producer at this ref is NOT APPROVED by the registry that applies "
+                       f"({pin_basis}): "
+                       f"{', '.join(u + '@' + files[u][:12] for u in ev_unapproved)}. Records "
+                       f"citing that build do not count, whenever they were written. Approve "
+                       f"the build in the same commit, or restore an approved one.")
+            else:
+                why = (f"every subject still matches, but the producer changed: "
+                       f"{', '.join(ev_moved[:3])}"
+                       f"{', …' if len(ev_moved) > 3 else ''} moved since this verdict was "
+                       f"recorded. A verdict cannot outlive the code or brief that reached "
+                       f"it — re-run the step.")
         else:
             status = "SATISFIED"
 
@@ -796,6 +874,7 @@ def build(*, config, records, action: str, files: dict,
                                            if isinstance(o, dict)][:5],
                      "subjects_covered": covered, "subjects_stale": stale,
                      "evidence_stale": ev_stale, "evidence_moved": ev_moved,
+                     "evidence_unapproved": ev_unapproved,
                      "subjects_unexamined": unexamined, "scope": len(scope),
                      "subjects_unscoped": unscoped,
                      "why": why,
@@ -1132,6 +1211,9 @@ def build(*, config, records, action: str, files: dict,
 
     return {
         "ref": ref, "action": action,
+        # ⚠ WHICH REGISTRY JUDGED THE PRODUCER PINS, so "fresh" can be traced to a file and a
+        # blob. `unchecked` means no repository was given and the read-time check did not run.
+        "pin_basis": pin_basis,
         "admission_state": state,
         "admitted": sorted(admitted) if admitted is not None else None,
         "required": required, "satisfied": satisfied,
@@ -1292,7 +1374,7 @@ def coverage_gap(*, config, records, action: str, files: dict,
 
 
 def progress(*, config, records, action: str, files: dict, admission: list,
-             rounds: int = 8) -> dict:
+             rounds: int = 8, repo: Optional[str] = None) -> dict:
     """ONE VIEW: what blocks the push, and is it converging?
 
     ⭐⭐ Tim, 2026-08-29: "my only concern is that you end up in some kind of a loop
@@ -1319,7 +1401,7 @@ def progress(*, config, records, action: str, files: dict, admission: list,
     its subject count does not move.
     """
     inv = build(config=config, records=records, action=action, files=files,
-                admission=admission)
+                admission=admission, repo=repo)
     gap = coverage_gap(config=config, records=records, action=action, files=files,
                        admission=admission, limit=0)
     gap_by_step = {s["step"]: s for s in gap["steps"]}
@@ -1472,7 +1554,8 @@ def coverage(*, records, paths: list) -> dict:
     }
 
 
-def heal_plan(*, config, records, action: str, files: dict, admission: list) -> dict:
+def heal_plan(*, config, records, action: str, files: dict, admission: list,
+              repo: Optional[str] = None) -> dict:
     """⭐⭐ WHAT TO RE-RUN TO MAKE THIS REF GREEN — split by WHO CAN DO IT, and by whether
     re-running would help at all.
 
@@ -1500,7 +1583,7 @@ def heal_plan(*, config, records, action: str, files: dict, admission: list) -> 
     knows how to run its own checkers; it just did not know which ones were owed.
     """
     inv = build(config=config, records=records, action=action, files=files,
-                admission=admission)
+                admission=admission, repo=repo)
     gap = coverage_gap(config=config, records=records, action=action, files=files,
                        admission=admission, limit=0)
     owed = {s["step"]: s.get("owes_a_pass") for s in gap["steps"]}

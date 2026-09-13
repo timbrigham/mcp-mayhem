@@ -229,7 +229,7 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                    if prev_files.get(p) != files.get(p)}
         inv = inventory_mod.build(config=config, records=records, action=this_action,
                                   files=files, ref=commit, admission=this_admission,
-                                  refusals=refusals, changed=changed)
+                                  refusals=refusals, changed=changed, repo=repo)
         prev_files = files
         if is_tip:
             tip_files = files
@@ -240,6 +240,8 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                           for i in (r.get("indicted") or [])],
             "commit": commit,
             "judged_as": this_action,
+            # which registry judged the producer pins at this commit (see inventory.registry_types_at)
+            "pin_basis": inv.get("pin_basis"),
             "is_tip": is_tip,
             "subject": _git(repo, "log", "-1", "--pretty=%s", commit).strip()[:72],
             "complete": bool(inv.get("complete")),

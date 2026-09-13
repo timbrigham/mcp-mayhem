@@ -590,7 +590,7 @@ def _sync_inventory(action: str, ref: str, admission=None) -> dict:
     inv = inventory_mod.build(config=cfg, records=led.store.records(),
                               action=action, files=_files(ref), ref=ref,
                               admission=admission,
-                              refusals=led.store.refusals())
+                              refusals=led.store.refusals(), repo=REPO)
     inv["config_sha"] = cfg.config_sha
     inv["line"] = render_mod.render_inventory(inv)
     return inv
@@ -634,7 +634,7 @@ def _sync_progress(action, ref, admission, rounds) -> dict:
             "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: admission(action='push') returns JUST the array in ~400 bytes - use 'commit' or 'tag' for those actions - and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.progress(config=cfg, records=led.store.records(),
                                  action=action, files=_files(ref),
-                                 admission=admission, rounds=rounds)
+                                 admission=admission, rounds=rounds, repo=REPO)
     out["ref"] = ref
     return out
 
@@ -719,7 +719,7 @@ def _sync_heal_plan(action, ref, admission) -> dict:
             "pass admission=[<the steps that gate this action>]. gitRobot serves the real set: requirements(action='push') returns it, and gitRobot's own calls fill it in automatically — only a direct call omits it. ⚠ The set lives in gitRobot's admission.v1.json, NOT in this ledger's registry; they differ, and asking the wrong one has already produced a wrong report.")
     out = inventory_mod.heal_plan(config=cfg, records=led.store.records(),
                                   action=action, files=_files(ref),
-                                  admission=admission)
+                                  admission=admission, repo=REPO)
     out["ref"] = ref
     return out
 

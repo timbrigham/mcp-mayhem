@@ -150,6 +150,9 @@ class InventoryResult(Result, total=False):
     missing: int
     stale: int
     evidence_moved: list[Any]
+    # ⭐ Which registry judged producer pins: `ref: <path>@<blob>`, `current: <why>`, or
+    # `unchecked: ...` when no repository was named. Added 2026-09-13 with RLY-PIN-5.
+    pin_basis: str
     outstanding: int
     legacy_identity: int
     undecided: int

@@ -109,7 +109,8 @@ def cmd_inventory(args) -> int:
     cfg = led._require_config()
     files = _files_at(args.repo, args.ref)
     inv = inventory_mod.build(config=cfg, records=led.store.records(),
-                              action=args.action, files=files, ref=args.ref)
+                              action=args.action, files=files, ref=args.ref,
+                              repo=args.repo)
     print(render_mod.render_inventory(inv))
     if args.json:
         _emit(inv)
