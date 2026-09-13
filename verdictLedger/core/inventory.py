@@ -47,6 +47,11 @@ def _subject_index(records) -> tuple:
     legacy: dict = {}
     evidence: dict = {}        # step -> {path, ...} recorded as V16/V17 evidence
     ev_content: dict = {}      # (step, path, blob) -> the record that ran under it
+    # (step, subject path, subject blob) -> {(evidence path, evidence blob), ...} cited by
+    # ANY record that examined those subject bytes. See the approved-blob exemption in
+    # `build`: it asks whether an approved producer judged THESE bytes, not whether one
+    # judged something.
+    ev_by_subject: dict = {}
     for r in records:
         step = r.get("step")
         rev = r.get("revision", 0)
@@ -79,6 +84,10 @@ def _subject_index(records) -> tuple:
                     legacy[(step, path)] = (r, None)
                 continue
             key = (step, path, blob)
+            cited = ev_by_subject.setdefault(key, set())
+            for e in r.get("evidence") or []:
+                if e.get("path") and e.get("git_blob_id"):
+                    cited.add((e["path"], e["git_blob_id"]))
             prior = by_content.get(key)
             # ⚠ Revision compares WITHIN one content key. Across different content
             # there is nothing to supersede: two verdicts about different bytes are
@@ -88,7 +97,7 @@ def _subject_index(records) -> tuple:
             seen = by_path.get((step, path))
             if seen is None or rev >= seen.get("revision", 0):
                 by_path[(step, path)] = r
-    return by_content, by_path, legacy, evidence, ev_content
+    return by_content, by_path, legacy, evidence, ev_content, ev_by_subject
 
 
 def _loosen(glob: str) -> str:
@@ -227,7 +236,7 @@ def build(*, config, records, action: str, files: dict,
     """
     reqs = config.requirements(action)
     (by_content, by_path, legacy_tips, evidence_paths,
-     ev_content) = _subject_index(records)
+     ev_content, ev_by_subject) = _subject_index(records)
 
     rows = []
     _scope_paths, _unexamined_paths = {}, {}
@@ -561,10 +570,28 @@ def build(*, config, records, action: str, files: dict,
                 continue
             if (step, path, files[path]) in ev_content:
                 continue
-            # ⚠ Approved-and-cited counts as fresh. `ev_content` holds (step, path, blob) for
-            # every blob any record cited, so this asks whether SOME record cited an approved
-            # build of this producer -- never whether one merely exists.
-            if any((step, path, _b) in ev_content for _b in _approved_blobs):
+            # ⚠ Approved-and-cited counts as fresh ONLY WHERE THE CITING RECORD EXAMINED
+            # THESE BYTES. Every subject this row covers must have been judged by a record
+            # that cites an approved build of this producer.
+            #
+            # ⛔⛔ UNTIL 2026-09-13 THIS ASKED WHETHER *ANY* RECORD CITED AN APPROVED BUILD,
+            # about any subjects at all. Measured on ZeroParadox 929a9f89, simulating a pin of
+            # pdf_coupling to batch.py 1fffe944: the records citing it covered 38 of the
+            # commit's 40 PDFs. The other 2 had only ever been judged by older builds, and
+            # the row still read fresh. The pinned producer was real and it was cited: a
+            # true value read against the wrong subjects. Tim chose to tighten it before
+            # that pin landed.
+            #
+            # ⚠ Tightened for the APPROVED route only, as ruled. The at-ref check above is
+            # still global and has the same shape; that is a separate decision.
+            #
+            # ⚠ AND NOT VACUOUSLY. A row covering nothing has no subject an approved build
+            # could have judged, so `all()` over an empty list must not earn the exemption.
+            _covered_paths = [_p for _p, _r in covered_recs]
+            if _approved_blobs and _covered_paths and all(
+                    any((path, _b) in ev_by_subject.get((step, _p, files[_p]), ())
+                        for _b in _approved_blobs)
+                    for _p in _covered_paths):
                 continue
             ev_stale += 1
             ev_moved.append(path)

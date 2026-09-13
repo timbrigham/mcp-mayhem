@@ -277,7 +277,7 @@ class Ledger:
         # the tip-green leg until it was settled. They were right that it bites — it bites
         # through REVISION rather than through blob-presence, and this is where it is stopped.
         from core import inventory as _inv
-        by_content, _bp, _lg, _ev, _evc = _inv._subject_index(list(self.store))
+        by_content, _bp, _lg, _ev, _evc, _evs = _inv._subject_index(list(self.store))
         step = original.get("step")
         superseded = []
         for s_ in original.get("subjects") or []:

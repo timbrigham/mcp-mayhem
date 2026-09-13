@@ -732,3 +732,74 @@ def test_evidence_citing_an_UNAPPROVED_blob_is_still_stale(ledger):
     assert row["evidence_stale"] == 1, (
         "an UNAPPROVED, non-matching producer must still stale the row")
     assert row["evidence_moved"] == ["tools/verify/common.py"]
+
+
+def _pin_pdf_coupling(ledger):
+    spec = dict((ledger.config.required.get("types") or {}).get("pdf_coupling") or {})
+    spec["module"] = "tools/verify/common.py"
+    spec["approved_modules"] = ["APPROVED"]
+    types = dict(ledger.config.required.get("types") or {})
+    types["pdf_coupling"] = spec
+    ledger.config.required["types"] = types
+
+
+def _pdf_rec(rid, subjects, evidence_blob):
+    rec = good(step="pdf_coupling", verdict="PASS",
+               basis={"kind": "tree", "value": rid, "resolved_from": "explicit"},
+               subjects=[{"path": p, "git_blob_id": b} for p, b in subjects],
+               evidence=[{"path": "tools/verify/common.py", "git_blob_id": evidence_blob}])
+    rec["id"] = f"pdf_coupling@{rid}#0"
+    return rec
+
+
+def test_an_approved_build_freshens_only_the_bytes_it_judged(ledger):
+    """⛔⛔ AN APPROVED PRODUCER CITED ABOUT *OTHER* SUBJECTS DOES NOT FRESHEN THESE.
+
+    Until 2026-09-13 the approved-blob exemption asked whether ANY record cited an approved
+    build. Measured on ZeroParadox 929a9f89, simulating a pdf_coupling pin: the records
+    citing the pinned batch.py covered 38 of 40 PDFs, the other 2 were judged only by older
+    builds, and the row read fresh anyway.
+
+    Here one.pdf was judged by the approved build and two.pdf only by an old one, so the row
+    must read evidence-stale."""
+    _pin_pdf_coupling(ledger)
+    files = {"one.pdf": "p1", "two.pdf": "p2", "tools/verify/common.py": "OLD_AT_REF"}
+    records = [_pdf_rec("a", [("one.pdf", "p1")], "APPROVED"),
+               _pdf_rec("b", [("two.pdf", "p2")], "SOME_OLDER_BUILD")]
+    inv = inventory_mod.build(config=ledger.config, records=records, action="push",
+                              files=files, ref="t", admission=["pdf_coupling"])
+    row = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+
+    assert row["evidence_stale"] == 1, (
+        "two.pdf was never judged by an approved build, and the row read fresh anyway")
+    assert row["evidence_moved"] == ["tools/verify/common.py"]
+
+
+def test_an_approved_build_over_every_covered_subject_is_fresh(ledger):
+    """The control: the same two subjects, both judged by the approved build (in separate
+    records), is fresh. The tightening asks about THESE bytes; it does not demand one record
+    covering everything."""
+    _pin_pdf_coupling(ledger)
+    files = {"one.pdf": "p1", "two.pdf": "p2", "tools/verify/common.py": "OLD_AT_REF"}
+    records = [_pdf_rec("a", [("one.pdf", "p1")], "APPROVED"),
+               _pdf_rec("b", [("two.pdf", "p2")], "APPROVED")]
+    inv = inventory_mod.build(config=ledger.config, records=records, action="push",
+                              files=files, ref="t", admission=["pdf_coupling"])
+    row = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+
+    assert row["evidence_stale"] == 0
+    assert row["evidence_moved"] == []
+
+
+def test_a_row_covering_nothing_earns_no_approved_exemption(ledger):
+    """⚠ NOT VACUOUSLY. one.pdf was judged by the approved build at OTHER bytes (p0), so the
+    row covers nothing at p1. With no covered subject, no approved build judged anything
+    here, and `all()` over the empty list must not grant the exemption."""
+    _pin_pdf_coupling(ledger)
+    files = {"one.pdf": "p1", "tools/verify/common.py": "OLD_AT_REF"}
+    records = [_pdf_rec("a", [("one.pdf", "p0")], "APPROVED")]
+    inv = inventory_mod.build(config=ledger.config, records=records, action="push",
+                              files=files, ref="t", admission=["pdf_coupling"])
+    row = next(r for r in inv["rows"] if r["step"] == "pdf_coupling")
+
+    assert row["evidence_stale"] == 1
