@@ -292,3 +292,92 @@ def test_a_strict_default_is_NOT_made_fatal(tmp_path, config_dir):
         "a STRICT default must still load — making it fatal would force a `migration` block "
         "into every policy file and convert a safe terminal absence into an outage")
     assert led.config.v16_required is True, "and absent must still mean strict"
+
+
+# -- ⛔ a refused claim is never forgiven, and absent refusals claim nothing ---------
+
+OTHER = "check_encoding"          # scope `*`, so it covers doc.md at every commit
+_REFUSED = {OTHER: {"rule": "V11", "count": 1, "first_seen": "2026-09-13T00:00:00+00:00",
+                    "last_seen": "2026-09-13T00:00:00+00:00"}}
+
+
+def _fixed_fail_plus_refused(tmp_path):
+    """Commit 0 honestly FAILs `check_prose`, and the tip fixes it. OTHER is in the COMMIT set
+    only, so it binds commit 0 and not the tip, and it has NO accepted record anywhere.
+
+    ⚠ Not in the tip's set, on purpose. A PASS for OTHER at the tip covers doc.md at a
+    different blob, which makes commit 0 read STALE, and REFUSED only renders over a row with
+    nothing covered and nothing stale. The first draft of this fixture did that and the
+    controls failed for a reason unrelated to what they name."""
+    base, shas = _repo(tmp_path, n=2)
+    broken, fixed = shas[0], shas[1]
+    b0, b1 = _blob(tmp_path, broken, PATH), _blob(tmp_path, fixed, PATH)
+    records = [_fail_rec(PATH, b0, broken, failing=[PATH]),
+               _rec(STEP, PATH, b1, fixed)]
+    return base, broken, fixed, records
+
+
+def test_a_refused_step_is_never_forgiven_under_tip_green(ledger, tmp_path):
+    """⛔⛔ A FIXED FAIL MUST NOT CARRY A REFUSED CLAIM OUT WITH IT.
+
+    Until 2026-09-13 a refused step read MISSING in `can_push` and blocked for that reason.
+    Once `refusals` reached this function the step got its own status, and the forgiveness
+    clause checked only missing/stale/legacy. So commit 0 here, with a fixed FAIL plus a claim
+    the ledger never accepted, would have been forgiven. "We never looked" is not "we looked,
+    it was broken, we fixed it", whatever it is called."""
+    base, broken, fixed, records = _fixed_fail_plus_refused(tmp_path)
+    result = _check(ledger, tmp_path, f"{base}..{fixed}", records=records,
+                    admission=(STEP,), commit_admission=(STEP, OTHER), refusals=_REFUSED)
+
+    row = next(r for r in result["commits"] if r["commit"] == broken)
+    assert row["refused"] == [OTHER] and row["missing"] == []
+    assert row["failed"] == [STEP]
+    assert result["allowed"] is False, "a refused claim was forgiven with a fixed FAIL"
+    assert result["forgiven_count"] == 0
+    assert result["refused"] == [OTHER]
+
+
+def test_the_refused_remedy_on_the_push_path_is_not_run_the_step(ledger, tmp_path):
+    """MISSING says run it. REFUSED says running it again reproduces the refusal. The union
+    line has to give the second remedy, or the refusal renders as a claim never made."""
+    base, broken, fixed, records = _fixed_fail_plus_refused(tmp_path)
+    text = canpush_mod.render(_check(ledger, tmp_path, f"{base}..{fixed}", records=records,
+                                     admission=(STEP,), commit_admission=(STEP, OTHER), refusals=_REFUSED))
+    refused_line = next(ln for ln in text.splitlines() if ln.strip().startswith("REFUSED CLAIM"))
+    assert OTHER in refused_line and "re-running reproduces" in refused_line
+    assert not any(ln.strip().startswith("MISSING") and OTHER in ln
+                   for ln in text.splitlines())
+
+
+def test_without_refusals_no_refused_key_is_emitted(ledger, tmp_path):
+    """⚠ ABSENT, NOT EMPTY. The MCP server does not pass the sidecar (see `_sync_can_push`),
+    so a `refused: []` there would claim "nothing was refused" about a file nobody read. The
+    same range still blocks, reading MISSING as it always has."""
+    base, broken, fixed, records = _fixed_fail_plus_refused(tmp_path)
+    result = _check(ledger, tmp_path, f"{base}..{fixed}", records=records,
+                    admission=(STEP,), commit_admission=(STEP, OTHER))
+
+    assert "refused" not in result
+    assert all("refused" not in r for r in result["commits"])
+    row = next(r for r in result["commits"] if r["commit"] == broken)
+    assert row["missing"] == [OTHER]
+    assert result["allowed"] is False
+
+
+def test_the_can_push_cli_runs(tmp_path):
+    """⛔ `zpledger can-push` RAISED TypeError ON EVERY CALL FROM 2026-09-07 TO 2026-09-13.
+    5ebd805 passed `refusals=` to `canpush.check`, whose signature did not take it, and no
+    test ever ran the CLI. Reproduced before the fix:
+    `TypeError: check() got an unexpected keyword argument 'refusals'`."""
+    import sys
+    from pathlib import Path
+    base, shas = _repo(tmp_path / "r", n=1)
+    data = tmp_path / "records.jsonl"
+    data.write_text("", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "core.cli", "--data", str(data), "--repo", str(tmp_path / "r"),
+         "can-push", f"{base}..{shas[0]}", "--admit", STEP],
+        cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, text=True,
+        encoding="utf-8", errors="replace")
+    assert "Traceback" not in proc.stderr, proc.stderr[-800:]
+    assert "push" in proc.stdout

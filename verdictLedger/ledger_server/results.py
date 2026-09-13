@@ -252,6 +252,10 @@ class CanPushResult(Result, total=False):
     stale: list[Any]
     failed: list[Any]
     legacy: list[Any]
+    # ⭐ Gating steps whose claim the ledger REFUSED at append. Added 2026-09-13. ⚠ ABSENT, not
+    # empty, unless the caller passed the refusal sidecar. The MCP tool does not pass it yet,
+    # so on the wire this key does not appear and those rows still read `missing`.
+    refused: list[Any]
     config_sha: str
     # ⭐ Which FAMILY of admitted step has the CHANGED paths in scope. Added 2026-09-07 after
     # a push read ALLOWED 19/19 while zero review-family steps covered any of its 11 files —

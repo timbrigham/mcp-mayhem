@@ -811,6 +811,12 @@ def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dic
                                rev_range=rev_range, action=action,
                                admission=admission,
                                commit_admission=commit_admission, limit=limit)
+    # ⛔ `refusals` DELIBERATELY NOT PASSED HERE (Tim, 2026-09-13). The sidecar is keyed on the
+    # STEP alone and nothing ever clears it: measured that day, 16 steps carry an entry,
+    # including 14 of the 18 in the commit set. Wired in, nearly every never-run row on
+    # every future push would render REFUSED with "do not re-run", which is the wrong remedy
+    # for a step that simply has not run. Clear entries on a later accepted record first,
+    # then pass it.
     result["config_sha"] = led._require_config().config_sha
     result["line"] = canpush_mod.render(result)
     return result

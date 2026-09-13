@@ -147,7 +147,7 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
 
 def check(*, records: list, config, repo: str, rev_range: str, action: str = "push",
           admission: Optional[list] = None, commit_admission: Optional[list] = None,
-          limit: int = DEFAULT_LIMIT) -> dict:
+          limit: int = DEFAULT_LIMIT, refusals: Optional[dict] = None) -> dict:
     """Can this range be pushed? One answer, over every commit it publishes.
 
     ⚠⚠ INTERMEDIATE COMMITS ARE JUDGED AS COMMITS; THE TIP IS JUDGED AS A PUSH.
@@ -168,7 +168,19 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
 
     ⚠ `admission=None` is NOT an empty set -- it means nobody said what gates this
     action, and it refuses. Same for `commit_admission`: absent is not empty.
+
+    ⛔ `refusals` WAS PASSED HERE FOR SIX DAYS BEFORE THIS SIGNATURE TOOK IT. 5ebd805
+    (2026-09-07) taught `inventory` to render a refused claim as REFUSED rather than
+    MISSING, and passed `refusals=` into this function from the CLI. This signature never
+    accepted it, so `zpledger can-push` raised TypeError on every call (reproduced
+    2026-09-13). Accepting it fixes the CLI.
+
+    ⚠ THE MCP SERVER STILL DOES NOT PASS IT, ON PURPOSE. See `_sync_can_push`: the sidecar
+    never clears, so wired in today it would hand the wrong remedy to nearly every
+    never-run row. With `refusals=None` no `refused` key is emitted anywhere, because an
+    empty list would claim "nothing was refused" about a sidecar nobody read.
     """
+    consulted = refusals is not None
     try:
         raw = _git(repo, "rev-list", "--reverse", rev_range)
     except ValueError as exc:
@@ -217,7 +229,7 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                    if prev_files.get(p) != files.get(p)}
         inv = inventory_mod.build(config=config, records=records, action=this_action,
                                   files=files, ref=commit, admission=this_admission,
-                                  changed=changed)
+                                  refusals=refusals, changed=changed)
         prev_files = files
         if is_tip:
             tip_files = files
@@ -240,6 +252,11 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                              if r["gating"] and r["status"] in ("FAIL", "UNDECIDED")),
             "legacy": sorted(r["step"] for r in inv["rows"]
                              if r["gating"] and r["status"] == "LEGACY_IDENTITY"),
+            # ⭐ A CLAIM WAS ATTEMPTED AND THE LEDGER DECLINED IT. Its own list rather than
+            # folded into `missing`, because the remedies are opposite: MISSING says run the
+            # step, REFUSED says re-running reproduces the refusal and the RECORD must change.
+            "refused": sorted(r["step"] for r in inv["rows"]
+                              if r["gating"] and r["status"] == "REFUSED"),
             "admission_state": inv.get("admission_state"),
             "not_gating": inv.get("registered_not_admitting") or [],
             # ⭐⭐ THE STEPS THAT PASS ONLY BECAUSE THE COVERING RECORD INDICTS ELSEWHERE.
@@ -328,6 +345,11 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
             continue
         if (bar == "tip_green" and not r["is_tip"]
                 and not r["missing"] and not r["stale"] and not r["legacy"]
+                # ⛔⛔ AND NOT REFUSED. Before 2026-09-13 a refused step read MISSING here and
+                # blocked for that reason. Once it has its own status, leaving it off this
+                # line would forgive a commit carrying a fixed FAIL plus a claim the ledger
+                # never accepted: "we never looked" wearing a new name.
+                and not r["refused"]
                 and r["failed"]
                 # every indicted blob must be GONE at the tip
                 and all(tip_files.get(i["path"]) != i["git_blob_id"]
@@ -347,6 +369,8 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         blocking.append(r)
     for r in rows:
         r.pop("_indicted", None)
+        if not consulted:
+            r.pop("refused", None)
 
     return {
         "ok": True,
@@ -382,6 +406,8 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "stale": sorted({s for r in rows for s in r["stale"]}),
         "failed": sorted({s for r in rows for s in r["failed"]}),
         "legacy": sorted({s for r in rows for s in r["legacy"]}),
+        **({"refused": sorted({s for r in rows for s in r.get("refused") or []})}
+           if consulted else {}),
         # ⭐ Disclosure, not a gate — see `_witness`. ALLOWED must not render the same
         # whether a whole family of steps looked at this push or never touched it.
         # ⚠ The base is the FIRST commit's PARENT, not the left side of `rev_range`.
@@ -556,15 +582,24 @@ def render(result: dict) -> str:
     # no branch here. Left as a comment rather than deleted silently: a reader looking for where
     # the admission-state warning went should find it, not conclude it was dropped.
 
-    # the whole remaining job, in four lines
-    for label, remedy in (("missing", "python tools/verify/batch.py precommit"),
-                          ("stale", "re-run — recorded against different bytes"),
-                          ("failed", "fix it"),
-                          ("legacy", "re-record — superseded subject scheme")):
+    # the whole remaining job, one line per kind
+    #
+    # ⚠ `refused` DISPLAYS AS "REFUSED CLAIM", NOT "REFUSED". The headline of this same render
+    # opens `REFUSED  push`, and a union line opening `REFUSED  check_encoding` sits one
+    # indent under it saying something different: that the LEDGER declined a CLAIM, not that
+    # the PUSH was declined. Caught 2026-09-13 when the control written for this line picked
+    # up the headline instead.
+    for label, shown_as, remedy in (
+            ("missing", "MISSING", "python tools/verify/batch.py precommit"),
+            ("stale", "STALE", "re-run — recorded against different bytes"),
+            ("failed", "FAILED", "fix it"),
+            ("legacy", "LEGACY", "re-record — superseded subject scheme"),
+            ("refused", "REFUSED CLAIM", "fix the record the emitter sends — re-running "
+                                         "reproduces the refusal")):
         names = result.get(label) or []
         if names:
             shown = ", ".join(names[:8]) + ("…" if len(names) > 8 else "")
-            lines.append(f"  {label.upper():8} {shown}      INSTEAD: {remedy}")
+            lines.append(f"  {shown_as:8} {shown}      INSTEAD: {remedy}")
 
     blocking = [r for r in result["commits"] if not r["complete"]]
     if blocking:
