@@ -1423,6 +1423,15 @@ class GitRobot:
             # now, through no change of theirs. Measured 2026-08-30 on 2dc895e4 — five
             # STALE, zero missing. Told only "record the verdicts", a caller goes hunting
             # for a recording bug that is not there.
+            #
+            # ⛔ AND THE HEAL CALL IT NAMES MUST ASK THE QUESTION THE LEDGER ASKED. Until
+            # 2026-09-13 this said heal_plan(action='push') for the earlier commits. The ledger
+            # judges those against the COMMIT set, so that call priced them against the push
+            # set instead. Measured on ZeroParadox ddce643e: action='push' listed
+            # adversary+editorial as `blocked`, action='commit' did not, and can_push had
+            # failed=[] at every intermediate. A caller reported ten commits of review FAILs as
+            # the reason for a refusal they had no part in. ⚠ The old text also said
+            # "11/19 by construction"; live the rows read 15-17/17, so it no longer prints a count.
             commits = inv.get("commits") or []
             tip_ok = any(c.get("is_tip") and c.get("complete") for c in commits)
             stale_under = [c for c in commits
@@ -1435,9 +1444,14 @@ class GitRobot:
                     f"\n\n⚠ THE TIP IS COMPLETE AND {len(stale_under)} EARLIER COMMIT(S) ARE "
                     f"STALE — e.g. {stale_under[0]['commit'][:8]}: {worst}. **That is almost "
                     f"never a recording failure, so do not go looking for one** — those commits "
-                    f"recorded plenty. Call heal_plan(action='push', ref=…, admission=…): it "
-                    f"reports `subjects_stale` and `evidence_stale` SEPARATELY, which is the "
-                    f"distinction that tells you what to do.\n"
+                    f"recorded plenty. For each earlier commit call heal_plan(action='commit', "
+                    f"ref=<that commit>, admission=<requirements(action='commit')>): it reports "
+                    f"`subjects_stale` and `evidence_stale` SEPARATELY, which is the distinction "
+                    f"that tells you what to do.\n"
+                    f"  ⚠ action='commit', NOT 'push', for anything under the tip. The ledger "
+                    f"judges intermediates against the COMMIT set; asking with 'push' prices them "
+                    f"against push-only review types that do not gate them, and lists those FAILs "
+                    f"as `blocked` work this push never required.\n"
                     f"  · subjects_stale — the covered files changed. Ordinary, expected, and the "
                     f"common case. Re-run those checkers and record; measured 2026-08-30 the six "
                     f"usual suspects re-run in 16.1s total.\n"
@@ -1447,10 +1461,11 @@ class GitRobot:
                     f"⚠ SQUASH IS NOT THE REMEDY FOR EITHER. It is remediation for a backlog that "
                     f"recorded nothing, and rewriting history on every push to satisfy a rule that "
                     f"exists BECAUSE intermediate commits are permanent is self-defeating. ⚠ NOTE "
-                    f"the standing defect behind this: `precommit` records 11 of the commit set "
-                    f"while six mechanical steps are recorded only against the TIP, so "
-                    f"intermediates sit at 11/19 by construction. Moving those six into precommit "
-                    f"is the fix; healing them by hand each time is the workaround.")
+                    f"the standing defect behind this: some mechanical steps in the commit set are "
+                    f"recorded only against the TIP rather than at precommit, so intermediates go "
+                    f"stale on them by construction — the STALE line above names which. "
+                    f"Recording them at precommit is the fix; healing them by hand each time is "
+                    f"the workaround.")
             raise self._refuse(
                 "push", args,
                 f"verdictLedger reports the admission set is not satisfied for "

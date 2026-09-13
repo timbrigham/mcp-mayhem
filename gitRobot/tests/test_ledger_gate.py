@@ -245,6 +245,42 @@ def test_a_down_ledger_never_falls_back_to_the_exit_code_path(robot, repo, tmp_p
     assert robot.read("log", ["origin/illustrated", "--oneline"])["output"].count("\n") == 0
 
 
+def test_the_stale_intermediates_remedy_asks_heal_plan_as_a_commit(robot, repo, tmp_path,
+                                                                   fake_gate, monkeypatch):
+    """⛔ THE HEAL CALL MUST ASK THE QUESTION THE LEDGER ASKED.
+
+    Measured 2026-09-13 on ZeroParadox: the tip was complete, 12 intermediates were STALE,
+    and `failed` was empty at every one of them. The refusal told the caller to run
+    heal_plan(action='push') on those commits. That judges them against the push set, so
+    adversary+editorial showed up as `blocked`, and the caller reported ten commits of review
+    FAILs as the cause of a refusal they played no part in. Intermediates are judged as
+    COMMITS, and the remedy has to say so."""
+    fake_gate(0)
+    _commit(robot, repo, tmp_path)
+
+    def tip_ok_intermediate_stale(rev_range, admission=None, action="push"):
+        return {"ok": True, "allowed": False, "range": rev_range, "commits_in_range": 2,
+                "blocking_count": 1, "tip": robot.git.head(), "admitted": ["build"],
+                "admission_state": "SET", "not_gating": [], "config_sha": "p",
+                "commits": [
+                    {"commit": "a" * 40, "is_tip": False, "complete": False,
+                     "stale": ["guards"], "failed": []},
+                    {"commit": robot.git.head(), "is_tip": True, "complete": True,
+                     "stale": [], "failed": []}],
+                "stale": ["guards"], "line": "REFUSED  push  1/2 commit(s) short"}
+
+    monkeypatch.setattr(ledger_client, "can_push", tip_ok_intermediate_stale)
+    with pytest.raises(RefusalError) as exc:
+        robot.push("illustrated", reason="shipping")
+
+    alt = exc.value.alternative
+    assert "THE TIP IS COMPLETE AND 1 EARLIER COMMIT(S) ARE STALE" in alt
+    assert "heal_plan(action='commit'" in alt
+    assert "heal_plan(action='push'" not in alt
+    # ⚠ and no hardcoded count that goes stale the moment precommit records one more step
+    assert "11/19" not in alt
+
+
 # -- ⭐ TWO LISTS, NOT TWO COPIES ---------------------------------------------
 
 def test_registering_a_type_does_not_gate_a_push(tmp_path):
