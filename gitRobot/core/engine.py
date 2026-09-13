@@ -1188,18 +1188,38 @@ class GitRobot:
     # ⚠ NOT `--assume-unchanged`: documented as not a guarantee, and git clobbers it on checkout
     # and merge. The index flag is also PER WORKTREE — each has its own index — which is precisely
     # why it is set here, at the one place that creates worktrees.
+    # ⭐⭐ ONE DECLARATION OF WHAT COUNTS AS SESSION STATE. There were THREE, and two of them
+    # sat forty lines apart in this file: `_ARC_STATE`, `_EXPECTED_LOCAL`, and a `session_state`
+    # list in `config/worktree_reaper.v1.json`. Found 2026-09-13 while diagnosing a `D1`
+    # carrier merge that had hung TWICE on the same defect, and the middle one was added SIX
+    # DAYS EARLIER — by me, in the merge work, in a commit that argued for one source and no
+    # second copies. I did not look for the other two.
+    #
+    # ⛔ THE COST WAS NOT THE DUPLICATION, IT WAS THE FOURTH LAYER THAT HAD **NO** ANSWER.
+    # `worktree` knows a round counter is not work; the consumer's `ledger_subjects` does not,
+    # so it recorded 472 subjects in an authoring worktree (where the file is clean) and 471 in
+    # the carrier (where it is a live counter). Same checker, same tree, two subject sets — and
+    # `V11` correctly refused the second as a conflicting claim. Four layers, three saying "not
+    # content" and one saying nothing, and the disagreement was invisible until a record written
+    # where the file is clean met one written where it is dirty.
+    #
+    # ⚠ Tim, 2026-09-11: the tracked file is a STATIC INITIALIZER and the working copy is an
+    # INSTANCE constructed at checkout — "that file never gets checked back in or modified."
+    # ` M gate_round.json` in every status is correct construction, not a dirty tree.
+    #
+    # ⚠ IT STAYS IN CODE RATHER THAN MOVING TO CONFIG, and the reason is the failure direction.
+    # `_reaper_policy` documents that an ABSENT config DISABLES the reaper rather than defaulting
+    # one — safe, because the failure is "do not delete". Session-state membership fails the
+    # other way: an absent list would make `_require_clean` and the commit guard treat a live
+    # counter as WORK, refusing every branch move and every commit. A structural fact whose
+    # absence breaks a guard does not belong beside a tunable horizon.
+    _SESSION_STATE = ("gate_round.json", ".claude-local/*", "*.local.json")
+
+    # ⚠ THE ARC HANDSHAKE IS A MEMBER OF THAT SET, NOT A SECOND DECLARATION OF IT. It keeps its
+    # own name because the guard reads its `round` FIELD — a content semantic no pattern list
+    # carries — but a test asserts it matches `_SESSION_STATE`, so the two cannot drift apart.
     _ARC_STATE = "gate_round.json"
 
-    # ⭐⭐ EXPECTED LOCAL STATE, AS A CONVENTION RATHER THAN ONE HARD-CODED FILENAME.
-    # Tim, 2026-09-10: "maybe documentation when files are carried forward at most .. but
-    # blocking them... that's bad design. merge plus subtree naming convention would make
-    # sense to allow."
-    #
-    # ⚠ THIS CLASSIFIES FOR THE RECEIPT. IT GATES NOTHING. A path matching one of these is
-    # reported as expected local state; a path not matching is reported as uncommitted work.
-    # Both are REPORTED and neither is refused. `_require_clean` still uses `_ARC_STATE`
-    # alone, because switch/rebase/squash keep their existing behaviour unchanged.
-    _EXPECTED_LOCAL = ("gate_round.json", ".claude-local/*", "*.local.json")
 
     def _seal_arc_state(self, worktree: Path) -> dict:
         """Mark the arc handshake file skip-worktree in a fresh worktree, so its local round
@@ -1519,7 +1539,7 @@ class GitRobot:
             path = line[3:].strip().strip('"')
             if not path:
                 continue
-            bucket = expected if any(fnmatch(path, pat) for pat in self._EXPECTED_LOCAL) else work
+            bucket = expected if any(fnmatch(path, pat) for pat in self._SESSION_STATE) else work
             bucket.append(path)
         return {
             "expected_local": expected[:limit],
@@ -2497,7 +2517,12 @@ class GitRobot:
                                  extra={"removed": [], "kept": [], "configured": False})
         clean_h = float(policy.get("clean_after_hours") or 0) or None
         dirty_h = float(policy.get("dirty_after_hours") or 0) or None
-        session_state = policy.get("session_state") or []
+        # ⚠ FROM `_SESSION_STATE`, NOT FROM THE POLICY FILE. The config used to carry its own
+        # `session_state` list — a third declaration of the same fact, and the one furthest from
+        # the guards that depend on it. The horizons stay in config because they are TUNABLE
+        # POLICY the gated party must not set; membership is a STRUCTURAL FACT the guards read,
+        # and splitting it across both is how the three got out of sync unnoticed.
+        session_state = list(self._SESSION_STATE)
         main = Path(self.git.repo).resolve()
 
         removed, kept = [], []

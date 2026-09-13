@@ -280,3 +280,41 @@ def test_every_call_signature_in_instructions_is_actually_callable():
              for t in asyncio.run(_srv.mcp.list_tools())]
     problems = unsupported_calls(_srv.mcp.instructions or "", tools)
     assert not problems, "uncallable signatures in instructions: %s" % problems
+
+
+# -- one declaration of what counts as session state --------------------------
+
+def test_the_arc_handshake_is_a_member_of_the_session_state_set():
+    """⛔⛔ THERE WERE THREE DECLARATIONS OF THIS ONE FACT AND NOTHING COMPARED THEM.
+
+    `_ARC_STATE`, `_EXPECTED_LOCAL` (forty lines apart in engine.py) and a `session_state` list
+    in the reaper config. Found 2026-09-13 while diagnosing a `D1` carrier merge that had hung
+    TWICE on the same defect — and the middle one was added six days earlier, in a commit that
+    argued for one source and no second copies.
+
+    ⭐ `_ARC_STATE` keeps its own name because the commit guard reads its `round` FIELD, which
+    no pattern list carries. This asserts it is a MEMBER of the set rather than a rival
+    declaration of it, so the two cannot drift.
+    """
+    from fnmatch import fnmatch
+    from core.engine import GitRobot
+
+    assert any(fnmatch(GitRobot._ARC_STATE, pat) for pat in GitRobot._SESSION_STATE), (
+        "_ARC_STATE %r matches no pattern in _SESSION_STATE %r — the guard and the reaper "
+        "would disagree about whether the arc counter is work"
+        % (GitRobot._ARC_STATE, GitRobot._SESSION_STATE))
+
+
+def test_the_reaper_config_carries_no_second_session_state_list():
+    """⚠ A CONFIG VALUE THE CODE IGNORES IS A COPY THAT READS AS AUTHORITY. The key was removed
+    when the declaration consolidated; a tombstone explains why. If someone re-adds it, the
+    reaper will silently keep using the constant and the file will lie."""
+    import json
+    from pathlib import Path
+
+    cfg = json.loads((Path(__file__).resolve().parents[1] / "config"
+                      / "worktree_reaper.v1.json").read_text(encoding="utf-8"))
+    assert "session_state" not in cfg, (
+        "the reaper reads GitRobot._SESSION_STATE; a `session_state` key here is a second "
+        "declaration nothing consults")
+    assert "_session_state_moved" in cfg, "the tombstone must survive, or the absence reads as an omission"
