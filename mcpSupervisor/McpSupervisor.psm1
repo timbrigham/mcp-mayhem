@@ -318,6 +318,165 @@ function Test-McpStreamIntact {
   return [pscustomobject]@{ Ok = $true; File = $null }
 }
 
+function Split-McpLargeStream {
+  <#
+    .SYNOPSIS
+      Write every oversized .jsonl in the backup repo as ordered PARTS, and untrack the original.
+
+    ⛔⛔ WHY THIS EXISTS. Measured 2026-09-15: the offsite backup stopped reaching GitHub at 13:39Z
+    and could never recover by retrying. `verdictLedger/records.jsonl` crossed GitHub's hard
+    100 MB per-file limit between two ticks:
+
+        c0c7417  13:08Z  104,544,197 bytes   pushed
+        31e04a7  13:39Z  105,528,594 bytes   REFUSED, and every tick after it (limit 104,857,600)
+
+    A dry-run push kept succeeding, because a dry run never sends the file.
+
+    ⭐ PARTS, NOT LFS (Tim, 2026-09-15). LFS stores a whole new copy on every change, about 105 MB
+    per tick, roughly 5 GB a day. The stream is APPEND-ONLY, so a part that is full never changes
+    again: git stores it once, and only the last part moves per tick. The LIVE file the ledger
+    writes is never touched; only the backup's representation of it changes.
+
+    Parts are cut at LINE boundaries, so each is valid JSONL on its own, and only COMPLETE lines are
+    taken: a tail still being written is left for the next tick, as Test-McpStreamIntact already
+    does. Cut points are deterministic over growth, because the bytes before any cut never change.
+
+    RESTORE: concatenate the parts in order (Join-McpStreamParts) and check the SHA-256 against
+    `manifest.json`. A restore that is not checked is not a restore.
+
+    ⚠ A single record larger than the GitHub limit cannot be backed up by any split. That THROWS,
+    so Invoke-McpBackup records a loud error rather than committing a backup that cannot push.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$RepoPath,
+    [long]$ThresholdBytes = 50MB,
+    [long]$PartBytes = 50MB
+  )
+  $limit = 100MB
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $hex = { param($b, $o, $n) ([BitConverter]::ToString($sha.ComputeHash($b, $o, $n))).Replace('-', '').ToLower() }
+  $root = (Resolve-Path $RepoPath).Path.TrimEnd('\')
+  $split = @()
+  $candidates = Get-ChildItem -Path $root -Filter '*.jsonl' -Recurse -File |
+    Where-Object { $_.FullName -notmatch '\.parts\\' -and $_.Length -ge $ThresholdBytes }
+  foreach ($f in $candidates) {
+    $rel = $f.FullName.Substring($root.Length + 1).Replace('\', '/')
+    # FileShare.ReadWrite: the ledger may hold the file open for append.
+    $fs = [System.IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite')
+    try {
+      $bytes = New-Object byte[] $fs.Length
+      $read = 0
+      while ($read -lt $bytes.Length) {
+        $n = $fs.Read($bytes, $read, $bytes.Length - $read)
+        if ($n -le 0) { break }
+        $read += $n
+      }
+    } finally { $fs.Dispose() }
+    if ($read -le 0) { continue }
+    $end = [Array]::LastIndexOf($bytes, [byte]10, $read - 1) + 1   # complete lines only
+    if ($end -le 0) { continue }
+
+    $parts = @()
+    $start = 0
+    while ($start -lt $end) {
+      $cut = $start
+      while ($cut -lt $end) {
+        $nl = [Array]::IndexOf($bytes, [byte]10, $cut, $end - $cut)
+        # ⚠ Cannot happen while $end sits just past a newline, but a -1 here would reset $cut
+        # to 0 and loop for ever inside the supervisor. Measured: a test that broke $end did hang.
+        if ($nl -lt 0) { throw "internal: no newline between offsets $cut and $end in $rel" }
+        $next = $nl + 1
+        if (($next - $start) -gt $PartBytes -and $cut -gt $start) { break }
+        $cut = $next
+      }
+      $len = $cut - $start
+      if ($len -ge $limit) {
+        throw "$rel has a single record of $len bytes at offset $start, over GitHub's per-file limit; no split can back it up"
+      }
+      $parts += [pscustomobject]@{ start = $start; bytes = $len; sha256 = (& $hex $bytes $start $len) }
+      $start = $cut
+    }
+
+    $dir = Join-Path $f.DirectoryName ($f.Name + '.parts')
+    $null = New-Item -ItemType Directory -Force -Path $dir
+    $entries = @()
+    for ($k = 0; $k -lt $parts.Count; $k++) {
+      $name = 'part-{0:D4}.jsonl' -f ($k + 1)
+      $path = Join-Path $dir $name
+      $pt = $parts[$k]
+      $same = $false
+      if ((Test-Path $path) -and (Get-Item $path).Length -eq $pt.bytes) {
+        $existing = [System.IO.File]::ReadAllBytes($path)
+        $same = ((& $hex $existing 0 $existing.Length) -eq $pt.sha256)
+      }
+      if (-not $same) {
+        $out = [System.IO.File]::Open($path, 'Create', 'Write', 'None')
+        try { $out.Write($bytes, $pt.start, $pt.bytes) } finally { $out.Dispose() }
+      }
+      $entries += [pscustomobject]@{ name = $name; bytes = $pt.bytes; sha256 = $pt.sha256 }
+    }
+    # A part beyond the current count can only mean the source SHRANK, which an append-only
+    # stream never does. Remove it so the manifest and the directory cannot disagree, and log it.
+    $names = @($entries | ForEach-Object { $_.name })
+    Get-ChildItem -Path $dir -Filter 'part-*.jsonl' -File |
+      Where-Object { $names -notcontains $_.Name } |
+      ForEach-Object {
+        Write-McpLog -Level 'WARN' -Message "backup: $rel shrank; removing stale $($_.Name)"
+        Remove-Item -LiteralPath $_.FullName -Force
+      }
+
+    # ⚠ DETERMINISTIC: no timestamp, or every tick would change the manifest and commit.
+    $manifest = [ordered]@{
+      source = $rel; bytes = $end; sha256 = (& $hex $bytes 0 $end)
+      part_bytes = $PartBytes; parts = $entries
+      restore = 'concatenate parts in order; the SHA-256 of the result must equal sha256'
+    }
+    $mjson = ($manifest | ConvertTo-Json -Depth 5)
+    [System.IO.File]::WriteAllText((Join-Path $dir 'manifest.json'), $mjson + "`n", (New-Object System.Text.UTF8Encoding $false))
+
+    # The original must never be committed again: ignore it, and untrack it if it was tracked.
+    $ignore = Join-Path $root '.gitignore'
+    $line = "/$rel"
+    $have = if (Test-Path $ignore) { @(Get-Content -Path $ignore) } else { @() }
+    if ($have -notcontains $line) {
+      $add = "# over GitHub's 100 MB file limit; backed up as $rel.parts/ (Split-McpLargeStream)`n$line`n"
+      [System.IO.File]::AppendAllText($ignore, $add, (New-Object System.Text.UTF8Encoding $false))
+    }
+    if (Test-Path (Join-Path $root '.git')) {
+      $null = git -C $root rm --cached -q --ignore-unmatch -- $rel
+    }
+    $split += [pscustomobject]@{ Source = $rel; Bytes = $end; Parts = $entries.Count }
+  }
+  $sha.Dispose()
+  return $split
+}
+
+function Join-McpStreamParts {
+  <#
+    .SYNOPSIS
+      Rebuild a split stream from its parts, VERIFIED against the manifest. Throws on any mismatch.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$PartsDir,
+    [Parameter(Mandatory)][string]$Destination
+  )
+  $m = Get-Content -Raw -Path (Join-Path $PartsDir 'manifest.json') | ConvertFrom-Json
+  $out = [System.IO.File]::Open($Destination, 'Create', 'Write', 'None')
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    foreach ($pt in $m.parts) {
+      $b = [System.IO.File]::ReadAllBytes((Join-Path $PartsDir $pt.name))
+      if ($b.Length -ne $pt.bytes) { throw "$($pt.name): $($b.Length) bytes, manifest says $($pt.bytes)" }
+      $out.Write($b, 0, $b.Length)
+      $null = $sha.TransformBlock($b, 0, $b.Length, $null, 0)
+    }
+    $null = $sha.TransformFinalBlock((New-Object byte[] 0), 0, 0)
+    $got = ([BitConverter]::ToString($sha.Hash)).Replace('-', '').ToLower()
+  } finally { $out.Dispose(); $sha.Dispose() }
+  if ($got -ne $m.sha256) { throw "rebuilt $($m.source) hashes $got, manifest says $($m.sha256)" }
+  return [pscustomobject]@{ Source = $m.source; Bytes = $m.bytes; Sha256 = $got }
+}
+
 function Invoke-McpBackup {
   <#
     .SYNOPSIS
@@ -362,6 +521,10 @@ function Invoke-McpBackup {
       Write-McpLog -Message "backup: $($result.skipped)"
       return $result
     }
+
+    # ⛔ Before staging: an oversized stream must reach git as parts, never whole. See
+    # Split-McpLargeStream. It THROWS on an unsplittable record, which lands in the catch below.
+    $null = Split-McpLargeStream -RepoPath $RepoPath
 
     $null = git -C $RepoPath add -A
     $null = git -C $RepoPath diff --cached --quiet
@@ -430,4 +593,4 @@ Export-ModuleMember -Function `
   Write-McpLog, Get-McpManifest, Resolve-McpToken, Get-McpServer, Get-McpListenerPid, Get-McpChildProcess, `
   Get-McpServerProcess, Test-McpHttp, Get-McpHealth, Stop-McpServer, Test-McpRequiredEnv, `
   Resolve-McpExe, Start-McpServer, Repair-McpServer, `
-  Test-McpStreamIntact, Invoke-McpBackup, Get-McpBackupAge
+  Test-McpStreamIntact, Split-McpLargeStream, Join-McpStreamParts, Invoke-McpBackup, Get-McpBackupAge
