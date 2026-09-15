@@ -44,7 +44,7 @@ consumers/lean/           # consumer #1 — kept OUT of core (spec §13/§14)
 consumers/claims/         # the claim-graph collection (interop #12)
   claim.schema.json       # claim node/edge shape (one shape; edge = from/to set)
   rules.py                # claim_id uniqueness, status/object/domain enum, edge refs
-  operations.py           # add_claim/seed_claims/set_status/set_edge/annotate_claim
+  operations.py           # add_claim/seed_claims/set_status/set_edge/annotate_claim/restate_claim
   views.py                # status table + Mermaid graph (joins claims × declarations)
 consumers/deps/           # the declaration dependency graph (interop #13)
   dep.schema.json         # directed edge {id, from, to, kind}; derived, zero-curation

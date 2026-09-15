@@ -16,7 +16,7 @@ Declaration write tools: seal, the §9 verbs (rename, move, drop, mark_present,
   link_claim, unlink_claim, add_citation, set_verify, set_vocab, import_baseline,
   reconcile).
 Claim write tools: claim_add, claim_seed, claim_set_status, claim_set_edge,
-  claim_annotate, claim_set_vocab.
+  claim_annotate, claim_restate, claim_set_vocab.
 Plus a generic collection-aware ``apply`` escape hatch.
 
 Every write returns {ok, ...}. Enforcement failures (schema, §7 rules, the
@@ -699,6 +699,19 @@ def claim_annotate(claim_id: str, object=None, domain=None) -> WriteResult:
     if domain is not None:
         params["domain"] = domain
     return _write("claims", "annotate_claim", params)
+
+
+@mcp.tool(title='Restate a claim',
+          annotations=ToolAnnotations(title='Restate a claim', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
+def claim_restate(claim_id: str, statement: str, date: str, reason: str, by: str) -> WriteResult:
+    """Replace a claim's statement, keeping the replaced text. APPENDS
+    {prior_statement, date, reason, by} to the claim's `restatements` list, separate
+    from its status `history`. All of date/reason/by are required: `by` names who
+    ruled, because nothing else on a claim records a person. Refused if the new text
+    equals the current one. Use this, never claim_drop + claim_add, which erases the
+    claim's history."""
+    return _write("claims", "restate_claim", {"claim_id": claim_id, "statement": statement,
+                                              "date": date, "reason": reason, "by": by})
 
 
 @mcp.tool(title='Set claim vocabulary',

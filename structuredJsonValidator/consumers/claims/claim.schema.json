@@ -80,7 +80,22 @@
             }
           }
         },
-        "reason": { "type": ["string", "null"] }
+        "reason": { "type": ["string", "null"] },
+        "restatements": {
+          "type": "array",
+          "$comment": "Append-only STATEMENT provenance, written by restate_claim (2026-09-15). Optional: absent on a claim never restated. Separate from history, which is status provenance. prior_statement is the text that was REPLACED; the current text is statement.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["prior_statement", "date", "reason", "by"],
+            "properties": {
+              "prior_statement": { "type": "string" },
+              "date": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 },
+              "by": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     }
   },

@@ -176,6 +176,54 @@ def set_edge(document, *, claim_id: str, **edge) -> tuple[dict, list[str]]:
     return doc, [claim["id"]]
 
 
+# -- restatement (provenance-preserving) --------------------------------------
+
+def _nonempty(name: str, value) -> str:
+    if not (isinstance(value, str) and value.strip()):
+        raise OperationError(f"restate_claim requires a non-empty {name}")
+    return value
+
+
+def restate_claim(document, *, claim_id: str, statement: str, date: str, reason: str,
+                  by: str) -> tuple[dict, list[str]]:
+    """Replace a claim's ``statement`` and APPEND the text it replaces to ``restatements``.
+
+    ⛔ WHY THIS EXISTS. Requested by ZeroParadox 2026-09-15: Tim ruled that ``DA-1`` and
+    ``node-computability`` overclaim and must be restated. No op could change a statement.
+    ``annotate_claim`` takes only object/domain, and ``drop_claim`` + ``add_claim`` erases the
+    claim's recorded history, which Tim declined. A restatement is a change to what the claim
+    SAYS, and the earlier text must stay readable. Otherwise a reader of the export cannot
+    tell a claim that always said X from one that said Y until someone corrected it.
+
+    ⭐ A SEPARATE LIST, NOT ``history`` (Tim, 2026-09-15). ``history`` is status provenance,
+    and its schema locks each entry to {status, date}; mixing in statement changes would give
+    every reader of it two entry kinds. Each ``restatements`` entry records:
+        prior_statement   the text that was REPLACED (the current text is ``statement``)
+        date              when it was restated. DATA from the caller, like set_status
+        reason            why
+        by                who ruled. Caller-supplied, because nothing else on a claim can
+                          say: the audit log's actor is the server, not a person
+    All four are required. ``prior_statement`` is named for what it holds; a bare
+    ``statement`` key would read as the new text.
+
+    ⚠ A restatement to the IDENTICAL text is refused. It would append a row asserting a change
+    that did not happen. ``statement``/``status``/witness invariants are re-checked by the store
+    postcondition like every write."""
+    doc = _require_doc(document)
+    claim = _find_by_claim_id(doc, claim_id)
+    _nonempty("statement", statement)
+    for name, value in (("date", date), ("reason", reason), ("by", by)):
+        _nonempty(name, value)
+    prior = claim.get("statement")
+    if statement == prior:
+        raise OperationError(
+            f"claim {claim_id!r} already says exactly that; a restatement must change the text")
+    claim.setdefault("restatements", []).append(
+        {"prior_statement": prior, "date": date, "reason": reason, "by": by})
+    claim["statement"] = statement
+    return doc, [claim["id"]]
+
+
 # -- removal ------------------------------------------------------------------
 
 def drop_claim(document, *, claim_id: str, reason: str) -> tuple[dict, list[str]]:
@@ -236,5 +284,6 @@ OPERATIONS = {
     "set_edge": set_edge,
     "drop_claim": drop_claim,
     "annotate_claim": annotate_claim,
+    "restate_claim": restate_claim,
     "set_vocab": set_vocab,
 }
