@@ -98,11 +98,13 @@ def test_a_torn_tail_is_left_for_the_next_tick(tmp_path):
 def test_the_original_is_ignored_and_untracked(tmp_path):
     """The whole file must never be committed again, even if it was tracked before the split."""
     repo = _repo(tmp_path, 20)
+    (repo / ".gitignore").write_bytes(b"*.tmp")      # no trailing newline, on purpose
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     _split(repo)
     _split(repo)                                     # idempotent: one ignore line, not two
     ignore = (repo / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ignore.count("/verdictLedger/records.jsonl") == 1
+    assert ignore[0] == "*.tmp", "the appended comment was glued onto the existing last line"
     tracked = subprocess.run(["git", "-C", str(repo), "ls-files"], capture_output=True,
                              text=True, check=True).stdout.splitlines()
     assert "verdictLedger/records.jsonl" not in tracked

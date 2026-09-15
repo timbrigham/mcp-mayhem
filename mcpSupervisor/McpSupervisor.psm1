@@ -440,6 +440,12 @@ function Split-McpLargeStream {
     $have = if (Test-Path $ignore) { @(Get-Content -Path $ignore) } else { @() }
     if ($have -notcontains $line) {
       $add = "# over GitHub's 100 MB file limit; backed up as $rel.parts/ (Split-McpLargeStream)`n$line`n"
+      # ⚠ If the file does not end in a newline, the comment would be glued onto its last pattern
+      # and silently change what that line ignores.
+      if ((Test-Path $ignore) -and (Get-Item $ignore).Length -gt 0) {
+        $tail = [System.IO.File]::ReadAllBytes($ignore)
+        if ($tail[$tail.Length - 1] -ne 10) { $add = "`n" + $add }
+      }
       [System.IO.File]::AppendAllText($ignore, $add, (New-Object System.Text.UTF8Encoding $false))
     }
     if (Test-Path (Join-Path $root '.git')) {
