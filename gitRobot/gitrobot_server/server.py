@@ -243,15 +243,25 @@ async def commit(message_file: str, reason: Optional[str] = None,
 async def preflight(reason: Optional[str] = None) -> ReceiptResult:
     """START the full pre-push pipeline WITHOUT pushing. Returns IMMEDIATELY.
 
-    ⚠ Run this BEFORE push — push refuses without it. A gate that runs inside the push has a
+    ⚠⚠ A PREVIEW, NOT A PRECONDITION. push does NOT require it and never asks whether one ran:
+    the only thing push demands is the verdictLedger inventory for the exact HEAD. This
+    docstring claimed the opposite until 2026-09-16 — see push() — and a caller had built on it.
+    Run it to learn what the hook will say while you can still act on it. A gate that runs inside the push has a
     zero-length response window: the push completes in the same invocation, so the findings
     arrive after the irreversible act. This splits the verdict from the act.
 
     ⚠⚠ It does NOT wait. The pipeline takes ~155s on the real repo, which outlives both the
     call window and the process supervisor's 30s health poll — held open, it gets the server
     killed mid-run. So this returns a run_id straight away and the pipeline continues in the
-    background; poll `preflight_status()` for the verdict. push stays refused until a run
-    lands green for the CURRENT HEAD, so committing again invalidates it."""
+    background; poll `preflight_status()` for the verdict.
+
+    ⚠ A verdict is bound to the HEAD it ran against, so committing again makes it describe a
+    tree you are no longer pushing. It is judged over the refs that HEAD would push (gitRobot
+    feeds your hook git's own `<local ref> <local sha> <remote ref> <remote sha>` line since
+    2026-09-16); the receipt carries `push_refs` and `range` so you can see WHAT was judged.
+    ⛔ Before that fix it fed the hook nothing, so a hook deriving scope from those refs judged
+    an EMPTY scope and reported clean — measured on a real push that then failed over 76
+    files."""
     return await _guard(_robot().preflight, reason=reason)
 
 
@@ -259,6 +269,9 @@ async def preflight(reason: Optional[str] = None) -> ReceiptResult:
           annotations=ToolAnnotations(title='Preflight state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def preflight_status() -> PreflightStatusResult:
     """The state of the latest preflight for the current HEAD.
+
+    ⚠ It is a PREVIEW's state: `passed` does not authorise a push and push never reads it. The
+    gate is the verdictLedger inventory — see push().
 
     'running' / 'passed' / 'failed' / 'died' / 'none'. 'died' means a run was interrupted
     (its process is gone) and never recorded a verdict — worth having as its own state,
@@ -270,17 +283,28 @@ async def preflight_status() -> PreflightStatusResult:
 @mcp.tool(title='Push to the remote',
           annotations=ToolAnnotations(title='Push to the remote', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResult:
-    """Push a branch. On the main repo: requires a passing preflight() for the CURRENT HEAD.
+    """Push a branch. On the main repo: requires the verdictLedger INVENTORY for the CURRENT
+    HEAD to be satisfied, checked synchronously before the run starts.
+
+    ⛔⛔ preflight() IS A PREVIEW, NOT A PRECONDITION, and this line said the opposite until
+    2026-09-16. ZeroParadox read it as the contract — which it is, being the only surface a
+    caller can see — and let a push run believing a passing preflight receipt was discharging a
+    stated requirement. The rule it taught is the failure this server removed: preflight stored
+    ONE BIT, and on 2026-08-23 that bit said pass while the ledger said 0/19. When two
+    mechanisms answer one question the weaker one is what lets things through, so the bit was
+    deleted and the ledger is the only authority gitRobot consults.
 
     repo_mode='.claude-local' pushes that nested repository to its OWN remote instead. It is a
-    genuinely separate repo with its own history and no gate pipeline, so no preflight is
+    genuinely separate repo with its own history and no gate pipeline, so no inventory is
     required there — demanding a verdict from a pipeline that does not exist would make the
     operation permanently unreachable rather than safe. Reason and audit still apply.
 
     RETURNS IMMEDIATELY WITH A run_id — POLL push_status(). The pre-push hook re-runs the full
     pipeline as the backstop and that takes ~25 minutes, which is ~5x the client's 300s call
     window. Held open, the call is abandoned mid-push and the audit records nothing. Same split
-    preflight() has had since 2026-08-22, for the same reason.
+    preflight() has had since 2026-08-22, for the same reason. The installed pre-push hook runs
+    on every push as the backstop, with git's own refs — there is no --no-verify on this
+    surface.
 
     Every REFUSAL is still immediate and synchronous — branch shape, missing reason, and the
     ledger inventory. Only the irreversible act is backgrounded, so "not allowed" always comes
@@ -363,6 +387,12 @@ async def requirements(action: str = "push") -> RequirementsResult:
           annotations=ToolAnnotations(title='Push state', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def push_status() -> PushStatusResult:
     """Where the last started push got to: none / running / allowed / failed / died.
+
+    ⚠ A `failed` run CARRIES ITS REASON in `output` — git's transcript, including the pre-push
+    hook's, which is where a blocked push says WHY. Read it before re-running anything.
+    ⛔ It was `null` on every push until 2026-09-16: this read a key the receipt never wrote to
+    the audit row, while the transcript sat on that row under `detail`. ZeroParadox re-ran the
+    whole pipeline by hand to learn what was already recorded.
 
     ⚠ `died` DOES NOT MEAN NOTHING WAS PUSHED. The worker is gone and no receipt was written —
     usually a server restart mid-push — but git can be killed AFTER the remote accepted the ref.
