@@ -120,7 +120,31 @@ class Gates:
     def available(self) -> bool:
         return (self.repo / HOOKS_ENTRY).exists()
 
-    def run(self, phase: str) -> GateResult:
+    ZERO = "0" * 40
+
+    def push_refs(self, branch: str, head: str, remote_head: Optional[str]) -> str:
+        """The stdin git feeds a pre-push hook: `<local ref> <local sha> <remote ref> <remote sha>`.
+
+        ⛔⛔ WHY THIS EXISTS. Measured 2026-09-15 on ZeroParadox cb27e4e: `preflight` reported
+        `passed`, and the push of that same HEAD failed in the hook minutes later. gitRobot ran
+        the hook with NO STDIN, git feeds it the refs being pushed, and the consumer's
+        `hooks.py pre_push` derives its whole scope from them. So the pipeline judged
+
+            scope   0 ref(s) being pushed
+            scope   0 reviewable file(s) in the PUSHED RANGE(S) (none)
+            ledger  step `adversary` - no reviewable change in scope - review not required
+
+        and exited 0. Every leg is universally quantified over the reviewed scope, so all of
+        them held VACUOUSLY. The real push, which git hands the refs, saw 76 files and blocked.
+        A gate whose whole job is "will this push succeed" answered about the empty set.
+
+        ⚠ A NEW BRANCH IS THE ZERO SHA, as git sends it, so the hook takes its own
+        new-ref path rather than resolving a range against a remote that has none.
+        """
+        remote_ref = f"refs/heads/{branch}"
+        return f"{remote_ref} {head} {remote_ref} {remote_head or self.ZERO}\n"
+
+    def run(self, phase: str, *, stdin: Optional[str] = None) -> GateResult:
         if phase not in PHASES:
             raise ValueError(f"unknown gate phase {phase!r}; expected one of {PHASES}")
         if not self.available():
@@ -135,6 +159,10 @@ class Gates:
             proc = subprocess.run(
                 argv, cwd=str(self.repo), capture_output=True, text=True,
                 encoding="utf-8", errors="replace", shell=False,
+                # ⚠ ALWAYS A STRING, NEVER None, for a phase that reads stdin. `input=None`
+                # leaves the child attached to THIS process's stdin, so it blocks or reads
+                # whatever the server was started with; an empty string is a clean EOF.
+                input=stdin if stdin is not None else "",
                 timeout=PHASE_TIMEOUT.get(phase, 600),
             )
         except subprocess.TimeoutExpired:

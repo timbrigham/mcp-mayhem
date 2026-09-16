@@ -743,6 +743,28 @@ class GitRobot:
         clearance-lock-keyed-to-HEAD pattern.
         """
         head = self.git.head()
+        # ⛔⛔ THE REFS THE HOOK WOULD GET FROM GIT. Without them the consumer's pre-push
+        # pipeline computes an EMPTY scope and every leg passes vacuously — measured
+        # 2026-09-15, `passed` at a HEAD whose push failed on 76 files eighteen minutes later.
+        # See Gates.push_refs.
+        branch = self.git.branch()
+        # ⚠ DETACHED READS AS THE LITERAL STRING "HEAD", not as absent: `branch()` is
+        # `rev-parse --abbrev-ref HEAD`. Testing only for falsiness let a detached HEAD through
+        # and would have fed the hook `refs/heads/HEAD` — a ref no push will ever send.
+        if not branch or branch == "HEAD":
+            raise self._refuse(
+                "preflight", {},
+                "HEAD is detached, so there is no branch whose push scope could be judged.",
+                "Check out the branch you intend to push (`read(op='branch')` lists them) and "
+                "run preflight again. A preflight with no branch would hand the pipeline no "
+                "refs, and a pipeline with no refs reports every check green over an empty "
+                "scope — which is what this refusal exists to prevent.",
+                reason=reason,
+            )
+        remote_head = self.git.run(["rev-parse", "--verify", "--quiet",
+                                    f"origin/{branch}"])
+        remote_sha = remote_head.output.strip() if remote_head.ok else ""
+        push_refs = self.gates.push_refs(branch, head, remote_sha or None)
         running = self.preflight_status()
         if running.get("state") == "running":
             raise self._refuse(
@@ -756,11 +778,16 @@ class GitRobot:
         self.audit.append(
             actor=self.actor, op="preflight", args={}, decision="started",
             head=head, branch=self.git.branch(), tree=self.git.tree_state(),
-            reason=reason, detail="pre-push preflight started", run_id=run_id,
+            reason=reason,
+            # ⚠ THE SCOPE IS ON THE ROW, so a later reader can tell WHAT was judged. A
+            # preflight that judged nothing must not be indistinguishable from one that
+            # judged the push.
+            detail=f"pre-push preflight started; refs fed to the hook: {push_refs.strip()}",
+            run_id=run_id,
         )
 
         def _run() -> dict:
-            gate = self.gates.run("pre-push")
+            gate = self.gates.run("pre-push", stdin=push_refs)
             self.audit.append(
                 actor=self.actor, op="preflight", args={},
                 decision="allowed" if gate.passed else "failed",
@@ -777,6 +804,10 @@ class GitRobot:
         thread = threading.Thread(target=_run, name=f"preflight-{run_id}", daemon=True)
         thread.start()
         return {"op": "preflight", "run_id": run_id, "head": head, "state": "running",
+                # what the hook is judging, in the caller's hand before the run lands
+                "push_refs": push_refs.strip(),
+                "range": (f"{remote_sha[:12]}..{head[:12]}" if remote_sha
+                          else f"{branch} (new on the remote)"),
                 # ⚠ THE BUDGET IS PUBLISHED AT START, NOT ONLY IN THE POST-MORTEM. A caller
                 # polling a long run cannot tell "still going" from "hung" without knowing
                 # what the cap is, and it lives in a module constant nobody outside this
@@ -1130,7 +1161,14 @@ class GitRobot:
                 return {"state": record["decision"], "run_id": run_id,
                         "branch": started.get("args", {}).get("branch"),
                         "head": started.get("head"), "ts": record["ts"],
-                        "output": (record.get("extra") or {}).get("output")}
+                        # ⛔ `extra` IS NOT ON THE ROW. `_receipt` merges it into the RETURNED
+                        # receipt and never audits it, so this read was null on every push
+                        # since it was written — including the failed one ZeroParadox reported
+                        # 2026-09-15, whose 8,120-character transcript was on the row the whole
+                        # time under `detail`. They found the cause by re-running the pipeline
+                        # themselves; the reason was already recorded and simply unreachable.
+                        "output": ((record.get("extra") or {}).get("output")
+                                   or record.get("detail"))}
 
         alive = any(t.name == f"push-{run_id}" and t.is_alive()
                     for t in threading.enumerate())
