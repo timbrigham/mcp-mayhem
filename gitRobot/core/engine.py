@@ -949,7 +949,7 @@ class GitRobot:
         docstring argues for it in terms; `push` did not, and on 2026-08-30 that cost
         a real push. Measured: the MCP client abandons the call at **300s**, this
         method capped git at **900s**, and the pre-push hook — which is the backstop,
-        so it always runs — now takes **1498s**. The sanctioned route was
+        so it always runs — took **1498s on 2026-08-30**. The sanctioned route was
         unreachable by ~5x, and BOTH ceilings were below the floor, so raising one
         would have fixed nothing.
 
@@ -1094,7 +1094,7 @@ class GitRobot:
         def _do_push() -> dict:
             # ⚠⚠ THE TIMEOUT MUST CLEAR THE HOOK, NOT THE NETWORK. This was 900s, chosen
             # when the pre-push pipeline took ~155s. It is the BACKSTOP hook — it runs on
-            # every push by design — and it now takes 1498s, so 900s killed the push
+            # every push by design — and it took 1498s on 2026-08-30, so 900s killed the push
             # mid-gate and looked like a network fault. Sized well above the measured
             # pipeline rather than just above it, because the pipeline grows whenever a
             # control is added and the next person to add one will not revisit this number.
@@ -1136,7 +1136,10 @@ class GitRobot:
                 "inventory": None if inv is None else inv.get("line"),
                 "note": ("the push is running in the background; poll push_status(). The "
                          "pre-push hook re-runs the full pipeline as the backstop, measured "
-                         "at ~25 minutes, so expect minutes not seconds.")}
+                         "and its duration is a property of the RANGE and of the agent-gate "
+                         "LLM calls inside it, not a constant: measured over 47 recorded runs, "
+                         "median 672s, min 26s, max 1800s (the budget, i.e. a timeout). Read a "
+                         "receipt, never this sentence, for what a given run cost.")}
 
     def push_status(self) -> dict:
         """Where the last started push got to. The sibling of `preflight_status`.
@@ -1176,7 +1179,10 @@ class GitRobot:
             return {"state": "running", "run_id": run_id,
                     "branch": started.get("args", {}).get("branch"),
                     "head": started.get("head"),
-                    "note": "still running; the pre-push hook re-runs the full pipeline (~25 min)."}
+                    "note": ("still running; the pre-push hook re-runs the full pipeline. "
+                             "Median 672s over 47 recorded runs, min 26s, max 1800s (the "
+                             "budget). It scales with the RANGE, so a two-file push and a "
+                             "29-commit arc are not the same wait.")}
         return {"state": "died", "run_id": run_id,
                 "branch": started.get("args", {}).get("branch"),
                 "head": started.get("head"),

@@ -300,9 +300,16 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResu
     operation permanently unreachable rather than safe. Reason and audit still apply.
 
     RETURNS IMMEDIATELY WITH A run_id — POLL push_status(). The pre-push hook re-runs the full
-    pipeline as the backstop and that takes ~25 minutes, which is ~5x the client's 300s call
-    window. Held open, the call is abandoned mid-push and the audit records nothing. Same split
-    preflight() has had since 2026-08-22, for the same reason. The installed pre-push hook runs
+    pipeline as the backstop, and that outlives the client's 300s call window. Held open, the call
+    is abandoned mid-push and the audit records nothing. Same split preflight() has had since
+    2026-08-22, for the same reason.
+
+    ⛔ HOW LONG IS A PROPERTY OF THE RANGE, NOT A CONSTANT, and this line served a flat
+    twenty-five-minute figure until 2026-09-17. That figure was real — ONE run, 1498s, on 2026-08-30 — promoted to a present-tense
+    claim about the pipeline, and by 2026-09-17 it was 2.1x the median. Measured over the 47 runs
+    recorded in the audit log: median 672s, min 26s, max 1800s (the budget, so a timeout). A
+    two-file push and a 29-commit arc are not the same wait. ⚠ Ask a receipt, not a docstring:
+    every run's real duration is the gap between its `started` row and its terminal row. The installed pre-push hook runs
     on every push as the backstop, with git's own refs — there is no --no-verify on this
     surface.
 

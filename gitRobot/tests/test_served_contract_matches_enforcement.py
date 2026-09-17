@@ -120,3 +120,27 @@ def test_every_gate_claim_in_the_served_surface_is_about_the_ledger():
                                    or "push stays refused until a run" in low):
             offenders.append(name)
     assert not offenders, f"tool description(s) still claim preflight gates a push: {offenders}"
+
+def test_no_served_description_states_a_fixed_pipeline_duration():
+    """⛔ A DURATION IS A MEASUREMENT AND GOES STALE. `push` served "~25 minutes" from 2026-09-03
+    to 2026-09-17. The figure was real — one run, 1498s, on 2026-08-30 — promoted to a present-tense
+    claim about the pipeline, and by the time a caller quoted it back it was 2.1x the median of the
+    47 runs in the audit log (672s). It is the first number anyone reasoning about the re-run reaches
+    for, so it must not be served as a constant.
+
+    ⚠ The bar is a served DESCRIPTION, not a code comment: dated history like "took 1498s on
+    2026-08-30" is exactly what this project's comment style asks for and stays."""
+    import re
+    offenders = []
+    for name in dir(srv):
+        fn = getattr(srv, name)
+        doc = getattr(fn, "__doc__", None)
+        if not callable(fn) or not doc:
+            continue
+        for m in re.finditer(r"~\s*\d+\s*(?:min|minute|second|sec)", doc, re.I):
+            offenders.append(f"{name}: {m.group(0)!r}")
+    assert not offenders, (
+        "served description(s) state a fixed pipeline duration; it is a property of the range: %s"
+        % offenders)
+    assert "median" in (srv.push.__doc__ or ""), (
+        "push should give the measured distribution instead, and say to read a receipt")
