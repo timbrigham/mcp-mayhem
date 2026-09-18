@@ -20,6 +20,17 @@
 # ⚠ AND IT MATTERS MORE THAN TIDINESS ACROSS THE BOUNDARY: verdict identity in this fleet is
 # content-keyed on git blob ids. Line endings are bytes, so a file whose endings differ by
 # machine is a different subject to the ledger, and every verdict about it reads STALE.
+#
+# ⛔⛔ THE FAILURE MODE THAT WOULD ACTUALLY BE PAID FOR, ZeroParadox's framing 2026-09-17 and
+# sharper than mine: a CRLF-normalising checkout corrupts nothing and fails no build. It makes
+# a large fraction of the ledger read STALE for no visible reason — and the remedy LOOKS like
+# "re-run every gate" rather than "fix the checkout". A whole-fleet false staleness, presenting
+# as work. Nobody would suspect the line endings; they would suspect the gates.
+#
+# ⚠ THEIR .gitattributes JUSTIFIES THE SAME POLICY BY ONE CONSUMER — the SHA-256 `formal:`/
+# `comp:` tokens over ~45 build scripts. That reason is true and narrower: it would not have
+# caught this repo's case at all. Two consumers, one policy, and the next person tempted to
+# relax a rule for one file type should see both.
 
 # Default: auto-detect text, LF in the working tree and in the repo.
 * text=auto eol=lf
