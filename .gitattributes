@@ -1,0 +1,52 @@
+# Line-ending policy for mcp-mayhem.
+#
+# ⛔ WHY THIS EXISTS. `core.autocrlf=true` on this machine and NO .gitattributes here meant
+# every checkout rewrote tracked text to CRLF in the WORKING TREE, while git normalised it
+# back to LF on commit. So the repo was always clean and the files on disk were not — and it
+# is the files on disk that tools read.
+#
+# Measured 2026-09-17, two in one day, both from `pathlib.write_text` on Windows:
+#     gitRobot/config/admission.v1.json                          87 CRLF
+#     structuredJsonValidator/consumers/claims/claim.schema.json 103 CRLF (since 2026-09-15)
+# verdictLedger's `test_no_tracked_json_config_carries_CRLF` caught both. Its own docstring
+# records why that control exists: a CRLF config written from here once landed in ZeroParadox,
+# whose `.gitattributes` declares `* text=auto eol=lf`, and their byte-portability check
+# FAILED on it — a hard block on their push, arriving inside a change meant to help them.
+#
+# ⚠ The control is a DETECTOR and this is the FIX: without it the next checkout re-introduces
+# CRLF and the suite reports a condition nobody's edit caused. Same argument as everywhere
+# else here — make the defect unrepresentable rather than merely detected.
+#
+# ⚠ AND IT MATTERS MORE THAN TIDINESS ACROSS THE BOUNDARY: verdict identity in this fleet is
+# content-keyed on git blob ids. Line endings are bytes, so a file whose endings differ by
+# machine is a different subject to the ledger, and every verdict about it reads STALE.
+
+# Default: auto-detect text, LF in the working tree and in the repo.
+* text=auto eol=lf
+
+# Source and config — explicit LF
+*.py            text eol=lf
+*.json          text eol=lf
+*.jsonl         text eol=lf
+*.md            text eol=lf
+*.ps1           text eol=lf
+*.psm1          text eol=lf
+*.psd1          text eol=lf
+*.toml          text eol=lf
+*.cfg           text eol=lf
+*.ini           text eol=lf
+*.txt           text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Binary — never normalise
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.olean binary

@@ -15,11 +15,25 @@ needs, and the spec never said it could be lost.
 
 import inspect
 import json
+import time
 import os
 
 import pytest
 
 from core.errors import RefusalError
+
+
+# A gate that HOLDS until the test releases it. `fake_gate` exits immediately, which
+# makes "while one runs" a race rather than a state — see the test below.
+GATE_HOLDS_UNTIL_RELEASED = """import pathlib, time, sys
+release = pathlib.Path('release.txt')
+deadline = time.time() + 30
+while not release.exists() and time.time() < deadline:
+    time.sleep(0.02)
+print('gate released')
+sys.exit(0)
+"""
+
 
 
 # -- Defect 1: the run must outlive the call, and leave a trace either way -----
@@ -64,11 +78,40 @@ def test_a_running_preflight_is_not_a_verdict(robot, repo, fake_gate, ledger_ref
         robot.push("illustrated", reason="too early")
 
 
-def test_a_second_preflight_is_refused_while_one_runs(robot, fake_gate):
-    fake_gate(0)
+def test_a_second_preflight_is_refused_while_one_runs(robot, repo):
+    """⛔ THE RUN IS HELD OPEN DELIBERATELY, NOT RACED.
+
+    ⚠ MEASURED 2026-09-17: this failed twice under full-suite load and passed alone. It used
+    `fake_gate`, a stand-in that exits immediately, so "a preflight is running" held only for
+    as long as a trivial subprocess took to start and stop. On a loaded machine the first run
+    finished before the second call landed, the guard correctly did NOT refuse, and the test
+    reported a concurrency defect that did not exist.
+
+    ⭐ A GUARD WHOSE TEST ONLY PASSES ON AN IDLE MACHINE IS NOT TESTING THE GUARD. The gate now
+    BLOCKS until this test releases it, so the second call provably arrives while the first is
+    alive. ⚠ The gate also releases itself after 30s: a test that dies mid-run must not leave a
+    process wedged for the rest of the suite.
+    """
+    entry = repo / "tools" / "verify" / "hooks.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(GATE_HOLDS_UNTIL_RELEASED, encoding="utf-8")
+
     robot.preflight()
-    with pytest.raises(RefusalError, match="already running"):
-        robot.preflight()
+    deadline = time.time() + 20
+    while robot.preflight_status().get("state") != "running" and time.time() < deadline:
+        time.sleep(0.02)
+    assert robot.preflight_status()["state"] == "running", (
+        "the first run never reported running, so this test can say nothing about the guard "
+        "— fix the fixture rather than relaxing the assertion")
+
+    try:
+        with pytest.raises(RefusalError, match="already running"):
+            robot.preflight()
+    finally:
+        (repo / "release.txt").write_text("go", encoding="utf-8")
+        deadline = time.time() + 30
+        while robot.preflight_status().get("state") == "running" and time.time() < deadline:
+            time.sleep(0.05)
 
 
 def test_an_interrupted_run_reports_died_not_silence(robot, repo, fake_gate):
