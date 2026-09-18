@@ -565,6 +565,31 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         # does not re-parse a range string a caller may have written either way.
         # ⭐⭐ THE CHANGED-PATH RATCHET. Unlike `witness`, this BLOCKS: see `_ratchet`.
         "ratchet": ratchet,
+        # ⛔⛔ THE REGISTRY FREEZE, ON THE PUSH PATH AT LAST — AND ITS ABSENCE HERE WAS THE
+        # 2026-09-07 DEFECT UNFIXED AT ITS SIBLING. `convergence_bar`'s own docstring records
+        # the finding: *"`progress()` reported complete: true, satisfied 19/19 beside
+        # bar.held: false — and gitRobot's status(), which embeds an inventory, surfaced the
+        # 19/19 and not the broken bar. A reader of the gate's own status saw green."* That was
+        # repaired by lifting the bar onto `inventory`. It was never lifted onto `can_push`,
+        # which is the call that decides whether bytes reach the world.
+        #
+        # ⚠ MEASURED 2026-09-18: `inventory` answers `held: false` ("THE BAR MOVED MID-RUN")
+        # for the live registry, and `can_push` did not carry the field at all. The freeze has
+        # read broken since `cd3309a` on 09-16 and the push path never said so — three registry
+        # versions and five days, including `a67ee7a`, which moved this gate's cost 43x.
+        #
+        # ⛔ AND A NAME COLLISION WAS HIDING IT. This response already publishes `push_bar`
+        # (`tip_green` / `every_commit`), a DIFFERENT object. A reader who sees a key called
+        # "bar" has every reason to believe the bar is reported, so the missing one could not be
+        # noticed by reading the response. Hence `registry_freeze`, not `bar`: two distinct
+        # objects may not share a word in one payload, which is the `EXIT_CODES` rule applied to
+        # field names. ⚠ `inventory` keeps `bar` — renaming a published field is a coordinated
+        # change, and the render below names both objects explicitly so neither is inferred.
+        #
+        # ⚠ REPORTED, NOT BLOCKING, and deliberately: making a stale freeze refuse would block
+        # every push in the fleet this instant, which is a policy change and Tim's call. See
+        # `.mcp-local/queue/gate-ratchets-only-bytes-it-has-seen.md` steps 5 and 6.
+        "registry_freeze": inventory_mod.convergence_bar(config),
         "witness": _witness(config=config, repo=repo,
                             base=rows[0]["commit"] + "^",
                             tip_files=tip_files, admitted=admitted),
@@ -769,6 +794,32 @@ def render(result: dict) -> str:
         if rt.get("renames_exempt"):
             lines.append(f"     ⚠ {len(rt['renames_exempt'])} pure rename(s) exempt: the bytes did "
                          f"not move, so what was judged still holds.")
+
+    # ⛔⛔ THE REGISTRY FREEZE, SAID OUT LOUD ON THE PUSH PATH — see `registry_freeze` above for
+    # why it was absent and why it is not called `bar` here.
+    # ⚠ IT NAMES BOTH OBJECTS EXPLICITLY. `push_bar` and this are different things and the word
+    # "bar" belongs to neither alone; a line that says only "the bar moved" is the collision
+    # again, in prose.
+    fz = result.get("registry_freeze") or {}
+    if fz.get("frozen") and not fz.get("held"):
+        lines.append(
+            f"  ⚠⚠ THE REGISTRY FREEZE IS BROKEN — the rule set moved since the checkpoint was "
+            f"taken, so every green row in this range was judged against a scope that has since "
+            f"changed, and a widened scope does NOT re-open a row that already went green.")
+        lines.append(
+            f"       frozen at {str(fz.get('frozen_at'))[:12]}  ·  registry now "
+            f"{str(fz.get('registry_sha'))[:12]}")
+        lines.append(
+            "     ⚠ This is the CONVERGENCE freeze (policy.convergence.frozen_registry_sha), NOT "
+            "the `push_bar` above — different objects, and only one of them is a checkpoint.")
+        lines.append(
+            "     INSTEAD: re-freeze deliberately at the current registry and expect the numbers "
+            "to mean less than they did, or revert the registry. Reported, NOT blocking.")
+    elif not fz.get("frozen") and fz.get("note"):
+        lines.append(
+            "  ⚠ NO REGISTRY FREEZE IS SET, so there is no agreed rule set to measure this push "
+            "against; scope may widen mid-run and will not re-open a green row. Reported, NOT "
+            "blocking.")
 
     # the whole remaining job, one line per kind
     #

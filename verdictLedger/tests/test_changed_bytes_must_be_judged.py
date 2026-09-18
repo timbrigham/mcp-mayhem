@@ -200,3 +200,34 @@ def test_the_ratchet_ALONE_refuses_a_push_that_is_otherwise_green(ledger, tmp_pa
         "fixture assumption: every ROW is green, so only the ratchet can refuse this push")
     assert result["allowed"] is False, "the ratchet did not block a push nothing else refused"
     assert [(o["step"], o["path"]) for o in result["ratchet"]["owed"]] == [(STEP, "brand_new.md")]
+
+
+def test_can_push_reports_a_broken_registry_freeze(ledger, tmp_path):
+    """⛔⛔ THE PUSH PATH MUST SAY THE FREEZE MOVED, and until 2026-09-18 it was the one caller
+    that could not.
+
+    ⚠ THIS IS THE 2026-09-07 DEFECT AT ITS UNFIXED SIBLING. `convergence_bar`'s docstring records
+    it: *"progress() reported complete: true, satisfied 19/19 beside bar.held: false — and
+    gitRobot's status() surfaced the 19/19 and not the broken bar. A reader of the gate's own
+    status saw green."* The repair lifted the bar onto `inventory` and stopped there. Measured on
+    the live fleet the day this test was written: `inventory` answered `held: false` while
+    `can_push` did not carry the field at all, and had not since the freeze broke on 09-16.
+
+    ⛔ A NAME COLLISION IS WHY READING THE RESPONSE COULD NOT REVEAL IT: `can_push` publishes
+    `push_bar` (tip_green/every_commit), a DIFFERENT object, so a key called "bar" was already
+    present and a reader had no reason to look for a second one.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    ledger.config.policy = dict(ledger.config.policy or {})
+    ledger.config.policy["convergence"] = {"frozen_registry_sha": "0" * 64}   # never the live sha
+
+    result = _check(ledger, tmp_path, f"{old}..{tip}",
+                    [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)])
+    text = canpush_mod.render(result)
+
+    assert result["registry_freeze"]["frozen"] is True
+    assert result["registry_freeze"]["held"] is False, "the fixture must present a MOVED freeze"
+    assert "REGISTRY FREEZE IS BROKEN" in text, "the push path stayed silent about a moved freeze"
+    # ⚠ and it must not let the reader confuse the two objects that both answer to "bar"
+    assert "NOT the `push_bar`" in text
