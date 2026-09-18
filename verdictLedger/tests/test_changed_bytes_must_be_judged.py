@@ -142,6 +142,36 @@ def test_the_refusal_names_every_signature_it_wants(ledger, tmp_path):
     assert "signature(s) owed" in text
 
 
+def test_the_headline_does_not_blame_the_commit_count_for_the_ratchets_refusal(ledger, tmp_path):
+    """⛔⛔ THE HEADLINE MUST NAME WHAT IS REFUSING. A ratchet-only refusal has every commit
+    complete, so the count renders `0/N commit(s) short` — a TRUE number standing where the
+    reason belongs.
+
+    ⚠ THIS EXACT LINE HAS NOW DONE IT TWICE. ZeroParadox reported it 2026-09-03 reading
+    `REFUSED push 13/13 commit(s) short` when the admission set was merely unset: *"the surface
+    reads as a refusal and means unconfigured, and those are different facts."* The ratchet
+    reproduced it from the other direction — zero short, and still refused.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    records = [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)]
+    (tmp_path / "brand_new.md").write_text("never seen by any step", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "a file nobody has judged"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    newtip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                            text=True).stdout.strip()
+    records.append(_rec(STEP, PATH, _blob(tmp_path, newtip, PATH), newtip))
+
+    result = _check(ledger, tmp_path, f"{tip}..{newtip}", records)
+    headline = canpush_mod.render(result).splitlines()[0]
+
+    assert headline.startswith("REFUSED")
+    assert result["blocking_count"] == 0, "fixture: nothing but the ratchet refuses this"
+    assert "signature(s) owed" in headline, (
+        f"the headline blames the commit count for a refusal it had no part in: {headline!r}")
+
+
 def test_the_ratchet_ALONE_refuses_a_push_that_is_otherwise_green(ledger, tmp_path):
     """⛔⛔ THE CONTROL THE OTHERS DO NOT GIVE, and its absence was caught by mutation: making the
     ratchet non-blocking failed NOTHING, because every other case here was already refused by a

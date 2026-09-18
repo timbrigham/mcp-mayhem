@@ -637,9 +637,22 @@ def render(result: dict) -> str:
             "gitRobot's own push path fills them in automatically; only a direct call omits them.",
         ])
 
+    # ⛔⛔ AND THE RATCHET MADE THIS THE THIRD INSTANCE OF THE DEFECT DIRECTLY ABOVE, IN THE SAME
+    # LINE. Measured 2026-09-18, the day the ratchet shipped: a range it refuses ALONE renders
+    # `REFUSED  push  0/10 commit(s) short` — because zero commits ARE short. Every commit has
+    # every required verdict; what is missing is a signature on bytes the range CHANGES. So the
+    # headline stated a true number and named it as the reason for a refusal it had no part in,
+    # which is the 2026-09-03 finding with a new cause: **"the surface reads as a refusal and
+    # means <something else>, and those are different facts."**
+    #
+    # ⚠ THE COUNT STAYS. It is true and a reader needs it; what it may not do is stand alone as
+    # the explanation when something else is doing the refusing.
+    owed_n = len((result.get("ratchet") or {}).get("owed") or [])
+    counts = f"{result['blocking_count']}/{result['commits_in_range']} commit(s) short"
+    if owed_n:
+        counts += f", {owed_n} signature(s) owed on changed bytes"
     lines = [f"{'ALLOWED' if result['allowed'] else 'REFUSED'}  push  "
-             f"{result['blocking_count']}/{result['commits_in_range']} commit(s) short"
-             f"  @ {result['range']}"]
+             f"{counts}  @ {result['range']}"]
 
     # ⚠⭐ NARROWED COVERAGE, ON THE PUSH PATH. Measured 2026-08-23: a step that
     # examined one file of 201 read SATISFIED. `inventory` names it; without this the
