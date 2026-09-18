@@ -795,6 +795,46 @@ def render(result: dict) -> str:
             lines.append(f"     ⚠ {len(rt['renames_exempt'])} pure rename(s) exempt: the bytes did "
                          f"not move, so what was judged still holds.")
 
+    # ⛔⛔ "STALE" AND "OWED" NAME DIFFERENT WORK, AND THE RENDER LISTED BOTH AS IF THEY WERE ONE.
+    # Raised by the ZeroParadox session 2026-09-18, mid-drill, seeing `prior_art` named twice from
+    # two causes: *"a reader who clears only the STALE row has not cleared the ratchet, and nothing
+    # says the two are satisfied by the same action here. They happen to be, this time. Are there
+    # cases where they are not?"*
+    #
+    # ⭐ MEASURED THE SAME HOUR OVER 11 LIVE ARCS: the two sets differ in TEN. Their hypothetical
+    # is the COMMON case, not the corner:
+    #
+    #     09-05, 09-06   STALE `guards`, ratchet owes NOTHING  -> clearing the ratchet clears nothing
+    #     09-14          STALE `prior_art`, ratchet owes NOTHING
+    #     09-08/09/11/16 owed, nothing stale                   -> no existing verdict to re-run
+    #     09-12          STALE {guards, prior_art}, owed {prior_art}
+    #     09-13          the only arc where they coincide
+    #
+    # ⚠ AND THE REMEDIES CAN BE DIFFERENT IN KIND, NOT ONLY IN SCOPE. A step goes STALE when its
+    # EVIDENCE moves — edit `tools/verify/*` and every commit citing that checker is stale through
+    # no change of its own — and no number of content rounds clears that. The ratchet only ever
+    # asks about CONTENT this range changed. Telling a caller to "run each step over the paths
+    # named" while a stale row needs a different action entirely is the remedy defect this file
+    # fixes everywhere else.
+    tip_rows = [c for c in (result.get("commits") or []) if c.get("is_tip")]
+    stale_steps = set(tip_rows[0].get("stale") or []) if tip_rows else set()
+    owed_steps = {o["step"] for o in owed}
+    if stale_steps != owed_steps and (stale_steps or owed_steps):
+        stale_only = sorted(stale_steps - owed_steps)
+        owed_only = sorted(owed_steps - stale_steps)
+        lines.append("  ⚠⚠ 'STALE' AND 'OWED' ARE DIFFERENT WORK HERE — CLEARING ONE DOES NOT "
+                     "CLEAR THE OTHER:")
+        if stale_only:
+            lines.append(f"       STALE, not owed:  {', '.join(stale_only)}  — the ratchet does NOT "
+                         f"ask about these; they are stale against their OWN subjects or evidence, "
+                         f"and a round over the paths named above will not touch them.")
+        if owed_only:
+            lines.append(f"       OWED, not stale:  {', '.join(owed_only)}  — no existing verdict "
+                         f"to re-run; these paths have never been judged at these bytes.")
+        if stale_steps & owed_steps:
+            lines.append(f"       BOTH:             {', '.join(sorted(stale_steps & owed_steps))}  "
+                         f"— one round may clear both, but only if it covers the paths named above.")
+
     # ⛔⛔ THE REGISTRY FREEZE, SAID OUT LOUD ON THE PUSH PATH — see `registry_freeze` above for
     # why it was absent and why it is not called `bar` here.
     # ⚠ IT NAMES BOTH OBJECTS EXPLICITLY. `push_bar` and this are different things and the word

@@ -231,3 +231,36 @@ def test_can_push_reports_a_broken_registry_freeze(ledger, tmp_path):
     assert "REGISTRY FREEZE IS BROKEN" in text, "the push path stayed silent about a moved freeze"
     # ⚠ and it must not let the reader confuse the two objects that both answer to "bar"
     assert "NOT the `push_bar`" in text
+
+
+def test_stale_and_owed_are_not_presented_as_the_same_work(ledger, tmp_path):
+    """⛔⛔ A STALE ROW AND A RATCHET OBLIGATION CAN BE DIFFERENT WORK, AND THE RENDER SAID SO
+    NOWHERE. Raised by the ZeroParadox session mid-drill, 2026-09-18, seeing one step named twice
+    from two causes: *"a reader who clears only the STALE row has not cleared the ratchet... They
+    happen to be, this time. Are there cases where they are not?"*
+
+    ⭐ MEASURED OVER 11 LIVE ARCS THE SAME HOUR: the sets differ in TEN. Two arcs had a STALE step
+    with the ratchet owing NOTHING, so clearing the ratchet would have cleared nothing at all.
+
+    Here the ratchet owes a step that is NOT stale — the file is new, so there is no earlier
+    verdict to have gone stale — and the render must not let that read as one job.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    records = [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)]
+    (tmp_path / "brand_new.md").write_text("never seen by any step", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "a file nobody has judged"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    newtip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                            text=True).stdout.strip()
+    records.append(_rec(STEP, PATH, _blob(tmp_path, newtip, PATH), newtip))
+
+    result = _check(ledger, tmp_path, f"{tip}..{newtip}", records)
+    text = canpush_mod.render(result)
+
+    tip_row = [c for c in result["commits"] if c["is_tip"]][0]
+    assert tip_row["stale"] == [], "fixture: nothing is stale, so the two sets must differ"
+    assert result["ratchet"]["owed"], "fixture: the ratchet must owe something"
+    assert "DIFFERENT WORK HERE" in text
+    assert "OWED, not stale" in text and STEP in text
