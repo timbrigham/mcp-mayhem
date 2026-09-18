@@ -85,19 +85,16 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 #              `inventory(action=push)`, which feeds `complete`, which gitRobot REQUIRES — so
 #              it makes a push EASIER to judge complete. A loosening is gate policy even when
 #              it only makes the record honest. With Tim.
-#   prior_art  registry ['push']             admission []                    LOOSER, and
-#              ⛔ DELIBERATE — DO NOT "FIX" EITHER SIDE. Confirmed by the consumer 2026-09-06
-#              from `policy.v1.json`'s `_refrozen_2026_09_01c`: "Registering is not admitting.
-#              `prior_art` is deliberately ABSENT from admission.v1.json... The row has to
-#              EXIST for `batch.check_prior_art_attribution` to read it; `coverage_gap`
-#              returns `steps: []` for a step that does not apply to the action." So
-#              `actions: ["push"]` is load-bearing for a READER, not a gater: remove the
-#              narrowing and their per-file push leg goes blind. The first attempt at exactly
-#              that was reverted the same morning as backwards.
-#              ⚠ The disagreement is still REAL and still worth flagging — only the
-#              justification is elsewhere. Their finding, not mine: **a narrowing whose reason
-#              lives in a different file from the entry is indistinguishable from an
-#              unexplained one.** They are moving it onto the registry entry.
+#   prior_art  RESOLVED 2026-09-17 — the two surfaces now agree at `push`, on Tim's ruling.
+#              ⭐ THE ENTRY IS GONE BECAUSE THE DISAGREEMENT IS, and this test is what forced
+#              the bookkeeping: it ratchets in BOTH directions, so leaving the line here after
+#              resolving it fails exactly as loudly as adding one would. The reason it sat here
+#              from 2026-09-06 was `actions: []` in the registry; that was re-widened to
+#              `actions: ["push"]` on 2026-09-01 and NOBODY MOVED THE NOTE, so this file
+#              described a narrowing that had not existed for sixteen days.
+#              ⚠ The reader-not-gater argument recorded here was correct and is unaffected:
+#              the registry entry still has to EXIST for the consumer's per-file push leg to
+#              read it. Admitting adds gating; it takes nothing away from that leg.
 #
 # ⛔ DO NOT ADD A LINE HERE TO MAKE THIS PASS. Adding one declares a new place where the two
 # surfaces disagree about what gates a push.
@@ -125,7 +122,6 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 KNOWN_MISMATCHES = {
     ("build", ("tag",), ("commit", "push", "tag")),
     ("rely", ("commit", "push", "tag"), ("tag",)),
-    ("prior_art", ("push",), ()),
     ("copy_editor", ("push",), ()),
     ("check_briefs", ("commit", "push", "tag"), ()),
 }
