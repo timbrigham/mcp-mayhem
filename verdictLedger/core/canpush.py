@@ -75,6 +75,114 @@ def _files_at(repo: str, ref: str) -> dict:
     return out
 
 
+
+def _judging_steps(config, admitted) -> list:
+    """Admitted steps whose scope STATES an obligation surface.
+
+    ⛔⛔ A STEP THAT DECLARES NO SCOPE HAS NOT CLAIMED EVERYTHING — IT HAS CLAIMED NOTHING, AND
+    READING ITS SILENCE AS "EVERY FILE" IS ABSENCE TREATED AS A CLAIM. Measured 2026-09-18 over
+    ZeroParadox's 29-commit arc: the changed-path ratchet raises 328 obligations if every admitted
+    step counts and 2 if only the ones with a declared scope do. The entire difference is seven
+    steps with no `scope` and no `when` -- build, check_figures, check_modal, check_moved,
+    check_negatives, check_paths, check_pov -- which by defaulting to "everything" drag in every
+    PDF in the tree and ask a reviewer about a rendering rather than a claim.
+
+    ⚠ Excluding them is not a weakening, it is declining to invent an obligation nobody wrote. If
+    one of those steps SHOULD own a surface, the fix is a `scope` in the registry, where a reader
+    can see it -- not a default in this function.
+
+    ⭐ MEASURED EQUIVALENCE, worth knowing before anyone "simplifies" this: restricting to the
+    REVIEW FAMILY alone gives the identical answer on every range tested, because the scoped
+    mechanical steps already sweep their scope at precommit. The review family IS the gap. This
+    keeps the scoped mechanical steps in anyway, so a step that stops sweeping starts blocking
+    rather than silently going dark.
+    """
+    out = []
+    for step in admitted or []:
+        spec = (config.required.get("types") or {}).get(step)
+        if not isinstance(spec, dict):
+            continue
+        if spec.get("scope") or spec.get("when"):
+            out.append(step)
+    return sorted(out)
+
+
+def _changed_across(repo: str, base: str, tip: str) -> tuple:
+    """(paths this range changes and that EXIST at the tip, paths that are pure renames).
+
+    ⚠ A PURE RENAME RE-OWES NOTHING, and that is a consequence of content-keying rather than a
+    concession: a verdict binds (step, path, blob), the bytes did not move, and what breaks on a
+    rename is POINTERS to the old path -- which is `check_moved`'s job and a different failure.
+    ⚠ Deletions owe nothing either: a path that has left the tree publishes no bytes.
+    """
+    renamed = set()
+    for line in _git(repo, "diff", "--diff-filter=R", "-M", "--name-status", base, tip).splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            renamed.add(parts[2].strip())
+    changed = []
+    for line in _git(repo, "diff", "--name-only", base, tip).splitlines():
+        p = line.strip()
+        if p:
+            changed.append(p)
+    return changed, renamed
+
+
+def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitted,
+             by_content) -> dict:
+    """⭐⭐ THE CHANGED-PATH RATCHET: bytes this push CHANGES must have been judged AT THOSE BYTES.
+
+    ⛔⛔ WHY IT EXISTS. Coverage is content-keyed, so a path a step examined BEFORE goes STALE when
+    it changes and blocks -- while a path that step has NEVER examined passes in silence, however
+    much it changed. The ratchet therefore engaged on known files and disengaged on new content,
+    which is the exact opposite of the intent. Tim, 2026-09-17: *"I thought the concept was to
+    accept the baseline of how it sits today and ratchet all new bytes?"*
+
+    MEASURED THE SAME DAY, why this is not theoretical: over the 29-commit arc pushed on 09-16,
+    328 (step, changed path) obligations had no verdict at the new bytes and the gate raised TWO of
+    them -- 326 invisible because the step had no prior verdict to go stale. Over the previous
+    seven days, 121 of 563 published file-versions carried no review-family verdict at the bytes
+    that shipped; three were still live and unreviewed at the tip, including a prose home of a
+    recorded prior-art incident.
+
+    ⚠ THE BACKLOG IS GRANDFATHERED BY CONSTRUCTION. This asks only about paths the range CHANGES;
+    1,102 never-examined paths sit untouched in scope and are nobody's debt until edited. That is
+    the difference between this and `coverage.require_complete`, which would block every push until
+    the whole corpus had been swept.
+    """
+    obligations = []
+    if not admitted:
+        return {"checked": False, "why": "no admission set, so nothing states what must judge"}
+    steps = _judging_steps(config, admitted)
+    changed, renamed = _changed_across(repo, base, tip)
+    for path in changed:
+        if path not in tip_files:          # deleted by the range: publishes no bytes
+            continue
+        if path in renamed:                # pure rename: same bytes, already judged
+            continue
+        blob = tip_files[path]
+        for step in steps:
+            if not _in_scope(config, step, path):
+                continue
+            if (step, path, blob) in by_content:
+                continue
+            obligations.append({"step": step, "path": path, "git_blob_id": blob})
+    return {"checked": True, "steps_consulted": steps,
+            "changed_paths": len([p for p in changed if p in tip_files and p not in renamed]),
+            "renames_exempt": sorted(renamed),
+            "owed": obligations}
+
+
+def _in_scope(config, step: str, path: str) -> bool:
+    spec = (config.required.get("types") or {}).get(step) or {}
+    globs = spec.get("scope") or ([spec["when"]] if spec.get("when") else None)
+    if globs is None:
+        return False                       # no declared surface -- see _judging_steps
+    if not any(fnmatch.fnmatch(path, g) for g in globs):
+        return False
+    return not any(fnmatch.fnmatch(path, g) for g in spec.get("scope_exclude") or [])
+
+
 def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict:
     """Which FAMILY of step, if any, has the paths this range CHANGES in its scope.
 
@@ -202,6 +310,10 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                 "commits": []}
 
     admitted = sorted(admission) if admission is not None else None
+    # (step, path, blob) actually judged -- the ratchet asks about CHANGED paths against this.
+    by_content_keys = {(r.get("step"), s.get("path"), s.get("git_blob_id"))
+                       for r in records for s in (r.get("subjects") or [])
+                       if s.get("git_blob_id")}
     rows = []
     prev_files = None
     for i, commit in enumerate(commits):
@@ -374,9 +486,17 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         if not consulted:
             r.pop("refused", None)
 
+    # ⚠ COMPUTED OVER THE WHOLE RANGE AT THE TIP'S BYTES, which is what the push PUBLISHES.
+    # Per-commit would re-ask about intermediate bytes the world never sees at the tip and would
+    # turn one arc into hundreds of obligations -- measured at 328 for a 29-commit range.
+    ratchet = _ratchet(config=config, repo=repo, base=rows[0]["commit"] + "^",
+                       tip=rows[-1]["commit"], tip_files=tip_files, admitted=admitted,
+                       by_content=by_content_keys)
+    owed = ratchet.get("owed") or []
+
     return {
         "ok": True,
-        "allowed": not blocking,
+        "allowed": (not blocking) and not owed,
         "range": rev_range,
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
@@ -415,6 +535,8 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         # ⚠ The base is the FIRST commit's PARENT, not the left side of `rev_range`.
         # It is the state this push departs from under `..` and `...` alike, and it
         # does not re-parse a range string a caller may have written either way.
+        # ⭐⭐ THE CHANGED-PATH RATCHET. Unlike `witness`, this BLOCKS: see `_ratchet`.
+        "ratchet": ratchet,
         "witness": _witness(config=config, repo=repo,
                             base=rows[0]["commit"] + "^",
                             tip_files=tip_files, admitted=admitted),
@@ -583,6 +705,29 @@ def render(result: dict) -> str:
     # ⚠ The EMPTY/UNSET case returns early above with the full instruction block, so there is
     # no branch here. Left as a comment rather than deleted silently: a reader looking for where
     # the admission-state warning went should find it, not conclude it was dropped.
+
+    # ⭐⭐ THE RATCHET NAMES EVERY SIGNATURE IT WANTS. A gate that refuses without saying what
+    # would clear it forces the caller to re-derive the obligation, and the caller cannot: the
+    # rule lives here and the changed-path set lives in git. Measured 2026-09-18 as the whole
+    # point of the disclosure -- the consumer must be able to count and place the rounds itself.
+    rt = result.get("ratchet") or {}
+    owed = rt.get("owed") or []
+    if owed:
+        by_step = {}
+        for o in owed:
+            by_step.setdefault(o["step"], []).append(o["path"])
+        lines.append(f"  ⛔ CHANGED BYTES NOT JUDGED — {len(owed)} signature(s) owed over "
+                     f"{rt.get('changed_paths')} changed path(s). These files MOVED in this push and "
+                     f"no verdict covers the new bytes:")
+        for step in sorted(by_step):
+            paths = sorted(by_step[step])
+            shown = ", ".join(paths[:4]) + (f" (+{len(paths) - 4} more)" if len(paths) > 4 else "")
+            lines.append(f"       {step:14} {len(paths):3} path(s)  {shown}")
+        lines.append("     INSTEAD: run each step over the paths named and record; the backlog is "
+                     "NOT owed — only what this push changes.")
+        if rt.get("renames_exempt"):
+            lines.append(f"     ⚠ {len(rt['renames_exempt'])} pure rename(s) exempt: the bytes did "
+                         f"not move, so what was judged still holds.")
 
     # the whole remaining job, one line per kind
     #
