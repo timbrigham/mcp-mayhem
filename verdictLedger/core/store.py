@@ -160,6 +160,37 @@ class Store:
         except OSError:
             pass
 
+    def clear_refusal(self, step: str) -> bool:
+        """Drop `step`'s refusal entry. True if one was there.
+
+        ⛔⛔ THIS IS THE PRECONDITION `_sync_can_push` NAMED AND NOBODY HAD BUILT. That function
+        has said since 2026-09-13: *"`refusals` DELIBERATELY NOT PASSED HERE... nothing ever
+        clears it... Clear entries on a later accepted record first, then pass it."* Without
+        clearing, wiring the sidecar into the push path would render nearly every row REFUSED
+        with "do not re-run" — the wrong remedy for a step that simply has not run.
+
+        ⭐ AN ACCEPTED RECORD IS THE EVIDENCE THAT THE EMITTER WAS FIXED. A refusal says a claim
+        about this step was malformed; a later record the ledger ACCEPTED for the same step is
+        the emitter demonstrating it no longer is. Nothing else can retire the entry honestly —
+        time cannot, and a human clearing it by hand is the self-exemption this fleet refuses
+        everywhere else.
+
+        ⚠ KEYED ON STEP ALONE, matching `record_refusal`. Their 2026-09-07 measurement is why:
+        `ZPLEDGER_BASIS=INDEX` means every `git add` moves the basis, so a basis-keyed refusal
+        mints a row per staging operation. The clear must use the same key as the write or
+        entries would accumulate under keys nothing retires.
+        """
+        data = self.refusals()
+        if step not in data:
+            return False
+        data.pop(step, None)
+        try:
+            self._refusals_path.parent.mkdir(parents=True, exist_ok=True)
+            self._refusals_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        except OSError:
+            return False      # same rule as `bump`: never the reason a write fails
+        return True
+
     @property
     def invalid_appends(self) -> int:
         return self._counters().get("invalid_appends", 0)

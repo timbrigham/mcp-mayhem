@@ -1154,9 +1154,25 @@ def build(*, config, records, action: str, files: dict,
         complete = True
     else:
         state = "SET"
+        # ⛔⛔ `REFUSED` WAS MISSING FROM THIS LIST AND THAT IS THE OTHER HALF OF THE 2026-09-18
+        # FAIL-OPEN. The status was added 2026-09-07 with a correct render — "NOTHING has been
+        # established about these subjects" — and never wired into completeness, so it DESCRIBED
+        # a blocked state while gating nothing. A row that says nothing was established, sitting
+        # inside a `complete: true`, is the precise shape this module exists to remove.
+        #
+        # ⚠ IT BELONGS HERE BY THE SAME ARGUMENT AS `MISSING`. A claim the ledger declined
+        # establishes exactly as much as a claim nobody made — less, in fact, because someone
+        # tried and the attempt is on record. Reading it as satisfied is "absence renders as
+        # success" with an extra step.
+        #
+        # ⚠ IT IS BOUNDED BECAUSE THE REFUSAL NOW ENDS. `Ledger.append` retires a step's sidecar
+        # entry on any accepted record, so this can block without wedging: fix the emitter,
+        # record, and the row clears. Before that existed, adding REFUSED here would have been a
+        # permanent block — which is why the 2026-09-13 decision not to consult the sidecar at
+        # all was right at the time.
         complete = (n("MISSING") == 0 and n("STALE") == 0
                     and n("UNDECIDED") == 0 and n("FAIL") == 0
-                    and n("LEGACY_IDENTITY") == 0)
+                    and n("LEGACY_IDENTITY") == 0 and n("REFUSED") == 0)
         # ⭐⭐ COVERAGE BINDS ONLY WHEN POLICY SAYS SO. Until 2026-08-25 an in-scope
         # path a step had never examined was counted and not enforced, so a row could
         # read SATISFIED over a fraction of its own scope. `guards`: 4 of 504, green.

@@ -157,6 +157,13 @@ class Ledger:
                     "reason": "identical record already present"}
 
         self.store.append(rec)
+        # ⭐⭐ AN ACCEPTED RECORD RETIRES THE STEP'S REFUSAL. Until 2026-09-18 nothing ever
+        # cleared the sidecar, which is precisely why `can_push` could not consult it — see
+        # `Store.clear_refusal`. With this, "a claim about this step was refused" becomes a
+        # condition with an END, so it can be allowed to BLOCK without blocking forever.
+        # ⚠ AFTER the write, never before: a refusal must not be retired by a record that then
+        # fails to land, and a sidecar write must never be the reason an append fails.
+        self.store.clear_refusal(rec.get("step") or "")
         return {"id": rec["id"], "appended": True}
 
     def seed_genesis(self, commit: str, note: Optional[str] = None) -> dict:

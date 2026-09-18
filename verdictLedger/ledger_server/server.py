@@ -813,17 +813,29 @@ async def can_push(rev_range: str, admission: Optional[list[str]] = None,
 
 def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dict:
     led = _ledger()
+    # ⭐⭐ `refusals` IS NOW PASSED, AND THE PRECONDITION THIS COMMENT SET IS WHY IT CAN BE.
+    # It said, from 2026-09-13: *"nothing ever clears it... Clear entries on a later accepted
+    # record first, then pass it."* `Ledger.append` now retires a step's entry on any accepted
+    # record, so "a claim about this step was refused" is a condition with an END.
+    #
+    # ⛔⛔ WHAT IT CLOSES — a FAIL-OPEN reported by ZeroParadox 2026-09-18. Two `editorial`
+    # rounds ran at one basis over DISJOINT files; V11 refused the second because the slot was
+    # taken, and the ledger went on reporting `editorial` PASS **over five files nobody had
+    # examined**, three of which carried BEDROCK findings. The refusal was recorded in the
+    # sidecar the whole time and the push path could not see it. Now the step reads REFUSED —
+    # "NOTHING has been established about these subjects" — and BLOCKS.
+    #
+    # ⚠ MEASURED BEFORE WIRING, because the 2026-09-13 concern was real: of 20 live entries,
+    # 18 would retire immediately against a later accepted record and the 2 that remain
+    # (`control`, `a_step_that_is_not_registered`) are unregistered names that can never
+    # produce a gating row. The blast radius the original comment feared is gone BECAUSE the
+    # precondition was built, not because the concern was wrong.
     result = canpush_mod.check(records=led.store.records(),
                                config=led._require_config(), repo=REPO,
                                rev_range=rev_range, action=action,
                                admission=admission,
-                               commit_admission=commit_admission, limit=limit)
-    # ⛔ `refusals` DELIBERATELY NOT PASSED HERE (Tim, 2026-09-13). The sidecar is keyed on the
-    # STEP alone and nothing ever clears it: measured that day, 16 steps carry an entry,
-    # including 14 of the 18 in the commit set. Wired in, nearly every never-run row on
-    # every future push would render REFUSED with "do not re-run", which is the wrong remedy
-    # for a step that simply has not run. Clear entries on a later accepted record first,
-    # then pass it.
+                               commit_admission=commit_admission, limit=limit,
+                               refusals=led.store.refusals())
     result["config_sha"] = led._require_config().config_sha
     result["line"] = canpush_mod.render(result)
     return result
