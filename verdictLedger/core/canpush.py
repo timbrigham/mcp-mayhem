@@ -105,11 +105,24 @@ def _judging_steps(config, admitted) -> list:
     the SAME ranges under TWO registries:
 
         prior_art scope                                    arcs owing   obligations
-        TODAY  ['ZeroParadox/*.lean','scripts/build_*.py','*.md']   8/13          43
+        TODAY  ['ZeroParadox/*.lean','scripts/build_*.py','*.md']   8/13          41
         BEFORE `a67ee7a` (2026-09-17 15:54Z), no '*.md'             1/13           1
 
-    ⭐ ALL 42 `prior_art` OBLIGATIONS TRACE TO ONE LINE ADDED TO ONE GLOB LIST THE DAY BEFORE.
-    The ratchet itself raises ONE obligation across two weeks; the widening raises the other 42.
+    ⭐ ALL 40 `prior_art` OBLIGATIONS TRACE TO ONE LINE ADDED TO ONE GLOB LIST THE DAY BEFORE.
+    The ratchet itself raises ONE obligation across two weeks; the widening raises the other 40.
+
+    ⛔⛔ THE FIGURE ABOVE READ 43 FOR SIX HOURS AND THAT WAS A MEASUREMENT DEFECT OF THE EXACT
+    CLASS THIS MODULE POLICES. The harness bucketed arcs with `git log --since="14 days ago"` —
+    **a MOVING WINDOW**. It slid about an hour between two runs, dropped the oldest commit from
+    the 09-04 bucket, changed that arc's BASE, and took it from 7 obligations to 5. Same label,
+    different object, an hour apart. ⚠ Two independent routes (`check()` and `_ratchet()` called
+    directly) agreed exactly on every arc, which is what proved the gap was the boundary and not
+    the code.
+    ⚠ THE RATIO SURVIVES AND THE ABSOLUTE DID NOT: both sides of the 41-vs-1 comparison were
+    computed in ONE run against ONE window, so their relationship holds; the standalone number
+    was published as reproducible and was not. **Everything here is now pinned to named shas
+    (`a87757e..b13e67c`, 128 commits, 13 arcs) and will reproduce.** Never date-bound a
+    measurement that will be quoted later.
     ⚠ THE COST IS INTENTIONAL — the widening was Tim's "Mirror now" call — but it arrives THROUGH
     this gate, so a reader who sees the gate refuse will attribute the cost to the ratchet, which
     is a true number read against the wrong cause.
