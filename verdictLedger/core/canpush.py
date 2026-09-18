@@ -96,6 +96,34 @@ def _judging_steps(config, admitted) -> list:
     mechanical steps already sweep their scope at precommit. The review family IS the gap. This
     keeps the scoped mechanical steps in anyway, so a step that stops sweeping starts blocking
     rather than silently going dark.
+
+    ⛔⛔ THIS FUNCTION'S OUTPUT IS A REGISTRY READ, SO THE RATCHET'S COST IS SET BY A FILE THIS
+    REPO DOES NOT OWN — AND THAT COUPLING WAS MEASURED AT 43x, NOT ARGUED. Raised by the
+    ZeroParadox session 2026-09-18, reviewing the build: *"the ratchet's entire live surface is
+    currently one review step, so a change to `prior_art`'s scope changes the ratchet's cost with
+    no other signal."* Priced the same day over 13 daily arcs (the granularity a push has here),
+    the SAME ranges under TWO registries:
+
+        prior_art scope                                    arcs owing   obligations
+        TODAY  ['ZeroParadox/*.lean','scripts/build_*.py','*.md']   8/13          43
+        BEFORE `a67ee7a` (2026-09-17 15:54Z), no '*.md'             1/13           1
+
+    ⭐ ALL 42 `prior_art` OBLIGATIONS TRACE TO ONE LINE ADDED TO ONE GLOB LIST THE DAY BEFORE.
+    The ratchet itself raises ONE obligation across two weeks; the widening raises the other 42.
+    ⚠ THE COST IS INTENTIONAL — the widening was Tim's "Mirror now" call — but it arrives THROUGH
+    this gate, so a reader who sees the gate refuse will attribute the cost to the ratchet, which
+    is a true number read against the wrong cause.
+
+    ⛔ AND IT CORRECTS A CLAIM MADE IN `df3872d`'S OWN COMMIT MESSAGE: *"every owed signature on
+    every range tested is prior_art."* True of the FOUR ranges tested, false at 13 — `adversary`
+    raises one, on 09-08, and is the only obligation that survives removing the widening. **A
+    sample of four generalised to "the entire live surface is one step"; the smallest honest
+    sample that could have falsified it was thirteen.**
+
+    ⚠ WHAT FOLLOWS FOR THE FREEZE, which is the instrument that would have SIGNALLED this:
+    `frozen_registry_sha` exists precisely so a registry change under work in progress is an
+    EVENT rather than background drift. `a67ee7a` moved the ratchet's cost by 43x with nothing
+    naming it — see `.mcp-local/queue/gate-ratchets-only-bytes-it-has-seen.md` steps 5 and 6.
     """
     out = []
     for step in admitted or []:
