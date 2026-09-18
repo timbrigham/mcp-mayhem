@@ -506,7 +506,8 @@ def build(*, config, records, action: str, files: dict,
         # the worst ACROSS paths is a different question from taking the latest AT a
         # path, and only the second is what `revision` means.
         covered, stale = 0, 0
-        covered_recs, stale_rec = [], None
+        covered_recs, stale_rec, stale_paths = [], None, []
+        r_stale_out_of_range = False
         for path in judged:
             rec = by_content.get((step, path, files[path]))
             if rec is not None:
@@ -515,6 +516,7 @@ def build(*, config, records, action: str, files: dict,
             elif (step, path) in by_path:
                 # examined, but never at THIS content
                 stale += 1
+                stale_paths.append(path)
                 stale_rec = stale_rec or by_path[(step, path)]
         _SEVERITY = {"FAIL": 0, "UNDECIDED": 1, "PASS": 2}
 
@@ -762,6 +764,41 @@ def build(*, config, records, action: str, files: dict,
             if stale_rec is not None and stale_rec.get("verdict") in ("FAIL", "UNDECIDED"):
                 why = (f"last verdict was {stale_rec['verdict']} but against different "
                        f"bytes ({stale_rec['id']}) -- it does not judge this content")
+            # ⛔⛔ SUBJECT-STALENESS OVER PATHS THIS RANGE DOES NOT TOUCH IS REPORTED, NOT
+            # BLOCKING. Tim's ruling 2026-09-18, on a measured case: six commits touching only
+            # `tools/verify/` were blocked because `editorial` was STALE over ONE prose file —
+            # `ZeroParadox/Computability/Kleene.md` — that they never touched, and that had
+            # entered editorial's scope that same morning.
+            #
+            # ⚠⚠ THE ASYMMETRY IS THE ARGUMENT. At that moment `prior_art` carried 247 paths it
+            # had NEVER examined and `adversary` 24, and neither blocked anything, because
+            # `coverage.require_complete` is false. One path examined once at older bytes
+            # blocked six unrelated commits. **Both states say the same thing about the bytes
+            # being published — nobody has judged them.** The only difference is whether the
+            # step happened to look at an OLDER version, which has no bearing on what ships.
+            # The gate was blocking on the strictly less alarming of the two.
+            #
+            # ⭐ AND THE REAL RISK IS ALREADY COVERED. The changed-path ratchet refuses any path
+            # the range CHANGES that lacks a verdict at its new bytes, so a file cannot ship
+            # unreviewed. Post-ratchet, subject-staleness over an untouched path is a BACKLOG
+            # artifact — and the backlog is accepted and ratcheted forward, which is the whole
+            # model. `Kleene.md` is stale precisely because it moved BEFORE editorial claimed it.
+            #
+            # ⛔ EVIDENCE-STALENESS (the branch below) IS UNAFFECTED AND STILL BLOCKS. That is a
+            # different fact — the producer changed, so no subject is judged by a live checker —
+            # and it is not scoped to paths in the range. Do not fold the two together.
+            #
+            # ⚠ `changed is None` means the caller asked about a REF, not a RANGE, so "did this
+            # push touch it" has no answer. It keeps blocking: absence must not quietly weaken a
+            # gate.
+            if changed is not None and not (set(stale_paths) & set(changed)):
+                r_stale_out_of_range = True
+                why = (f"{why} ⚠ REPORTED, NOT BLOCKING: none of the {len(stale_paths)} stale "
+                       f"path(s) are changed by this range, so this push publishes no bytes this "
+                       f"step has left unjudged. The changed-path ratchet governs what this "
+                       f"range DOES touch. Stale here: "
+                       f"{', '.join(sorted(stale_paths)[:3])}"
+                       f"{' …' if len(stale_paths) > 3 else ''}")
         elif ev_stale:
             # ⚠ Every subject still matches; what changed is the code or the brief
             # that PRODUCED the verdict. Re-running is exactly the right remedy here,
@@ -855,6 +892,11 @@ def build(*, config, records, action: str, files: dict,
             how_counts[how] = how_counts.get(how, 0) + 1
 
         rows.append({"step": step, "family": family, "status": status,
+                     # ⚠ A STALE row whose stale paths are all OUTSIDE this range. Still
+                     # STALE — the step has not judged those bytes — but it does not
+                     # refuse THIS push. See the subject-staleness branch above.
+                     "stale_out_of_range": r_stale_out_of_range,
+                     "stale_paths": sorted(stale_paths),
                      "record_id": (record or {}).get("id"),
                      # ⚠ THE BYTES CONDEMNED, so "is it fixed?" is answerable without
                      # re-running a checker that cannot clear an honest FAIL. Empty on every
@@ -1135,6 +1177,17 @@ def build(*, config, records, action: str, files: dict,
     def n(status):
         return sum(1 for r in gating if r["status"] == status)
 
+    def n_blocking_stale():
+        """STALE rows that actually refuse THIS range.
+
+        ⛔ A STALE row whose stale paths are untouched by the range is reported and does not
+        block — Tim's ruling 2026-09-18, and the reasoning is at the subject-staleness branch.
+        ⚠ It still counts as STALE everywhere a reader looks; only `complete` changes. A row
+        that vanished from the stale list would hide the backlog instead of grandfathering it.
+        """
+        return sum(1 for r in gating
+                   if r["status"] == "STALE" and not r.get("stale_out_of_range"))
+
     required = len(gating)
     satisfied = n("SATISFIED")
     registered_not_admitting = sorted(
@@ -1170,7 +1223,7 @@ def build(*, config, records, action: str, files: dict,
         # record, and the row clears. Before that existed, adding REFUSED here would have been a
         # permanent block — which is why the 2026-09-13 decision not to consult the sidecar at
         # all was right at the time.
-        complete = (n("MISSING") == 0 and n("STALE") == 0
+        complete = (n("MISSING") == 0 and n_blocking_stale() == 0
                     and n("UNDECIDED") == 0 and n("FAIL") == 0
                     and n("LEGACY_IDENTITY") == 0 and n("REFUSED") == 0)
         # ⭐⭐ COVERAGE BINDS ONLY WHEN POLICY SAYS SO. Until 2026-08-25 an in-scope
