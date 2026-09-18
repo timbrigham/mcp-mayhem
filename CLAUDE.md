@@ -76,6 +76,25 @@ condemnation is the same claim with the sign flipped and needs the same proof. T
 admission set, an unreachable ledger — each must render as its own state and block. The recurring
 bug is one of these quietly rendering as PASS.
 
+⭐⭐ **AND IT HAS AN OPERATIONAL FORM THAT MAKES IT CHECKABLE, WHICH THE RULE ABOVE DOES NOT:
+CHOOSE THE DEFAULT SO AN UNKNOWN CASE TRIPS RATHER THAN PASSES.** Ask of any new branch: *what
+does this return when it does not know?* ZeroParadox's phrasing, 2026-09-18 — **"fail toward
+noticing"** — after we found the same answer had been reached three times independently, in three
+components, without anyone naming it once:
+
+    core/config.py `_strip_rationale`   a DENYLIST (`_`-prefixed), never an allowlist of known
+                                        enforcement fields — so a field added LATER is COUNTED.
+                                        An allowlist would hold the freeze while rules moved.
+    ZP batch.py `reviewable_from`       default-REVIEWABLE, explicit-exclude — an unclassified
+                                        new file owes review rather than silently escaping it.
+    `owing_paths`                       returns `None`, never `[]` — "I could not tell" and
+                                        "nothing is owed" are different facts.
+
+⚠ THE TEST IS THE DIRECTION OF THE FAILURE, NOT WHETHER ONE EXISTS. A denylist's bad day is a new
+documentation field tripping the bar — visible, cheap, and someone fixes it. An allowlist's bad
+day is a real rule going unnoticed, which is only discovered by the damage. **Both are wrong
+sometimes; only one is wrong in the direction nobody checks.**
+
 **A refusal names the success condition, not just the failure.** `UsageError(what, satisfied_when)`
 requires both. Test: could a reader construct a passing next attempt from `satisfied_when` alone,
 with `what` deleted? The next attempt is on different bytes, so a message about the current bytes
