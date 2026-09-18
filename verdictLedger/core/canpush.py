@@ -196,10 +196,21 @@ def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitte
         return {"checked": False, "why": "no admission set, so nothing states what must judge"}
     steps = _judging_steps(config, admitted)
     changed, renamed = _changed_across(repo, base, tip)
+    # ⛔⛔ SESSION STATE CAN NEVER BE OWED, BECAUSE NOBODY IS PERMITTED TO RECORD IT. `RATCHET-2`,
+    # reported by ZeroParadox 2026-09-18 after it blocked a real push for SIX COMMITS: the subject
+    # fence refuses `gate_round.json` as a verdict subject unconditionally, so a commit touching it
+    # made this function owe a signature no caller could ever land, and the remedy printed below
+    # — "run each step over the paths named and record" — was structurally impossible to execute.
+    # ⚠ A REFUSAL WHOSE SUCCESS CONDITION CANNOT BE MET IS WORSE THAN A BARE REFUSAL: it sends the
+    # caller to do work the system will reject. See `config.session_state_paths` for why this
+    # reads the consumer's own declaration instead of listing the paths here.
+    session_state = config.session_state_paths
     for path in changed:
         if path not in tip_files:          # deleted by the range: publishes no bytes
             continue
         if path in renamed:                # pure rename: same bytes, already judged
+            continue
+        if path in session_state:          # unjudgeable by construction — see above
             continue
         blob = tip_files[path]
         for step in steps:

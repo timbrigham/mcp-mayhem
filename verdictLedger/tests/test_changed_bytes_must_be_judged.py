@@ -264,3 +264,71 @@ def test_stale_and_owed_are_not_presented_as_the_same_work(ledger, tmp_path):
     assert result["ratchet"]["owed"], "fixture: the ratchet must owe something"
     assert "DIFFERENT WORK HERE" in text
     assert "OWED, not stale" in text and STEP in text
+
+
+def test_session_state_is_never_owed_because_nobody_may_record_it(ledger, tmp_path):
+    """⛔⛔ `RATCHET-2` — IT BLOCKED A REAL PUSH FOR SIX COMMITS, reported by ZeroParadox
+    2026-09-18, one day after the ratchet shipped.
+
+    The subject fence refuses session-state paths as verdict subjects UNCONDITIONALLY, so the
+    ratchet owing a signature on one produces a refusal whose printed remedy — *"run each step
+    over the paths named and record"* — no caller is permitted to execute. **A refusal whose
+    success condition cannot be met is worse than a bare refusal**: it sends the caller to do
+    work the system will then reject.
+
+    ⚠ The fence's own file says it is "the place the other three collapse ONTO, not a fifth
+    copy", so this reads their declaration rather than listing the path here.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    (ledger.config.required_path.parent / "session_state.txt").write_text(
+        "# session state, never a subject\nstate.json\n", encoding="utf-8", newline="\n")
+    # ⚠ The list lands BEFORE the measured range: the ledger's config dir sits inside the fixture
+    # repo, so writing it mid-range would make the list itself an unjudged changed path.
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "declare the session-state list"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                         text=True).stdout.strip()
+    (tmp_path / "state.json").write_text('{"round": 3}', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "bump the session counter"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    newtip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                            text=True).stdout.strip()
+    records = [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip),
+               _rec(STEP, PATH, _blob(tmp_path, newtip, PATH), newtip)]
+
+    result = _check(ledger, tmp_path, f"{tip}..{newtip}", records)
+
+    owed = [(o["step"], o["path"]) for o in result["ratchet"]["owed"]]
+    assert owed == [], f"the ratchet owed a signature nobody may record: {owed}"
+
+
+def test_an_ordinary_file_is_still_owed_when_a_session_state_list_exists(ledger, tmp_path):
+    """⛔ THE CONTROL. An exemption list that quietly widens is a self-exemption route — the
+    fence's own header records `vendored.is_vendored` matching `/Vendored/` at any depth and
+    exempting a whole directory from four checkers. EXACT MATCH, and nothing else moves."""
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    (ledger.config.required_path.parent / "session_state.txt").write_text(
+        "state.json\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "declare the session-state list"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                         text=True).stdout.strip()
+    (tmp_path / "state.json").write_text('{"round": 3}', encoding="utf-8")
+    (tmp_path / "real.md").write_text("content nobody has judged", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "session state AND real content"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    newtip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True,
+                            text=True).stdout.strip()
+    records = [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip),
+               _rec(STEP, PATH, _blob(tmp_path, newtip, PATH), newtip)]
+
+    result = _check(ledger, tmp_path, f"{tip}..{newtip}", records)
+
+    owed = [(o["step"], o["path"]) for o in result["ratchet"]["owed"]]
+    assert owed == [(STEP, "real.md")], f"the exemption leaked past its exact match: {owed}"

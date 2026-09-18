@@ -58,7 +58,14 @@ from core import crossref as crossref_mod
 from core import inventory as inventory_mod
 from core import render as render_mod
 from core import signals as signals_mod
-from core.errors import LedgerError, ValidationFailure
+# ⛔ `UsageError` IS IMPORTED AT MODULE LEVEL BECAUSE AN ERROR PATH MAY NOT DEPEND ON A LOCAL
+# IMPORT SOMEONE ELSE MADE. Measured 2026-09-18 by ZeroParadox: `vocabulary(name=<anything
+# unpublished>)` answered `error_type: "unhandled"` with `NameError: 'UsageError' is not
+# defined` — the refusal branch referenced a name three other functions imported inside
+# themselves and this one did not. ⚠ An ordinary caller mistake rendering as `unhandled` is by
+# this fleet's own vocabulary a defect: `usage` is TERMINAL and tells the caller to fix the
+# call, `unhandled` says the server broke. The handler was written and never executed.
+from core.errors import LedgerError, UsageError, ValidationFailure
 from core.ledger import Ledger
 
 ACTOR = os.environ.get("ZPLEDGER_ACTOR", "mcp")

@@ -318,6 +318,52 @@ class Config:
         return _sha(self.required_path)
 
     @property
+    def session_state_paths(self) -> frozenset:
+        """Repo-relative paths that are SESSION STATE and can never be a verdict SUBJECT.
+
+        ⛔⛔ WHY A READER HERE AT ALL — `RATCHET-2`, reported by ZeroParadox 2026-09-18, and it
+        BLOCKED A REAL PUSH FOR SIX COMMITS. The changed-path ratchet demands a verdict at the new
+        bytes of every changed path in scope. `gate_round.json` is session state: the subject fence
+        refuses UNCONDITIONALLY to let anyone record a verdict about it. So a commit touching it
+        made `can_push` owe a `check_encoding` signature **that no caller is permitted to record**,
+        and the remedy the refusal printed — *"run each step over the paths named and record"* —
+        could not be executed by anyone. A gate whose stated remedy is structurally impossible is
+        worse than one that simply refuses: it sends the caller to do work the system will reject.
+
+        ⚠ THE SAME SHAPE AS THE V11 ITEM FILED BESIDE IT: a rule correct about its own question,
+        applied against the wrong object. The ratchet asked "has this path been judged?" of a path
+        that is definitionally unjudgeable.
+
+        ⭐ IT READS THE CONSUMER'S OWN DECLARATION RATHER THAN CARRYING A COPY, and that is the
+        whole point. `tools/verify/session_state.txt` lives in the directory this config already
+        reads, its header states the format (repo-relative, one per line, EXACT MATCH, no globs,
+        no directories) and says it is *"offered as the place the other three collapse ONTO, not as
+        a fifth copy."* gitRobot declares the same set three times (`_SESSION_STATE`, `_ARC_STATE`,
+        `_EXPECTED_LOCAL`); this makes the ledger a READER of the consumer's list, not a fourth
+        declarer. ⛔ Do not inline these names here — a copy in this file is exactly what the
+        consumer's header asks nobody to make.
+
+        ⚠ EXACT MATCH IS LOAD-BEARING and is their rule, not a simplification of it: their header
+        records that `vendored.is_vendored` once matched `/Vendored/` at any depth, which exempted
+        a whole directory from four checkers. A loose match here would be a self-exemption route.
+
+        ⚠ ABSENT FILE = EMPTY SET, NOT AN ERROR. The list is the consumer's, and a consumer that
+        has no session state is a legitimate configuration. Absence widens the ratchet (more paths
+        are owed), which fails CLOSED — the safe direction.
+        """
+        path = self.required_path.parent / "session_state.txt"
+        try:
+            raw = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return frozenset()
+        out = set()
+        for line in raw.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.add(line)
+        return frozenset(out)
+
+    @property
     def registry_scope_digest(self) -> str:
         """The identity of what the registry ENFORCES, with rationale stripped out.
 

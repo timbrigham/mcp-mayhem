@@ -1087,3 +1087,36 @@ def test_the_vocabulary_tool_refuses_an_unpublished_name_rather_than_answering_e
         assert name in caught.value.satisfied_when, (
             "satisfied_when must enumerate the valid names, or the caller cannot build a "
             "passing next attempt from it alone")
+
+
+def test_an_unpublished_vocabulary_name_refuses_as_usage_not_unhandled():
+    """⛔⛔ THE REFUSAL BRANCH WAS WRITTEN AND NEVER EXECUTED, so a NameError sat in it.
+
+    Reported by ZeroParadox 2026-09-18: `vocabulary(name=<anything unpublished>)` answered
+    `error_type: "unhandled"` carrying `NameError: 'UsageError' is not defined`. The handler
+    referenced a class that three OTHER functions in the module import inside themselves, and
+    this one did not — so the only path that could reach it crashed.
+
+    ⚠ WHY IT IS A DEFECT AND NOT COSMETIC, by this fleet's own vocabulary: `usage` is TERMINAL
+    and tells the caller to fix the call; `unhandled` says the SERVER broke and invites a retry
+    of something that will never succeed. A different VALUE, not a different message.
+
+    ⭐ THE SHAPE WORTH REMEMBERING: an error path is code, and code that never runs is untested
+    by construction. The success path had been exercised thousands of times.
+    """
+    import ledger_server.server as server
+    assert hasattr(server, "UsageError"), (
+        "UsageError must be importable at module scope — an error path may not depend on a "
+        "local import made inside some other function")
+
+    from mcpcommon.vocabulary import as_payload, UnknownVocabulary
+    try:
+        as_payload("no_such_vocabulary_name")
+    except UnknownVocabulary as exc:
+        # the exact expression the handler evaluates
+        payload = {"ok": False, "error_type": server.UsageError.error_type,
+                   "error": str(exc), "satisfied_when": exc.satisfied_when}
+        assert payload["error_type"] == "usage", payload
+        assert payload["satisfied_when"], "a refusal must name its success condition"
+    else:
+        raise AssertionError("an unpublished name must raise, never answer an empty set")
