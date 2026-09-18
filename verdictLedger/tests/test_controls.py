@@ -1222,7 +1222,7 @@ def test_the_inventory_tool_warns_that_covered_is_not_passing():
 
 # -- ⭐⭐ every tracked config must be LF, because I broke someone else's push ---
 
-def test_no_tracked_json_config_carries_CRLF():
+def test_no_tracked_text_file_carries_CRLF_or_a_BOM_on_disk():
     """⭐⭐ MEASURED 2026-08-29, AND IT ESCAPED THIS REPO. `pathlib.write_text` on
     Windows silently translates '\n' to '\r\n', so EVERY json config written this
     session carried CRLF: policy.v1.json 31, required.v2.json 235, admission.v1.json
@@ -1240,22 +1240,86 @@ def test_no_tracked_json_config_carries_CRLF():
 
     A habit is not a fix. This asserts the property so the next `write_text` is caught
     by the suite rather than by a sibling session's blocked push.
+
+    ⛔⛔ WIDENED 2026-09-18 FROM `*.json` TO EVERY TRACKED TEXT FILE, BECAUSE THE NARROW
+    VERSION HELD EXACTLY WHERE IT LOOKED AND NOWHERE ELSE. Measured that day: every
+    committed blob in this repo was clean — 0 of 165 — and **54 files in the WORKING TREE
+    were CRLF**, none of them `.json`, so nothing here ever asked. They were checked out
+    before `.gitattributes` landed, and *nothing rewrites a file git already considers
+    unmodified*: normalization applies at checkout and at commit, and a file that does
+    neither is never revisited.
+
+    ⭐ THE CONSUMER'S GENERALISATION, 2026-09-18, and it is the reusable half: **"a policy
+    with no sweep only ever governs new traffic."** True of every as-touched rollout, not
+    only line endings. This control IS the sweep.
+
+    ⚠⚠ AND `.gitattributes` HERE SAYS, IN TERMS, *"it is the files on disk that tools
+    read"* — while the disk had not matched it since the day that sentence was written.
+    **A control whose subject and whose verification surface are different objects**: the
+    hazard was described correctly, the mechanism was right, and the thing being checked
+    was the committed blob rather than the file a tool opens.
+
+    ⛔ THE `check-attr` FILTER IS NOT A TIDY-UP, IT IS THE MEASUREMENT. A naive byte scan
+    flags every PDF containing a `\\r\\n` sequence — 42 of them in ZeroParadox's tree —
+    and reads as 42 findings. A probe that fires on every member of a class says nothing
+    about the member you asked about. Ask git which files it considers text and the same
+    scan discriminates.
     """
     import pathlib
+    import subprocess
     root = pathlib.Path(__file__).resolve().parents[2]
+
+    # ⛔⛔ NUL-DELIMITED, IN BYTES, AND THE FIRST DRAFT OF THIS CONTROL PROVES WHY — it was
+    # written with `text=True` and `input="\n".join(paths)`, and **Python's text mode
+    # translated those separators to `\r\n` on the way into git**, so every path arrived
+    # with a trailing `\r`, matched nothing on disk, and the control PASSED VACUOUSLY over
+    # an injected CRLF. The newline-translation defect this control exists to catch bit
+    # INSIDE the control, in the direction that reads as healthy.
+    # ⚠ It was caught only by mutation — injecting 20 CRLF into a tracked file and watching
+    # the suite stay green. An assertion that never ran is indistinguishable from one that
+    # passed, which is why `is_text` is floor-checked below rather than trusted.
+    # ⚠ `-z` also removes the quoting: git renders unusual paths as `"a\tb"` by default, and
+    # a quoted name never matches a real file either.
+    tracked = [p for p in subprocess.run(["git", "ls-files", "-z"], cwd=root,
+                                         capture_output=True).stdout.split(b"\x00") if p]
+    assert tracked, "no tracked files: this control cannot measure anything"
+    # ⚠ ONE batch call. Per-file `check-attr` over ~165 files is slow enough that someone
+    # will narrow the control to make the suite quick, which is how it got narrow before.
+    fields = subprocess.run(["git", "check-attr", "-z", "--stdin", "text"], cwd=root,
+                            input=b"\x00".join(tracked), capture_output=True).stdout.split(b"\x00")
+
+    is_text = set()
+    for i in range(0, len(fields) - 2, 3):          # path, attr, value triples
+        if fields[i + 2] in (b"set", b"auto"):
+            is_text.add(fields[i].decode("utf-8", "surrogateescape"))
+    # ⛔ THE FLOOR. Without this the whole control is one parsing change away from
+    # asserting nothing at all, silently — which is exactly what it did on its first run.
+    assert len(is_text) > len(tracked) // 2, (
+        f"only {len(is_text)} of {len(tracked)} tracked files parsed as text — the attribute "
+        f"parse is broken and this control would pass over anything")
+
+    BOMS = {"UTF-8": b"\xef\xbb\xbf", "UTF-16-LE": b"\xff\xfe", "UTF-16-BE": b"\xfe\xff"}
     bad = []
-    for f in sorted(root.rglob("*.json")):
-        s = str(f)
-        if any(x in s for x in (".git", "__pycache__", "node_modules", ".mcp-local",
-                                "data", ".pytest_cache")):
-            continue
+    for rel in sorted(is_text):
+        f = root / rel
+        if not f.is_file():
+            continue                      # staged-deleted, or a submodule entry
         raw = f.read_bytes()
         n = raw.count(b"\r\n")
         if n:
-            bad.append(f"{f.relative_to(root)} ({n} CRLF)")
+            bad.append(f"{rel} ({n} CRLF)")
+        for name, sig in BOMS.items():
+            if raw.startswith(sig):
+                # ⭐ BOMs ride along for the same reason, found by ZeroParadox 2026-09-18:
+                # PowerShell wrote one into a control's input and the control "failed" at
+                # `1:0: expected token` — it fired for the WRONG REASON, and a check that
+                # fails for the wrong reason is one edit away from passing for the wrong one.
+                bad.append(f"{rel} ({name} BOM)")
     assert not bad, (
-        "CRLF in tracked JSON config — pathlib.write_text does this on Windows; "
-        "write bytes, or newline='' :\n  " + "\n  ".join(bad))
+        "CRLF or BOM in a tracked TEXT file's WORKING-TREE bytes — `pathlib.write_text` and "
+        "PowerShell redirection both do this on Windows; write bytes, or pass newline=''.\n"
+        "  ⚠ A clean `git status` does NOT clear this: git normalises on commit, so the blob "
+        "can be LF while the file a tool reads is not.\n  " + "\n  ".join(bad))
 
 
 def test_defaulted_reports_every_setting_running_on_a_builtin(tmp_path):
