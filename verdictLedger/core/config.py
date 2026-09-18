@@ -49,6 +49,26 @@ def _read(path: Path, label: str) -> dict:
         raise ConfigError(f"{label} is not valid JSON ({path}): {exc}") from exc
 
 
+def _strip_rationale(obj):
+    """Drop every `_`-prefixed key, at any depth. See `registry_scope_digest` for why."""
+    if isinstance(obj, dict):
+        return {k: _strip_rationale(v) for k, v in obj.items() if not k.startswith("_")}
+    if isinstance(obj, list):
+        return [_strip_rationale(x) for x in obj]
+    return obj
+
+
+def _digest_enforcement(doc: dict) -> str:
+    """SHA-256 of the parsed registry with rationale removed and keys ordered.
+
+    ⚠ OVER THE PARSED OBJECT, NOT THE TEXT, so re-indenting, reordering keys or changing
+    separators move nothing either — the same reason `_sha` normalises newlines. A digest that
+    moves on formatting is a digest people learn to ignore.
+    """
+    canonical = json.dumps(_strip_rationale(doc), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _sha(path: Path) -> str:
     """The identity of a config file, NORMALISED so that transport cannot change it.
 
@@ -296,6 +316,52 @@ class Config:
         is worse than none, because it still reads as protection.
         """
         return _sha(self.required_path)
+
+    @property
+    def registry_scope_digest(self) -> str:
+        """The identity of what the registry ENFORCES, with rationale stripped out.
+
+        ⛔⛔ WHY THIS EXISTS, MEASURED 2026-09-18 ON THE CONSUMER'S OWN REGISTRY. `registry_sha`
+        hashes the FILE, so **812 bytes of added rationale moved the freeze while enforcement
+        stayed byte-identical**:
+
+            file sha      66d088e536d2 -> 9be58fb9e626     MOVED
+            scope digest  d168b82b4783 -> d168b82b4783     IDENTICAL
+
+        ⚠⚠ `convergence_bar` ALREADY MAKES THIS ARGUMENT AND STOPPED ONE LEVEL TOO HIGH: *"raising
+        a threshold or flipping a migration switch must not read as 'the scope moved', or the
+        freeze cries wolf and gets ignored — and a freeze people ignore is worse than none,
+        because it still reads as protection."* That split `registry_sha` from `config_sha` —
+        registry FILE from policy FILE — and stopped. Inside the registry the same collapse
+        survived, and this project writes long rationale into that exact file: the 2026-09-18
+        strike carried ~2.7KB of it on a single step. A freeze keyed on the file would have broken
+        on that edit, for a change that altered no rule.
+
+        ⭐ IT IS A DENYLIST (strip `_`-prefixed keys), NOT AN ALLOWLIST OF ENFORCEMENT FIELDS, AND
+        THE DIRECTION IS THE WHOLE POINT. An allowlist silently ignores a field added LATER, so a
+        genuine new rule would move nothing and the freeze would hold while the rules changed —
+        failure in the direction nobody checks. The denylist's failure mode is a new non-`_`
+        documentation field tripping the bar, which is visible and recoverable. **Fail toward
+        noticing.** ⚠ Verified 2026-09-18 that `_`-prefix means rationale in this registry and
+        nothing reads those keys: 17 such fields, every one prose, no reader in either repo.
+
+        ⚠ SAME ARGUMENT AS `_sha`'s NEWLINE NORMALISATION, one level up: an identity that moves
+        when nothing meaningful changed makes every reader wrong in a different direction. That
+        one fixed transport; this one fixes commentary.
+        """
+        return _digest_enforcement(self.required)
+
+    @property
+    def frozen_scope_digest(self):
+        """The SCOPE DIGEST this convergence run was frozen against, or None.
+
+        ⚠ A SEPARATE FIELD FROM `frozen_registry_sha`, NOT A REINTERPRETATION OF IT. The two hold
+        different objects — a file hash and an enforcement hash — and this fleet's rule is that
+        two distinct objects may not share a name (see `EXIT_CODES`, and the `push_bar` /
+        `registry_freeze` collision that hid a broken freeze for eleven days). Reusing the old
+        field would silently re-interpret every stored value as something it is not.
+        """
+        return (self.policy.get("convergence") or {}).get("frozen_scope_digest")
 
     @property
     def frozen_registry_sha(self):

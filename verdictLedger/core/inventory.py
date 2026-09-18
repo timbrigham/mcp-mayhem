@@ -191,23 +191,47 @@ def convergence_bar(config) -> dict:
     against a scope the caller has not been told moved. Complete against WHICH registry? The
     two facts belong on the same answer or the first one is a claim about an unnamed object.
     """
-    frozen = config.frozen_registry_sha
-    now = config.registry_sha
+    # ⭐⭐ TWO BASES, AND THE ANSWER SAYS WHICH ONE IT USED. Added 2026-09-18, Tim's ruling, after
+    # measuring that 812 bytes of added rationale moved `registry_sha` while enforcement stayed
+    # byte-identical — see `config.registry_scope_digest`. A freeze keyed on the FILE breaks on
+    # comment edits, and a freeze that breaks for reasons nobody caused is one people learn to
+    # ignore, which is the failure this function's own docstring warns about.
+    #
+    # ⚠ THE LEGACY BASIS IS STILL HONOURED RATHER THAN SILENTLY REINTERPRETED. A stored
+    # `frozen_registry_sha` is a FILE hash; comparing it against a scope digest would read as
+    # "the bar moved" forever, for a reason no reader could see. It keeps its own meaning, and
+    # the payload names the basis so nobody has to infer which object was compared.
+    digest_now = config.registry_scope_digest
+    frozen_digest = config.frozen_scope_digest
+    if frozen_digest:
+        basis, frozen, now = "scope_digest", frozen_digest, digest_now
+    else:
+        basis, frozen, now = "registry_file_sha", config.frozen_registry_sha, config.registry_sha
+    base = {"basis": basis, "registry_sha": config.registry_sha, "scope_digest": digest_now}
     if not frozen:
-        return {"frozen": False, "registry_sha": now, "note": (
+        return {**base, "frozen": False, "note": (
             "NO FROZEN BAR. Scope may widen mid-run and a widened scope does NOT "
             "re-open a green row, so progress can be reset invisibly. Set "
-            "policy.convergence.frozen_registry_sha to the current registry_sha "
+            "policy.convergence.frozen_scope_digest to the current scope_digest "
             "before starting a convergence run.")}
     if frozen == now:
-        return {"frozen": True, "held": True, "registry_sha": now,
-                "note": "the registry is unchanged since this run was frozen"}
-    return {"frozen": True, "held": False, "registry_sha": now, "frozen_at": frozen,
-            "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
-                     "this convergence run was frozen, so any step that went green earlier "
-                     "was judged against a different scope and will NOT re-open on its own. "
-                     "Either revert the registry, or re-freeze deliberately and expect the "
-                     "numbers to mean less than they did.")}
+        return {**base, "frozen": True, "held": True,
+                "note": f"the registry is unchanged since this run was frozen (basis: {basis})"}
+    out = {**base, "frozen": True, "held": False, "frozen_at": frozen,
+           "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
+                    "this convergence run was frozen, so any step that went green earlier "
+                    "was judged against a different scope and will NOT re-open on its own. "
+                    "Either revert the registry, or re-freeze deliberately and expect the "
+                    "numbers to mean less than they did.")}
+    # ⭐ AND IF THE LEGACY FILE BASIS TRIPPED WHILE ENFORCEMENT DID NOT MOVE, SAY SO — otherwise
+    # the reader is told "the scope moved" about a documentation edit, which is the false alarm
+    # this whole change exists to remove.
+    if basis == "registry_file_sha":
+        out["note"] += (
+            " ⚠ BASIS IS THE REGISTRY FILE HASH, which moves on ANY byte — a comment edit reads "
+            "identically to a rule change here. Migrate to policy.convergence.frozen_scope_digest "
+            f"(current scope_digest: {digest_now[:12]}), which prices enforcement alone.")
+    return out
 
 
 def registry_types_at(config, repo: Optional[str], files: dict) -> tuple:
