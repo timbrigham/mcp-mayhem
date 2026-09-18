@@ -1099,13 +1099,57 @@ class GitRobot:
             # pipeline rather than just above it, because the pipeline grows whenever a
             # control is added and the next person to add one will not revisit this number.
             result = target.run(["push", "origin", branch], timeout=3600)
+            # ⛔⛔ A NON-ZERO `git push` DOES NOT ESTABLISH THAT NOTHING WAS PUBLISHED, AND THIS
+            # RECORDED `failed` FOR A PUSH THAT HAD PUBLISHED. Measured 2026-09-18 on ZeroParadox
+            # run 22fb604fe894: the pipeline passed, the remote APPLIED the ref, and then
+            #
+            #     error: RPC failed; curl 92 Send failure: Connection was aborted
+            #     send-pack: unexpected disconnect while reading sideband packet
+            #     fatal: the remote end hung up unexpectedly
+            #
+            # arrived before the client learned it. git exited non-zero, the receipt said
+            # `failed`, and the honest recovery — push again — re-ran the whole ~12 minute
+            # pipeline and came back "cannot lock ref: is at b13e67cc but expected 94985a41",
+            # i.e. a red for a push whose only fault was being redundant.
+            #
+            # ⭐ `died` HAS SAID THE RIGHT THING SINCE 2026-08-30 — "git can be killed AFTER the
+            # remote accepted the ref; ask the remote, which is the only authority" — and this
+            # path, which fails far more often, said nothing. Same ambiguity, one state carrying
+            # it and the other asserting past it.
+            #
+            # ⚠ SO ASK, RATHER THAN HEDGE. `ls-remote` is a measurement and settles it: either
+            # the branch is at the hash we pushed or it is not. A wrong answer here is the
+            # false-SUCCESS direction if we guess allowed, and a wasted pipeline plus a scary red
+            # if we guess failed — and the remote can simply be consulted.
+            published = None
+            if not result.ok:
+                published = self._remote_has(target, branch, target.head())
             decision = "allowed" if result.ok else "failed"
+            extra = {"output": result.output, "ok": result.ok, "run_id": run_id,
+                     "not_published": not_published}
+            if published is True:
+                # ⚠ The DECISION stays `failed`: git failed, and an audit row must record the
+                # operation that happened rather than the one we wish had. What changes is that
+                # the receipt no longer implies the push did not publish.
+                extra["published"] = True
+                extra["note"] = (
+                    "⚠ THE REMOTE IS AT THE HASH THIS PUSH SENT: it PUBLISHED, and the non-zero "
+                    "exit is a TRANSPORT failure after the ref was applied. Do NOT push again — "
+                    "a redundant push re-runs the whole pre-push pipeline and is then rejected "
+                    "for a ref that is already where you want it. Verify with "
+                    "read(op='ls-remote') if you want it from the remote yourself.")
+            elif published is False:
+                extra["published"] = False
+                extra["note"] = ("the remote is NOT at this hash — nothing was published, and the "
+                                 "output above says why. Fix and push again.")
+            else:
+                extra["published"] = None
+                extra["note"] = ("⚠ THE REMOTE COULD NOT BE READ, so whether this published is "
+                                 "UNKNOWN — not 'no'. Ask it before retrying: read(op='ls-remote') "
+                                 "or compare origin/<branch> against local.")
             return self._receipt(
                 "push", push_args, decision, gates=None, reason=reason,
-                detail=result.output, run_id=run_id,
-                extra={"output": result.output, "ok": result.ok, "run_id": run_id,
-                       "not_published": not_published},
-                target=target)
+                detail=result.output, run_id=run_id, extra=extra, target=target)
 
         push_args = args
         if inv is not None:
@@ -1140,6 +1184,23 @@ class GitRobot:
                          "LLM calls inside it, not a constant: measured over 47 recorded runs, "
                          "median 672s, min 26s, max 1800s (the budget, i.e. a timeout). Read a "
                          "receipt, never this sentence, for what a given run cost.")}
+
+    def _remote_has(self, target, branch: str, head: str):
+        """Is `origin/<branch>` at `head`? True / False / None when the remote cannot be read.
+
+        ⚠ THREE-VALUED ON PURPOSE. An unreachable remote is not a "no" — the whole defect this
+        serves is a state that asserted more than it knew, and answering False on a failed
+        lookup would rebuild it one layer down.
+        """
+        if not head:
+            return None
+        res = target.run(["ls-remote", "origin", f"refs/heads/{branch}"], timeout=120)
+        if not res.ok:
+            return None
+        line = (res.output or "").strip().split("\n")[0].strip()
+        if not line:
+            return False          # the remote answered and has no such branch
+        return line.split()[0].strip() == head
 
     def push_status(self) -> dict:
         """Where the last started push got to. The sibling of `preflight_status`.
