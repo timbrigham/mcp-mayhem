@@ -107,6 +107,36 @@ detected.
 **Guards and their claims land together.** A control whose surviving enforcement is *asserted*
 rather than *run* is an unpriced exemption. Verify by making it fail.
 
+⭐⭐ **A CONTROL NOBODY HAS SEEN FAIL IS A HYPOTHESIS, NOT A CONTROL.** ZeroParadox's phrasing,
+2026-09-18, after that single day produced FIVE controls that passed over the exact defect they
+were written for. Every one looked green and none of them ran:
+
+    the ratchet's 6 tests        making the ratchet NON-BLOCKING failed nothing — every case was
+                                 already refused by a STALE row. Needed a 7th where only the
+                                 ratchet can refuse.
+    `_remote_has`'s mutation     the edit did not apply (wrong anchor). A mutation that does not
+                                 land reads exactly like a control that held.
+    the CRLF/BOM sweep           `text=True` + `input="\n".join(paths)` translated the separators
+                                 to CRLF, so git got paths ending `\r`, matched nothing on disk,
+                                 and the loop ran ZERO times over an injected CRLF.
+    the restatement ratchet      skipped any line containing `%s` as "the generated site" — and
+                                 the defect lived on such a line, where the generated LIST and the
+                                 hand-written COUNT shared one string.
+    ZP's leg guard (theirs)      compared prefix STRINGS as a stand-in for a set of PATHS; the
+                                 attacker moved a key the leg never read.
+
+⛔ **THE COMMON SHAPE IS A CONTROL TESTING A PROXY FOR THE PROPERTY** — a row's staleness standing
+in for the ratchet, a string for a path, a line's generated half for its hand-written half. The
+proxy holds while the property fails, which is `DC-18` wherever it appears.
+
+⚠ **AND AN EXEMPTION WRITTEN FOR ONE HALF OF A LINE EXEMPTS THE OTHER HALF TOO.** Scope an
+exemption to the check it excuses, never to the line it sits on.
+
+⭐ **THE ONLY METHOD THAT WORKS IS RE-INTRODUCING THE BUG AND WATCHING THE SUITE STAY GREEN.**
+Four of the five above were found that way and would not have been found any other way. ⚠ Assert a
+FLOOR on anything a parse or a filter produces (`len(x) > n`), because an assertion that never ran
+is indistinguishable from one that passed.
+
 ## Time is UTC, everywhere, and the entry says so
 
 ⭐ Tim, 2026-09-09: *"we need to make it blatantly obvious what time zone we are using for our
