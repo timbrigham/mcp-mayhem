@@ -1120,3 +1120,71 @@ def test_an_unpublished_vocabulary_name_refuses_as_usage_not_unhandled():
         assert payload["satisfied_when"], "a refusal must name its success condition"
     else:
         raise AssertionError("an unpublished name must raise, never answer an empty set")
+
+
+def test_no_served_surface_restates_the_vocabulary_LIST_or_its_COUNT():
+    """⛔⛔ NINE STALE RESTATEMENTS ACROSS THREE SERVERS, found 2026-09-18 by ZeroParadox
+    reading the refusal string I had shipped hours earlier to fix a different defect in the
+    same function.
+
+    The message said: *"pass `name` as one of 'error_type', 'decision', 'row_status',
+    'exit_code', 'claim_field', 'tree_object', or omit it for all four."* **Six named, four
+    claimed** — in the one sentence whose entire job is to tell a caller what the valid set is.
+    A caller trusting the count over the list concludes two of the six are not real.
+
+    ⚠ AND THE DOCSTRINGS WERE WORSE THAN THE COUNT. All three servers said *"Pass `name` for
+    one of error_type / decision / row_status / exit_code"* — enumerating FOUR of six, so
+    `claim_field` and `tree_object` were invisible on the surface a caller actually reads. The
+    resource titles named the same four. `VOCABULARIES` grew twice; nine prose copies did not.
+
+    ⭐ THE REMEDY IS ZeroParadox's, and it is stronger than correcting the number: **DELETE the
+    count, because a count beside a list is a second source of truth that can only ever go
+    stale.** Their `R-ADJACENT` instance the same day — a theorem count reading 23, 24 and 26 in
+    one document, with two independent reviewers producing 30 and 25. Six numbers, no two
+    agreeing. The list is already generated from the constants; the integer was pure liability.
+
+    This test is the ratchet: it fails if any served string enumerates the names or counts them.
+    """
+    import pathlib
+    import re
+    from mcpcommon.vocabulary import VOCABULARIES
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    names = sorted(VOCABULARIES)
+    COUNT_WORDS = re.compile(r"\ball (?:two|three|four|five|six|seven|eight)\b", re.I)
+    offenders = []
+    for rel in ("mcpcommon/vocabulary.py",
+                "gitRobot/gitrobot_server/server.py", "gitRobot/gitrobot_server/results.py",
+                "verdictLedger/ledger_server/server.py", "verdictLedger/ledger_server/results.py",
+                "structuredJsonValidator/mcp_server/server.py",
+                "structuredJsonValidator/mcp_server/results.py"):
+        f = root / rel
+        if not f.is_file():
+            continue
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            # ⛔⛔ THE COUNT CHECK RUNS ON EVERY LINE, INCLUDING GENERATED ONES, AND THAT IS THE
+            # WHOLE POINT. The first draft of this test skipped any line containing `%s` as a
+            # "legitimate interpolation" — and the defect it was written for lives on exactly
+            # such a line: `"... one of %s, or omit it for all four."` The generated LIST and the
+            # hand-written COUNT shared one string, so the exemption swallowed the offence and
+            # the mutation passed. ⚠ Caught only by re-introducing the bug and watching the suite
+            # stay green. **An exemption written for one half of a line exempts the other half
+            # too.**
+            # ⚠ ANCHORED ON "omit", NOT ON THE BARE COUNT WORD. An unanchored version flagged
+            # "all seven servers", "all three servers" and a comment about four exit codes —
+            # legitimate counts of other things. A control that fires on every member of a class
+            # says nothing about the member you asked about, and a test that fails on correct
+            # prose gets exempted or deleted, which is worse than no test. "omit it for all N"
+            # is the selector sentence, and the selector sentence is where this defect lives.
+            if "omit" in line.lower() and COUNT_WORDS.search(line):
+                offenders.append(f"{rel}:{i} counts the vocabularies: {line.strip()[:70]}")
+            # ⚠ The name-enumeration check DOES exempt the generated site: it renders from
+            # VOCABULARIES itself and cannot go stale. Everything else is a hand copy.
+            if "%s" in line or "VOCABULARIES" in line:
+                continue
+            named = sum(1 for n in names if n in line)
+            if named >= 3:
+                offenders.append(f"{rel}:{i} enumerates {named} vocabulary names by hand")
+    assert not offenders, (
+        "a served surface restates the vocabulary list or its count — delete it and let the "
+        "generated render speak:\n  " + "\n  ".join(offenders))

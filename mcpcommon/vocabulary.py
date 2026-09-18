@@ -502,7 +502,7 @@ def _select(name=None):
     if name not in VOCABULARIES:
         raise UnknownVocabulary(
             "no vocabulary named %r" % (name,),
-            "pass `name` as one of %s, or omit it for all four. Refusing rather than "
+            "pass `name` as one of %s, or omit it for all of them. Refusing rather than "
             "returning an empty set, because an empty vocabulary reads as 'this value has no "
             "published meanings' when it means 'you asked for a table that does not exist'."
             % (", ".join(repr(k) for k in VOCABULARIES),))

@@ -960,7 +960,7 @@ async def vocabulary(name: Optional[str] = None) -> VocabularyResult:
     disagree, and neither is a copy of the other. `markdown` is returned as well as the
     structured tables so a tool-only caller can read exactly what a resource reader sees.
 
-    Pass `name` for one of error_type / decision / row_status / exit_code; omit it for all
+    Pass `name` for one of the published vocabularies; omit it for all of them
     four. An unpublished name is REFUSED, never answered with an empty set.
 
     ⚠ `exit_code` KEYS ARE STRINGS ON THE WIRE. They are ints in the source and JSON object
@@ -1040,7 +1040,7 @@ def _readme() -> str:
 @mcp.resource(
     "docs://verdictledger/vocabulary",
     name="fleet vocabulary",
-    title="error_type, decision, row_status and exit_code - what every value MEANS",
+    title="Every published vocabulary - what each value MEANS",
     description=("The shared vocabularies every server on this fleet answers with, rendered "
                  "from the constants the code imports. An enum publishes the values; this "
                  "publishes what they mean and when each is the honest answer."),

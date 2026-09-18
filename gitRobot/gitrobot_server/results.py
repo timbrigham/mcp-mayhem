@@ -194,7 +194,7 @@ class VocabularyResult(Result, total=False):
     """
 
     names: list             # every published vocabulary name, regardless of `name`
-    requested: Any          # the `name` asked for, or None for all four
+    requested: Any          # the `name` asked for, or None for every published vocabulary
     vocabularies: dict      # {vocabulary_name: {value: meaning}} — keys are STRINGS on the wire
     markdown: str           # the same render the resource serves, so both audiences agree
     error_type: str
