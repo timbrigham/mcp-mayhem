@@ -332,3 +332,62 @@ def test_an_ordinary_file_is_still_owed_when_a_session_state_list_exists(ledger,
 
     owed = [(o["step"], o["path"]) for o in result["ratchet"]["owed"]]
     assert owed == [(STEP, "real.md")], f"the exemption leaked past its exact match: {owed}"
+
+
+def test_session_state_is_not_in_any_STEPS_SCOPE_either(ledger, tmp_path):
+    """⛔⛔ `RATCHET-2`, SECOND OCCURRENCE — and this one HARD BLOCKED a push with a remedy no
+    caller could execute. Reported by ZeroParadox 2026-09-18, hours after the first was fixed.
+
+    The first fix landed in the ratchet. Per-commit COVERAGE computes scope independently, so it
+    kept the old behaviour: `check_encoding` claimed `gate_round.json` (482 paths), the subject
+    fence refused it as a subject, coverage could never exceed 481/482, the commit could never be
+    complete, and `progress` printed *"run the step over the listed paths and record"* for a path
+    `record.py` declines in the same breath.
+
+    ⚠⚠ WORSE THAN THE FIRST, because the escape was gone: the blocking commits were ALREADY
+    WRITTEN and their trees held the modified blob. Nothing at HEAD changes what an earlier commit
+    contains.
+
+    ⭐ SO THE EXCLUSION MOVED TO THE ONE PLACE SCOPE IS COMPUTED, which was their ask: *"the fix
+    should go wherever scope is computed rather than at each consumer, so the next reader inherits
+    it."* Their `session_state.txt` header had predicted exactly this — four declarations, asking
+    to be the one they collapse onto; the ratchet made five and coverage six.
+    """
+    from core import inventory as inventory_mod
+    (ledger.config.required_path.parent / "session_state.txt").write_text(
+        "state.json\n", encoding="utf-8", newline="\n")
+
+    inv = inventory_mod.build(
+        config=ledger.config, records=[], action="commit",
+        files={"doc.md": "a" * 40, "state.json": "b" * 40},
+        ref="c" * 40, admission=[STEP], changed=None)
+    row = [r for r in inv["rows"] if r["step"] == STEP][0]
+
+    assert row["scope"] == 1, (
+        f"session state is still inside the step's scope ({row['scope']} paths) — coverage can "
+        f"then never complete, because nobody is permitted to record it")
+
+
+def test_an_unset_intermediate_does_not_render_as_zero_of_zero_short(ledger, tmp_path):
+    """⛔⛔ `0/0 short` READS AS SATISFIED-AND-YET-BLOCKING, and it cost the consumer a wrong
+    diagnosis on 2026-09-18. Calling `can_push` with only the PUSH set leaves every INTERMEDIATE
+    — judged under `commit` — with no admission at all, and the row rendered `0/0 short`.
+
+    ⚠⚠ THIS IS THE 2026-09-03 HEADLINE DEFECT ONE LINE DOWN. Their words then: *"the surface
+    reads as a refusal and means unconfigured, and those are different facts."* The headline was
+    fixed; the per-commit rows kept the shape — the same fix applied at one level and not its
+    sibling.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    result = canpush_mod.check(records=[], config=ledger.config, repo=str(tmp_path),
+                               rev_range=f"{old}..{tip}", admission=[STEP],
+                               commit_admission=None)          # <- the caller's mistake
+    text = canpush_mod.render(result)
+
+    inter = [c for c in result["commits"] if not c.get("is_tip")]
+    if inter:
+        assert inter[0]["admission_state"] in ("UNSET", "EMPTY")
+        assert "admission UNSET" in text or "admission EMPTY" in text, text
+        assert "NOT a coverage failure" in text
+        assert "commit_admission" in text, "the remedy must name the parameter that fixes it"

@@ -908,8 +908,29 @@ def render(result: dict) -> str:
     if blocking:
         lines.append(f"  commits short ({len(blocking)}):")
         for row in blocking[:SHOWN]:
-            lines.append(f"    {row['commit'][:12]}  {row['satisfied']}/{row['required']}"
-                         f"  {row['subject']}")
+            # ⛔⛔ `0/0` FOR AN UNSET ADMISSION READS AS SATISFIED-AND-YET-BLOCKING, AND IT COST
+            # THE CONSUMER A WRONG DIAGNOSIS. Reported 2026-09-18: they called `can_push` with
+            # only the PUSH set, so every INTERMEDIATE — judged under `commit` — had no admission
+            # at all, rendering `0/0 short`. They read it as a plumbing artifact and went looking
+            # elsewhere; `progress(action='commit')` held the real answer.
+            #
+            # ⚠⚠ THIS IS THE 2026-09-03 HEADLINE DEFECT ONE LINE DOWN. That one said
+            # `REFUSED 13/13 commit(s) short` when the set was merely unset, and their words then
+            # were *"the surface reads as a refusal and means unconfigured, and those are
+            # different facts."* The headline was fixed and the PER-COMMIT rows kept the shape —
+            # the same fix applied at one level and not its sibling, which is the `SH-3` pattern
+            # this file has now hit four times.
+            #
+            # ⚠ "SHORT" MEANS MISSING REQUIRED KEYS. With nothing required, nothing is short.
+            if row.get("admission_state") in ("UNSET", "EMPTY"):
+                lines.append(
+                    f"    {row['commit'][:12]}  admission {row['admission_state']} — NOT a "
+                    f"coverage failure; nothing declared what must gate this commit, so no "
+                    f"count is meaningful. Pass `commit_admission` (gitRobot "
+                    f"admission(action='commit')) to judge intermediates.  {row['subject']}")
+            else:
+                lines.append(f"    {row['commit'][:12]}  {row['satisfied']}/{row['required']}"
+                             f"  {row['subject']}")
         if len(blocking) > SHOWN:
             lines.append(f"    … and {len(blocking) - SHOWN} more — pass --json for "
                          f"every commit")

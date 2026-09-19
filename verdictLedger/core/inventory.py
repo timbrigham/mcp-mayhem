@@ -393,9 +393,38 @@ def build(*, config, records, action: str, files: dict,
         # directory and misses every top-level file. Measured 2026-08-23.
         globs = spec.get("scope") or ([when] if when else [])
         drop = spec.get("scope_exclude") or []
+        # ⛔⛔ SESSION STATE IS NOT IN ANY STEP'S SCOPE, BECAUSE NOBODY MAY RECORD IT.
+        # `RATCHET-2`, second occurrence, reported by ZeroParadox 2026-09-18 — and this one HARD
+        # BLOCKED a push with a remedy no caller could execute. `check_encoding`'s scope claimed
+        # `gate_round.json` (482 paths); the subject fence refuses it as a verdict subject
+        # UNCONDITIONALLY; so coverage could never exceed 481/482, the commit could never be
+        # complete, and `progress` printed *"run the step over the listed paths and record"* for
+        # a path `record.py` declines in the same breath.
+        #
+        # ⚠⚠ WORSE THAN THE FIRST OCCURRENCE, AND THE REASON IT HAD TO BE FIXED HERE. Last time
+        # the caller escaped by restoring the file's canonical bytes, which took it out of the
+        # range diff. Here the blocking commits are ALREADY WRITTEN and their trees hold the
+        # modified blob — nothing done at HEAD changes what an earlier commit contains. The only
+        # caller-side escapes left were rewriting history (forbidden) or never committing the
+        # file (impossible: it is tracked precisely so it always reads round 0).
+        #
+        # ⭐ IT LANDS AT THE ONE PLACE SCOPE IS COMPUTED, WHICH IS THEIR ASK AND IT IS RIGHT.
+        # Their `session_state.txt` header predicted this: the list is declared in four places
+        # and asks to be the one they collapse ONTO. The ratchet became a fifth reader and
+        # per-commit coverage a sixth. Fixing it per-consumer guarantees a seventh — so every
+        # derived set (`_scope_paths`, `unexamined_paths`, `judged`, staleness, the min_coverage
+        # bar) now inherits the exclusion from here rather than re-deriving it.
+        #
+        # ⚠ THE CHECKERS STILL READ THESE FILES. Their header is explicit: this is not an
+        # exemption from being CHECKED — a BOM in `gate_round.json` still blocks. What is
+        # excluded is recording a VERDICT SUBJECT about them, because a verdict binds
+        # (step, path, blob) and a session-state file's blob is an accident of when a counter
+        # last ran.
+        session_state = config.session_state_paths
         scope = [p for p in files
                  if (not globs or any(fnmatch.fnmatch(p, g) for g in globs))
-                 and not any(fnmatch.fnmatch(p, g) for g in drop)]
+                 and not any(fnmatch.fnmatch(p, g) for g in drop)
+                 and p not in session_state]
         unexamined_paths = [p for p in scope
                             if (step, p, files[p]) not in by_content
                             and (step, p) not in by_path]
