@@ -451,7 +451,20 @@ def test_merge_refuses_when_the_working_copy_differs_by_even_one_byte(robot, rep
 
     with pytest.raises(RefusalError) as caught:
         robot.merge("feature", reason="a real local edit must not be discarded")
-    assert "would be lost" in str(caught.value) or "NOT what the merge would produce" in str(caught.value)
+    # ⛔⛔ THE REFUSAL MUST NAME GIT'S PREDICATE, NOT DESCRIBE THE SITUATION. `MSGSPEC-1`,
+    # ZeroParadox 2026-09-20: the old text said the working copy's "content is NOT what the
+    # merge would produce", and a reader took that for GIT'S TEST — concluding that making the
+    # content equal the merge result would satisfy git. It would not: `verify_uptodate` compares
+    # worktree to INDEX and refuses a dirty path whether or not the overwrite would change
+    # anything. That sentence described gitRobot's own reconcile precondition and said so
+    # nowhere. **A message that can be read as a spec will be.**
+    msg = str(caught.value)
+    assert "worktree-vs-INDEX" in msg, (
+        "the refusal must state the test git actually applies, or a reader will infer one "
+        "from the description of the situation")
+    assert "does NOT clear this" in msg, (
+        "it must close the specific wrong inference: matching the merge result does not help")
+    assert "unstaging changes nothing" in msg, "the other dead end stays named"
     # ⚠ THE BYTES, NOT JUST THE REFUSAL. The edit must still be there.
     assert (repo / "tracked.txt").read_text(encoding="utf-8") == "FROM FEATURE, EDITED" + chr(10)
 

@@ -1934,13 +1934,47 @@ class GitRobot:
                             ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok
                         reconciled = recon["reconcilable"]
                 if not merged.ok and not in_progress:
+                    # ⛔⛔ NAME THE PREDICATE, NOT THE SITUATION. `MSGSPEC-1`, ZeroParadox
+                    # 2026-09-20: this text said the working copies' "content is NOT what the
+                    # merge would produce", and a reader took that as GIT'S TEST — concluding
+                    # that making the content equal the merge result would satisfy git. **It
+                    # would not.** Git's `verify_uptodate` compares the worktree to the INDEX;
+                    # it refuses an overwrite of a dirty path regardless of whether the
+                    # overwrite would change anything. That sentence describes the precondition
+                    # of gitRobot's OWN lossless reconcile, one paragraph up, and nothing said
+                    # so. **A message that can be read as a spec will be**, and the author is
+                    # better placed to fix it than every future reader is to resist it.
+                    #
+                    # ⚠ THE CORRECT PREDICATE WAS ALREADY WRITTEN — in `_lossless_reconcilable`'s
+                    # docstring: *"git compares against HEAD, never against the merge result."*
+                    # True, ten lines away, in the one place the reader of a refusal never looks.
+                    _why = ""
+                    _blocked = (recon or {}).get("blocked") or []
+                    if _blocked:
+                        _nb = [b["path"] for b in _blocked if not b.get("worktree_is_target")]
+                        _nh = [b["path"] for b in _blocked if not b.get("head_is_base")]
+                        _why = (
+                            f"{chr(10)}{chr(10)}gitRobot ALREADY TRIED the lossless reconcile "
+                            f"(restore from HEAD, re-merge) and it does not apply here. It "
+                            f"requires, per path, that HEAD has not touched the file since the "
+                            f"merge base AND that the working copy is already byte-identical to "
+                            f"the target blob. Failing: "
+                            + (f"{len(_nb)} path(s) whose working copy differs from the target "
+                               f"({', '.join(_nb[:3])}{'…' if len(_nb) > 3 else ''}); "
+                               if _nb else "")
+                            + (f"{len(_nh)} path(s) HEAD changed since the base "
+                               f"({', '.join(_nh[:3])}{'…' if len(_nh) > 3 else ''})."
+                               if _nh else ""))
                     raise self._refuse(
                         "merge", args,
                         f"git refused to merge {branch!r} because UNSTAGED changes in the "
-                        f"WORKING TREE collide with paths this merge must update, and their "
-                        f"content is NOT what the merge would produce -- so real edits would "
-                        f"be lost. The index is CLEAN, so unstaging changes nothing. NOT a "
-                        f"content conflict -- no merge was begun:"
+                        f"WORKING TREE collide with paths this merge must update. "
+                        f"⚠ GIT'S TEST IS worktree-vs-INDEX, NOT worktree-vs-merge-result: it "
+                        f"refuses to overwrite a dirty path whether or not the overwrite would "
+                        f"change the bytes, so making the content match what the merge installs "
+                        f"does NOT clear this. The index is CLEAN, so unstaging changes nothing "
+                        f"either. NOT a content conflict -- no merge was begun:"
+                        f"{_why}"
                         f"{chr(10)}{chr(10)}{merged.output[-2000:]}",
                         "The colliding paths are named above. Either commit those edits so the "
                         "merge resolves against them -- commit(...) runs the gate, so that is "
