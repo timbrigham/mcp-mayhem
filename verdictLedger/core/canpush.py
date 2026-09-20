@@ -227,6 +227,13 @@ def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitte
 
 def _in_scope(config, step: str, path: str) -> bool:
     spec = (config.required.get("types") or {}).get(step) or {}
+    # ⚠ SESSION STATE IS IN NO STEP'S SCOPE. Held HERE rather than only in `_ratchet`, which
+    # filtered it separately: a helper that answers "is this in scope" must be right on its own,
+    # or the next caller inherits an answer that was only ever corrected downstream. Enumerated
+    # 2026-09-20 as the third member of this sibling set, after `coverage_gap` was found still
+    # naming a path no caller may record.
+    if path in config.session_state_paths:
+        return False
     globs = spec.get("scope") or ([spec["when"]] if spec.get("when") else None)
     if globs is None:
         return False                       # no declared surface -- see _judging_steps
@@ -272,8 +279,13 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
                 "why": ("the range base could not be resolved, so no claim is made about "
                         "which families witnessed these paths")}
 
+    # ⚠ Session state is not content and is never a verdict subject, so counting it as an
+    # "unwitnessed" path would report a family as having missed a file no family may examine.
+    # Third member of the same sibling set as `build`'s scope and `coverage_gap`'s — enumerated
+    # 2026-09-20 rather than grepped, which is what found the other two.
+    _session_state = config.session_state_paths
     changed = sorted(p for p in set(base_files) | set(tip_files)
-                     if base_files.get(p) != tip_files.get(p))
+                     if base_files.get(p) != tip_files.get(p) and p not in _session_state)
     types = (config.required or {}).get("types") or {}
     admit = set(admitted or [])
 

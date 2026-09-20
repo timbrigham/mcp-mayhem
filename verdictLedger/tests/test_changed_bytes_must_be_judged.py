@@ -391,3 +391,104 @@ def test_an_unset_intermediate_does_not_render_as_zero_of_zero_short(ledger, tmp
         assert "admission UNSET" in text or "admission EMPTY" in text, text
         assert "NOT a coverage failure" in text
         assert "commit_admission" in text, "the remedy must name the parameter that fixes it"
+
+
+def test_EVERY_scope_deciding_function_honours_the_session_state_fence():
+    """⛔⛔ THE SIBLING-SET CONTROL. Scope is decided in several functions across two modules, and
+    the session-state exclusion reached two of them before this test existed.
+
+    Measured 2026-09-20, an hour after `build` was fixed: `build` reported `check_encoding`
+    SATISFIED at scope 481, while `coverage_gap` — **the tool a caller reads to learn WHAT TO
+    RECORD** — still answered `missing: 1 of 482, paths: ["gate_round.json"], remedy: "run the
+    step over the listed paths and record"`. The two surfaces disagreed, and the one giving
+    instructions named a path nobody is permitted to record.
+
+    ⭐ ZeroParadox's rule, applied to my own fix: after a correction, ask what SIBLING SET the
+    fixed member belongs to and whether the fix reached all of it. **A grep for `session_state`
+    finds the sites that HAVE it — the exact inverse of the question.** Only enumeration reaches
+    the sibling, because the unfixed member is by definition where the marker does not appear.
+
+    ⚠ STRUCTURAL, NOT BEHAVIOURAL, and deliberately: a behavioural test covers the paths a
+    fixture happens to take, which is how two fixed sites sat behind a green suite while two
+    others were wrong.
+    """
+    import pathlib
+    import re
+    core = pathlib.Path(__file__).resolve().parents[1] / "core"
+    # every function that decides scope membership by glob
+    # ⛔ ONE NAMED EXEMPTION, WITH ITS REASON, NEVER A SILENT SKIP. `subjects_outside_scope` asks
+    # the INVERSE question — which recorded subjects fall OUTSIDE a step's declared scope, i.e.
+    # over-claim. Excluding session state there would HIDE a real defect: a step that records
+    # `gate_round.json` as a subject has over-claimed, and that is exactly what it exists to
+    # report.
+    EXEMPT = {"subjects_outside_scope"}
+    offenders = []
+    for fn in ("inventory.py", "canpush.py"):
+        src = (core / fn).read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(src):
+            # ⚠⚠ MATCH THE READ, NOT THE WORD. The first draft matched any line containing
+            # `scope_exclude` and flagged a MESSAGE STRING that merely mentions it — the
+            # detector counting prose about the marker as the marker, which is `DC-51`, the
+            # class I had caught that same morning in a different repo. Match the actual
+            # dictionary read instead.
+            if '.get("scope_exclude")' not in line:
+                continue
+            # ⚠ ATTRIBUTE TO THE TOP-LEVEL def. The first draft took the nearest def at ANY
+            # indent and blamed a NESTED helper 550 lines above for code that lives in `build`
+            # — a true line number under a false owner, which is this fleet's own defect class
+            # turning up inside the detector written to catch it.
+            start = next((j for j in range(i, -1, -1) if re.match(r"^def \w+", src[j])), 0)
+            name = re.match(r"^def (\w+)", src[start]).group(1)
+            end = next((k for k in range(start + 1, len(src))
+                        if re.match(r"^def \w+", src[k])), len(src))
+            # ⛔⛔ STRIP COMMENTS BEFORE LOOKING FOR THE FENCE, AND THIS IS THE FOURTH `DC-51`
+            # IN ONE SITTING. The first version matched the bare word `session_state` anywhere in
+            # the body — and a mutation that DELETED the fence outright still passed, because the
+            # explanatory comment above it says `session_state`. **The detector counted prose
+            # about the marker as the marker**, which is the exact class I had filed that
+            # morning, inside the control written to enforce the lesson from it.
+            code = "\n".join(l.split("#", 1)[0] for l in src[start:end])
+            # ⚠ The exemption is keyed on the CONSTRUCT, not the enclosing function: the
+            # inverse-question code is an inline block inside `build`, not its own def, so a
+            # name-keyed exemption would either miss it or exempt all of `build`.
+            window = "\n".join(src[max(0, i - 12):i + 4])
+            if any(e in window for e in EXEMPT):
+                continue
+            if "session_state" not in code:
+                offenders.append(f"{fn}:{name} (line {i + 1})")
+    assert not offenders, (
+        "these functions decide scope by glob and do NOT honour the session-state fence, so they "
+        "can name a path no caller may record:\n  " + "\n  ".join(sorted(set(offenders))))
+
+
+def test_coverage_gap_never_names_a_path_nobody_may_record(ledger, tmp_path):
+    """⛔⛔ THE BEHAVIOURAL HALF, AND THE STRUCTURAL TEST CANNOT REPLACE IT.
+
+    The sibling control above asks whether each scope-deciding site REFERENCES the fence. That
+    catches a new site added without it — and it passed when the fence was neutered to `set()`,
+    because the word stayed in the body. **A structural check counts a marker; only running the
+    code shows the marker is load-bearing.** Third time in one sitting that a detector counted
+    the marker instead of the property, so both halves are now pinned.
+
+    ⚠ `coverage_gap` is the surface a caller reads to learn WHAT TO RECORD. On 2026-09-20 it
+    answered `missing: 1 of 482, paths: ["gate_round.json"], remedy: "run the step over the
+    listed paths and record"` while `build` had already been fixed and read SATISFIED at 481 —
+    two surfaces disagreeing, with the instruction-giving one naming an unrecordable path.
+    """
+    from core import inventory as inventory_mod
+    (ledger.config.required_path.parent / "session_state.txt").write_text(
+        "state.json\n", encoding="utf-8", newline="\n")
+
+    gap = inventory_mod.coverage_gap(
+        config=ledger.config, records=[], action="commit",
+        files={"doc.md": "a" * 40, "state.json": "b" * 40},
+        admission=[STEP], step=STEP)
+
+    named = []
+    for s in gap.get("steps") or []:
+        named += s.get("paths") or []
+    assert "state.json" not in named, (
+        f"coverage_gap told a caller to record session state: {named}. The subject fence "
+        f"refuses it, so the remedy it prints cannot be executed by anyone.")
+    assert "doc.md" in named, (
+        "the fence must not swallow ordinary uncovered paths — that would hide real gaps")

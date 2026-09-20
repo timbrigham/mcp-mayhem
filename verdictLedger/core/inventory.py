@@ -1469,8 +1469,23 @@ def coverage_gap(*, config, records, action: str, files: dict,
         when = spec.get("when")
         globs = spec.get("scope") or ([when] if when else [])
         drop = spec.get("scope_exclude") or []
+        # ⛔⛔ THE SIBLING OF `build`'s SCOPE, AND IT KEPT THE OLD BEHAVIOUR FOR AN HOUR AFTER
+        # `build` WAS FIXED. 2026-09-20: session state was excluded from `build`, which then read
+        # `check_encoding` SATISFIED at scope 481 — while THIS function still answered
+        # `missing: 1 of 482, paths: ["gate_round.json"], remedy: "run the step over the listed
+        # paths and record"`. **The two surfaces disagreed, and the one a caller reads to learn
+        # WHAT TO RECORD is the one that named a path nobody is permitted to record.**
+        #
+        # ⚠⚠ FOUND BY ENUMERATION, NOT BY A SWEEP. ZeroParadox's rule, applied to my own fix:
+        # after a correction, ask what SIBLING SET the fixed member belongs to. Fourteen
+        # `fnmatch` sites decide scope across two modules; the exclusion had reached two. A grep
+        # for `session_state` finds the sites that HAVE it, which is the exact inverse of the
+        # question.
+        session_state = config.session_state_paths
         applies, missing = 0, []
         for path, blob in sorted(files.items()):
+            if path in session_state:
+                continue                      # unrecordable by construction — see `build`
             if when and not fnmatch.fnmatch(path, when):
                 continue
             if globs and not any(fnmatch.fnmatch(path, g) for g in globs):
