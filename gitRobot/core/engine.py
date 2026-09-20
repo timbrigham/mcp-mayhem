@@ -246,6 +246,7 @@ class GitRobot:
         git = target or self.git
         self.audit.append(
             actor=self.actor, op=op, args=args, decision="refused",
+            repo=str(getattr(git, "repo", "") or ""),
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
             reason=reason, detail=f"[{rid}] {what}", alternative=alternative,
         )
@@ -698,7 +699,8 @@ class GitRobot:
                     # ⚠ And the receipt records the TARGET's head/branch/tree, not the main
                     # tree's. An audit row naming the wrong tree is a log that lies about where
                     # the work landed.
-                    decision="refused", head=target.head(), branch=target.branch(),
+                    decision="refused", repo=str(getattr(target, "repo", "") or ""),
+                    head=target.head(), branch=target.branch(),
                     tree=target.tree_state(), gates=gate_records, reason=reason,
                     detail="pre-commit gate did not pass",
                 )
@@ -781,6 +783,7 @@ class GitRobot:
         run_id = _refusal_id("preflight", f"{head}|{self.audit.path}|{len(self.audit.read())}")
         self.audit.append(
             actor=self.actor, op="preflight", args={}, decision="started",
+            repo=str(getattr(self.git, "repo", "") or ""),
             head=head, branch=self.git.branch(), tree=self.git.tree_state(),
             reason=reason,
             # ⚠ THE SCOPE IS ON THE ROW, so a later reader can tell WHAT was judged. A
@@ -795,6 +798,7 @@ class GitRobot:
             self.audit.append(
                 actor=self.actor, op="preflight", args={},
                 decision="allowed" if gate.passed else "failed",
+                repo=str(getattr(self.git, "repo", "") or ""),
                 head=head, branch=self.git.branch(), tree=self.git.tree_state(),
                 gates=[gate.record()], reason=reason,
                 detail="pre-push preflight finished", run_id=run_id,
@@ -1082,6 +1086,7 @@ class GitRobot:
         run_id = _refusal_id("push", f"{target.head()}|{branch}|{len(self.audit.read())}")
         self.audit.append(
             actor=self.actor, op="push", args=args, decision="started",
+            repo=str(getattr(target, "repo", "") or ""),
             head=target.head(), branch=target.branch(), tree=target.tree_state(),
             reason=reason, detail="push started", run_id=run_id,
         )
@@ -2003,6 +2008,7 @@ class GitRobot:
                 reconcile_rollback = None
             self.audit.append(
                 actor=self.actor, op="merge", args=args, decision="refused",
+                repo=str(getattr(self.git, "repo", "") or ""),
                 head=self.git.head(), branch=self.git.branch(),
                 tree=self.git.tree_state(), gates=gate_records, reason=reason,
                 # ⚠ `detail`, not an `extra=` kwarg: `_receipt` takes `extra`, `audit.append`

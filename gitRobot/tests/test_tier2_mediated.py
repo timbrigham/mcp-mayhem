@@ -344,3 +344,40 @@ def test_every_audit_row_names_the_repository_it_touched(robot, repo, tmp_path):
         assert r.get("repo"), f"audit row names no repository: {r.get('op')}"
         assert str(repo) in r["repo"] or r["repo"].endswith(repo.name), (
             f"the row names a repo that is not the one touched: {r['repo']} vs {repo}")
+
+
+def test_EVERY_audit_call_site_names_the_repo_not_just_the_receipt():
+    """⛔⛔ THE SIBLING-SET CHECK, AND IT CAUGHT MY OWN FIX AN HOUR AFTER I SHIPPED IT.
+
+    2026-09-20: `repo` was added to `_receipt` and declared done. There are SEVEN
+    `audit.append` call sites in this module; the fix reached ONE. The other six — including the
+    `push` `started` row, which is the shape that misled a reader in the first place — still
+    wrote rows that did not name their repository.
+
+    ⭐ ZeroParadox's formulation, and it is why this test is structural rather than behavioural:
+    after a correction the question is NOT "where else does this string appear" but **"what
+    SIBLING SET does this member belong to, and did the fix reach all of it?"** Fields of one
+    record, a document and its companion, a claim and its front-page restatement — and here,
+    every writer of one log.
+
+    ⚠ THIS ASSERTS OVER THE SOURCE rather than over behaviour on purpose. A behavioural test
+    covers the paths the fixture happens to exercise, which is exactly how six call sites stayed
+    uncovered while a green test reported the field present.
+    """
+    import pathlib
+    import re
+    src = (pathlib.Path(__file__).resolve().parents[1] / "core" / "engine.py").read_text(
+        encoding="utf-8").splitlines()
+    sites = [i for i, l in enumerate(src) if l.strip().endswith("self.audit.append(")]
+    assert len(sites) >= 7, (
+        f"expected the known audit writers; found {len(sites)} — if a call site was added or "
+        f"removed, this floor must move deliberately")
+    missing = []
+    for i in sites:
+        block = " ".join(x.strip() for x in src[i:i + 16])
+        if "repo=" not in block:
+            missing.append(i + 1)
+    assert not missing, (
+        f"audit.append call sites that do not name their repository: lines {missing}. "
+        f"Two repositories flow through one gitRobot; a row that does not say which one is "
+        f"read as the other tree, in the direction that says work landed when it did not.")
