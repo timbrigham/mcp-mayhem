@@ -294,3 +294,24 @@ def test_worktree_lands_outside_the_repository(robot):
     from pathlib import Path
     result = robot.worktree("add", ref="HEAD")
     assert robot.repo not in Path(result["path"]).resolve().parents
+
+
+def test_config_read_flags_are_consistent_with_each_other():
+    """⭐ `--get-regexp` IS A READ AND WAS REFUSED WHILE `--list` WAS ALLOWED.
+
+    Reported by ZeroParadox 2026-09-19 while diagnosing a dirty-worktree question. The argument
+    is an INCONSISTENCY, not a preference: `--list` dumps EVERY config value, so the BROADER read
+    was permitted and a FILTERED SUBSET of the same output was refused.
+
+    ⛔ THE WRITE FORM MUST STILL BE REFUSED. `git config <name> <value>` writes, and first-token
+    allow-listing is what keeps an unflagged form from ever reaching git.
+    """
+    from core import tiers
+    for read_flag in ("--get", "--get-all", "--get-regexp", "--list", "-l"):
+        assert tiers.is_read("config", [read_flag, "core.autocrlf"]), read_flag
+    # the write forms, and the shapes that would smuggle one past
+    assert not tiers.is_read("config", ["core.autocrlf", "true"])
+    assert not tiers.is_read("config", ["--add", "core.autocrlf", "true"])
+    assert not tiers.is_read("config", ["--unset", "core.autocrlf"])
+    assert not tiers.is_read("config", ["--replace-all", "core.autocrlf", "true"])
+    assert not tiers.is_read("config", []), "a bare `git config` must not pass"

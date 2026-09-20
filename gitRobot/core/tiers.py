@@ -39,7 +39,18 @@ READ_OPS: dict[str, Optional[tuple[str, ...]]] = {
     "describe": None,
     "blame": None,
     "shortlog": None,
-    "config": ("--get", "--get-all", "--list", "-l"),
+    # ⭐ `--get-regexp` ADDED 2026-09-19, ON ZeroParadox's REPORT, AND THE ARGUMENT IS AN
+    # INCONSISTENCY RATHER THAN A PREFERENCE: `--list` already dumps EVERY config value, so the
+    # BROADER read was allowed while the NARROWER one — a filtered subset of the same output —
+    # was refused. They hit it diagnosing a dirty-worktree question with
+    # `--get-regexp 'core\.(autocrlf|filemode|trustctime|checkstat)'`, which is precisely the
+    # shape a reader should be encouraged to use over `--list`.
+    # ⚠ Still first-token allow-listed: `git config <name> <value>` WRITES, and the whole point
+    # of the tuple is that an unflagged form never reaches git. Read forms only.
+    # ⭐ The refusal text invites exactly this — "if it is genuinely a read that belongs on the
+    # list, say so — the list is meant to grow deliberately". This is that growth, and it is
+    # recorded here rather than granted silently.
+    "config": ("--get", "--get-all", "--get-regexp", "--list", "-l"),
     "branch": ("--list", "-l", "-v", "-vv", "--show-current", "--contains", "-a", "-r"),
     "remote": ("-v", "show", "get-url"),
     "worktree": ("list",),
