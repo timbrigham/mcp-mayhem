@@ -315,3 +315,32 @@ def test_config_read_flags_are_consistent_with_each_other():
     assert not tiers.is_read("config", ["--unset", "core.autocrlf"])
     assert not tiers.is_read("config", ["--replace-all", "core.autocrlf", "true"])
     assert not tiers.is_read("config", []), "a bare `git config` must not pass"
+
+
+def test_every_audit_row_names_the_repository_it_touched(robot, repo, tmp_path):
+    import json
+    """⛔⛔ TWO REPOSITORIES FLOW THROUGH ONE gitRobot AND THE ROW DID NOT SAY WHICH.
+
+    Measured 2026-09-20: I read a `push allowed` row in the audit and reported to ZeroParadox
+    that their fast-forward had probably landed. It was a push of the PRIVATE repo
+    (`.claude-local`, via `repo_mode`) to an entirely different remote. The row carried `head`,
+    `branch` and `tree` from the correct target and never named the target.
+
+    ⚠⚠ THE MISREADING RAN IN THE SAFE-LOOKING DIRECTION — it says work landed that did not.
+    Their framing: *"an audit entry that does not name its repo is one `repo_mode` away from
+    being read as the other tree."*
+
+    ⚠ `branch: master` WAS the tell, since main's work lands on `illustrated` and never on
+    master — but that decodes only for a reader who already knows the branch convention. **A log
+    that requires local knowledge to read correctly will be read incorrectly by everyone else.**
+    """
+    # ⚠ A Tier 3 read writes NO audit row by design, so the probe must be a MEDIATED op.
+    (repo / "audited.txt").write_text("x", encoding="utf-8")
+    robot.stage(["audited.txt"])
+    rows = [json.loads(l) for l in
+            (tmp_path / "git_ops.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert rows, "the fixture must have produced at least one audited row"
+    for r in rows:
+        assert r.get("repo"), f"audit row names no repository: {r.get('op')}"
+        assert str(repo) in r["repo"] or r["repo"].endswith(repo.name), (
+            f"the row names a repo that is not the one touched: {r['repo']} vs {repo}")

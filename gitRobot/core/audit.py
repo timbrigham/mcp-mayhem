@@ -75,6 +75,7 @@ class AuditLog:
         detail: Optional[str] = None,
         alternative: Optional[str] = None,
         run_id: Optional[str] = None,
+        repo: Optional[str] = None,
     ) -> dict:
         decision = _decision(decision)
         """Append one immutable record and return it.
@@ -102,6 +103,23 @@ class AuditLog:
             "op": op,
             "args": args,
             "decision": decision,
+            # ⛔⛔ THE ROW MUST NAME WHICH REPOSITORY IT TOUCHED, AND UNTIL 2026-09-20 IT DID NOT.
+            # Two repositories flow through one gitRobot — the main checkout and `.claude-local`
+            # via `repo_mode` — and a row carried `head`, `branch` and `tree` from the right
+            # target while never saying WHICH target. Measured that day: I read a `push allowed`
+            # row and reported to the consumer that their fast-forward had probably landed. It
+            # was a push of the PRIVATE repo to a different remote entirely.
+            #
+            # ⚠⚠ AND THE MISREADING RAN IN THE SAFE-LOOKING DIRECTION — it says work landed that
+            # did not. ZeroParadox's framing, and it is the right one: *"an audit entry that does
+            # not name its repo is one `repo_mode` away from being read as the other tree."*
+            #
+            # ⚠ `branch: master` WAS the tell, because main's work lands on `illustrated` and
+            # never on master — but that decodes only for a reader who already knows this
+            # project's branch convention. **A log that requires local knowledge to read
+            # correctly is a log that will be read incorrectly by everyone else**, which is the
+            # whole argument for naming the object rather than leaving it inferable.
+            "repo": repo,
             "head": head,
             "branch": branch,
             "tree": tree,

@@ -282,10 +282,14 @@ class GitRobot:
             detail = _clip_output(detail)
         record = self.audit.append(
             actor=self.actor, op=op, args=args, decision=decision, run_id=run_id,
+            # ⚠ From the TARGET, exactly as head/branch/tree already are — see `audit.append`
+            # for why a row that does not name its repository gets read as the other tree.
+            repo=str(getattr(git, "repo", "") or ""),
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
             gates=gates, reason=reason, detail=detail,
         )
         out = {"op": op, "decision": decision, "head": record["head"],
+               "repo": record["repo"],
                "branch": record["branch"], "tree": record["tree"]}
         if gates:
             out["gates"] = [{k: g[k] for k in ("phase", "ran", "passed", "exit_code")}
