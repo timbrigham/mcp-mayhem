@@ -2773,8 +2773,43 @@ class GitRobot:
                                         # rule to remember — `add` handed back a path and said
                                         # nothing about where to stand.
                                         "run_tools_from": str(path),
+                                        # ⛔⛔ "cd into this directory" WAS THIS FIELD'S WORDING
+                                        # AND IT CAUSED THE FAILURE IT EXISTS TO PREVENT.
+                                        # `CWD-1`, ZeroParadox 2026-09-20: a remediation agent
+                                        # was briefed with this exact sentence, DID cd, and its
+                                        # NEXT tool call built in the MAIN checkout — because a
+                                        # shell's working directory does not survive a tool-call
+                                        # boundary in that harness. Four PDFs went dirty in the
+                                        # shared tree, two of which had been clean, and it
+                                        # re-blocked a pending fast-forward for the second time
+                                        # that day.
+                                        #
+                                        # ⚠⚠ THE ADVICE WAS NOT WRONG, IT WAS UNSURVIVABLE. `cd`
+                                        # is state, and state set in one tool call is a bet on
+                                        # an execution model the caller may not have. An
+                                        # instruction that holds only while nothing intervenes
+                                        # is a race, and it reads as obeyed right up until it
+                                        # is not.
+                                        #
+                                        # ⭐ SO THE NOTE NAMES A PROPERTY OF EVERY COMMAND, NOT A
+                                        # ONE-TIME ACT. Per-command is idempotent, survives any
+                                        # boundary, and cannot be half-applied.
+                                        #
+                                        # ⚠ AND IT COLLIDES WITH THE CONSUMER'S `R-SHELL`, WHICH
+                                        # SAYS "NEVER PREPEND cd" — true for the main checkout,
+                                        # actively wrong for a worktree agent, and the two rules
+                                        # met without either naming the other. Their filing is
+                                        # right that this is a BRIEF-WORDING defect rather than
+                                        # an agent error.
                                         "note": (
-                                            "cd into this directory before running any checker. "
+                                            "Run every command with its working directory set "
+                                            "to this path — per command, not once. A bare `cd` "
+                                            "does NOT survive a tool-call boundary in some "
+                                            "harnesses (measured: CWD-1, 2026-09-20), and the "
+                                            "next call silently lands in the MAIN checkout. "
+                                            "Inline it: PowerShell `Set-Location <path>; <cmd>`, "
+                                            "POSIX `(cd <path> && <cmd>)`, or pass cwd= if your "
+                                            "runner takes one. "
                                             "A checker invoked with cwd elsewhere resolves ROOT "
                                             "to the wrong tree and records evidence paths full "
                                             "of '../..'; V16 is where that surfaces, and it "

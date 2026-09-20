@@ -255,6 +255,20 @@ def test_worktree_add_says_where_to_run_the_checkers(tmp_path):
 
     assert out["run_tools_from"] == out["path"], (
         "the receipt must name the directory to stand in, not leave it inferred")
-    assert "cd into this directory" in out["note"]
+    # ⛔⛔ THE NOTE MUST NAME A PER-COMMAND PROPERTY, NEVER A ONE-TIME `cd`. `CWD-1`,
+    # ZeroParadox 2026-09-20: this field used to read "cd into this directory before running any
+    # checker". An agent briefed with that sentence DID cd, and its NEXT tool call built in the
+    # MAIN checkout, because a shell's working directory does not survive a tool-call boundary in
+    # that harness. Four PDFs went dirty in the shared tree and it re-blocked a pending
+    # fast-forward. **The advice was not wrong, it was unsurvivable** — `cd` is state, and state
+    # set in one call is a bet on an execution model the caller may not have.
+    assert "per command" in out["note"], (
+        "a one-time `cd` is a race: it reads as obeyed right up until a tool-call boundary "
+        "discards it. The instruction must be a property of EVERY command.")
+    assert "Set-Location" in out["note"] and "cd <path> &&" in out["note"], (
+        "name the inline form for both shells — an agent that cannot see HOW to comply "
+        "per-command will fall back to the bare `cd` this exists to replace")
+    assert "MAIN checkout" in out["note"], (
+        "say where the work LANDS when it goes wrong; 'it will not work' is not actionable")
     assert "V16" in out["note"], (
         "the note must name where the mistake SURFACES — it presents as a config problem")
