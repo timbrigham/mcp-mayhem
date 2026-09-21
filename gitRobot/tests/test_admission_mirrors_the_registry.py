@@ -148,6 +148,31 @@ KNOWN_MISMATCHES = {
     #              step becomes the gating surface — then it joins `admission.v1.json` and this
     #              line goes.
     ("pdf_coupling_in_push", ("commit", "push", "tag"), ()),
+    #   check_hashes  registry [commit, push, tag]  admission [push, tag]   LOOSER, and
+    #              ⭐ DELIBERATE, Tim's ruling 2026-09-21, and the premise was falsified before
+    #              it was accepted. `check_hashes` asks whether build-script bytes match the
+    #              token in `register.md`; `R-REGISTER`'s workflow (edit, bump, rebuild,
+    #              recompute) completes per ARC, and stub-first deliberately commits incomplete
+    #              work as rollback points.
+    #              ⛔⛔ THE SHARPER REASON, and why this is a scoping FIX rather than a
+    #              loosening: a STALE row does not mean the hashes DISAGREE, it means no verdict
+    #              exists at those bytes. Requiring it per-commit required a PASSING verdict for
+    #              a property the protocol deliberately makes FALSE mid-arc — a green record for
+    #              a state the workflow intends to be red.
+    #              ⚠ THE TIP STILL REQUIRES IT, which is what keeps this from being a hole: the
+    #              push publishes HEAD, so the bytes that reach the world are still checked.
+    #              Only intermediates stop being asked a question their own protocol answers
+    #              "not yet".
+    #              ⭐ MEASURED on `origin/illustrated..illustrated` (42 commits): blocking
+    #              18/42 → 2/42, every removed blocker `stale:check_hashes`, and the scoped
+    #              stale paths were `register.md` plus build scripts at all 26 commits carrying
+    #              them — exactly the files R-REGISTER touches.
+    #              ⚠ By admission's own rule the REGISTRY is the half to correct: its entry
+    #              declares no narrowing, so it claims every action by default. An
+    #              `actions: ["push", "tag"]` there would make the two surfaces agree and this
+    #              line go — bundled with the consumer's other pending registry edits so one
+    #              `/rely` round covers them all.
+    ("check_hashes", ("commit", "push", "tag"), ("push", "tag")),
 }
 
 
@@ -212,3 +237,37 @@ def test_the_two_surfaces_disagree_exactly_where_recorded():
         f"{sorted(found - KNOWN_MISMATCHES)}\n"
         f"  RESOLVED (remove from KNOWN_MISMATCHES): "
         f"{sorted(KNOWN_MISMATCHES - found)}")
+
+
+def test_check_hashes_gates_the_push_and_not_every_commit():
+    """⛔⛔ `check_hashes` IS A TIP PROPERTY. Tim's ruling 2026-09-21, after the premise was
+    falsified and held.
+
+    It asks whether build-script bytes match the token recorded in `register.md`. `R-REGISTER`'s
+    workflow — edit, bump the version, rebuild the PDF, recompute the token — completes per ARC,
+    and the stub-first protocol deliberately commits incomplete work as rollback points.
+
+    ⚠⚠ AND THE REASON IS SHARPER THAN "IT COMPLETES PER ARC": a STALE row does not mean the
+    hashes DISAGREE, it means no verdict exists at those bytes. Requiring the step per-commit
+    required a PASSING verdict for a property the protocol deliberately makes FALSE mid-arc — a
+    green record for a state the workflow intends to be red.
+
+    ⭐ MEASURED on `origin/illustrated..illustrated`, 42 commits: blocking 18/42 → 2/42, every
+    removed blocker `stale:check_hashes`.
+
+    ⛔ THE TIP MUST KEEP IT. The push publishes HEAD, so the state that reaches the world is
+    still checked; only intermediates stop being asked a question their own protocol answers
+    "not yet". A future edit that drops it from `push` too would turn a scoping fix into a hole.
+    """
+    import json
+    import pathlib
+    cfg = json.loads((pathlib.Path(__file__).resolve().parents[1] / "config"
+                      / "admission.v1.json").read_text(encoding="utf-8"))
+    adm = cfg["admission"]
+    assert "check_hashes" not in adm["commit"], (
+        "check_hashes gating every commit demands a green verdict for a property stub-first "
+        "deliberately makes false mid-arc")
+    assert "check_hashes" in adm["push"], (
+        "the TIP must still be checked — the push is what publishes the bytes")
+    assert any(k.startswith("_check_hashes_is_a_tip_property") for k in cfg), (
+        "the scoping decision must carry its reasoning in the file, not only in a commit message")
