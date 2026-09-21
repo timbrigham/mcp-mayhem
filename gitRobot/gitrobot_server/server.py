@@ -158,7 +158,8 @@ async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main
 @mcp.tool(title='Repository and gate status',
           annotations=ToolAnnotations(title='Repository and gate status', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def status() -> StatusResult:
-    """Tree state, branch, unpushed commit count, and what would block a push right now.
+    """Tree state, branch, unpushed commit count, what would block a push, and whether a
+    preflight or push is still running.
 
     `would_block_push` is TIP-SCOPED and cheap. It answers "would a push of THIS COMMIT be
     refused" — it does NOT walk the range, and a push publishes a range. When more than one
@@ -166,7 +167,25 @@ async def status() -> StatusResult:
 
     ⚠ Read `would_block_push: []` as "the tip is clear", never as "the push will go". Measured
     2026-09-05: a caller healed the single item this named, ran a 27-minute preflight, got it
-    green, and was refused on eleven intermediate commits this field had never mentioned."""
+    green, and was refused on eleven intermediate commits this field had never mentioned.
+
+    ⭐⭐ `in_flight` IS THE CHECK-IN: *is my job still running, or is it wedged?* One row per
+    long-running operation, each carrying `state`, `elapsed_seconds`, and a computed `stuck`.
+    The rows are DELEGATED from `preflight_status()` / `push_status()` and summarised — the
+    gate transcripts stay there, and `detail_via` on each row names the tool that has them.
+
+    ⛔ `stuck` IS NARROW ON PURPOSE: true only when the run has recorded NO terminal row AND
+    its elapsed time has passed the cap that actually bounds it. So `stuck: false` covers a
+    concluded run, a run inside its budget, AND a run whose age could not be read — `state` is
+    what says which, and `note` marks the third. Measured twice (2026-09-02, 2026-09-21): the
+    same reader concluded a LIVE preflight was dead by enumerating processes that could never
+    have shown it, the second time four minutes before it finished normally. A field that
+    cried wedged early would have confirmed that wrong answer in an authoritative voice.
+
+    ⚠⚠ THE TWO CAPS DIFFER BY A FACTOR OF TWO AND THE ROW SAYS WHICH IT USED. A preflight is
+    bounded by the pre-push GATE PHASE (1800s). A push is bounded by the whole `git push`
+    subprocess — hook AND network — at 3600s. `cap_seconds` and `cap_prices` travel together
+    so an elapsed time is never compared against the wrong ceiling."""
     return await _guard(_robot().status)
 
 

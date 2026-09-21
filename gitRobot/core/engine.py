@@ -34,6 +34,10 @@ import stat as _stat
 # administrator is one people work around.
 import subprocess
 import threading
+# ⚠ UTC WITH AN EXPLICIT OFFSET, BOTH SIDES OF EVERY COMPARISON — see `_elapsed_seconds`.
+# `date.today()` and a naive `datetime.now()` resolve LOCALLY and have already produced a
+# wrong answer in this fleet for five to six hours of every day.
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -56,6 +60,20 @@ DEFAULT_SCRATCH = Path(os.environ.get("TEMP", "/tmp")) / "gitrobot-worktrees"
 # ONE named exception whose documented flow is add -A.
 BULK_ADD_TOKENS = ("-A", "--all", ".", "-u", "--update", ":/", "*")
 BULK_ADD_EXEMPT_REPO = ".claude-local"
+
+# ⭐⭐ THE CEILING ON A RUNNING `git push`, LIFTED OUT OF `_do_push` 2026-09-21 SO A READER CAN
+# BE TOLD IT. `status.in_flight` computes `stuck` by comparing elapsed time against the cap that
+# actually bounds the run — and a cap it copied would be the second copy of the number, free to
+# drift from the one `subprocess` is holding. Lifted rather than duplicated: `_do_push` passes
+# THIS constant, so the value a caller is quoted and the value that kills the run are one object.
+#
+# ⛔⛔ AND IT IS **NOT** `gates.PHASE_TIMEOUT['pre-push']` (1800), WHICH IS THE OBVIOUS GUESS AND
+# IS WRONG BY A FACTOR OF TWO. That 1800 bounds ONE PHASE of the hook running INSIDE this
+# subprocess; this bounds the whole `git push`, hook and network together. A `stuck` computed
+# against 1800 would call a legitimately-running push wedged at the 31-minute mark — a true
+# elapsed time read against the wrong ceiling, which is the defect class this repo exists to
+# remove, and it would fire in the one state where a caller is already anxious.
+PUSH_TIMEOUT = 3600
 
 
 def _refusal_id(op: str, detail: str) -> str:
@@ -370,12 +388,153 @@ class GitRobot:
                 "exit_code": result.exit_code,
                 "output": result.output, "ok": result.ok}
 
+    # ⭐⭐ IS MY JOB STILL RUNNING, OR IS IT WEDGED? Tim, 2026-09-21, after the ZeroParadox
+    # session had twice concluded a live preflight was dead: *"Is that the kind of thing that
+    # might actually make sense to make into a dedicated MCP endpoint? A way to be able to check
+    # in and make sure that our jobs are done?"* — and then ruled EXTEND rather than mint, so the
+    # facts land on the status a caller already reads instead of behind a tool they must know to
+    # ask for.
+    #
+    # ⛔⛔ IT DELEGATES AND NEVER RE-DERIVES. `preflight_status` and `push_status` own the state
+    # machines — six states and five, with `orphaned` vs `died` and the push's "may already have
+    # published" all living there. A second reader of the same audit rows would be the second
+    # copy of that logic, and the copy is what goes wrong: this repo already measured `status`
+    # surfacing 19/19 beside a broken bar because it embedded one fact and re-derived another.
+    #
+    # ⚠ THE TRANSCRIPTS ARE DELIBERATELY NOT CARRIED. `status` is documented "cheap; call
+    # freely" and a passed preflight's `gates` can run to thousands of characters. What a
+    # check-in needs is state, age, and whether to worry; `detail_via` names the tool that has
+    # the rest, so nothing here is a lossy copy of something.
+    # ⛔⛔ THE STATE IN WHICH A RUN IS STILL CLAIMING TO WORK — AND IT IS ENUMERATED POSITIVELY
+    # ON PURPOSE, AFTER THE FIRST DRAFT GOT IT WRONG IN THE MOST INSTRUCTIVE WAY.
+    #
+    # That draft listed the TERMINAL states and derived "still going" as everything else. Its
+    # own comment then asserted that `died` and `orphaned` are never stuck — and the table did
+    # not encode it, so a `died` run old enough reported `stuck: true`. **A guard whose
+    # enforcement was ASSERTED rather than RUN**, caught by the test written beside it, which is
+    # the whole argument for landing guards and their claims together.
+    #
+    # ⚠⚠ THE DERIVATION WAS THE BUG, NOT THE LIST. "Not terminal" quietly means *four* things
+    # here — running, orphaned, died, and any state a future author adds — and only the first
+    # is a run still asserting it is working. `died` and `orphaned` are CONCLUDED: no receipt
+    # was ever written, but nothing is executing and nothing will change on its own, and their
+    # remedies differ sharply (a dead push must not be retried before asking the remote; an
+    # orphaned preflight simply re-runs). Naming the live state directly means a new state
+    # added to either delegate defaults to NOT stuck, which is the safe direction: this field's
+    # expensive failure is the false alarm, not the missed one.
+    _FLIGHT_LIVE = {"preflight": ("running",), "push": ("running",)}
+
+    @staticmethod
+    def _elapsed_seconds(iso_ts: Optional[str]) -> Optional[int]:
+        """Seconds from an ISO-8601 UTC stamp to now, or None if unparseable.
+
+        ⛔ UTC ON BOTH SIDES, EXPLICITLY. This repo has already been bitten comparing a stored
+        UTC value against a locally-resolved `date.today()` — at UTC-5/-6 the two disagree for
+        five to six hours of every day. Every stamp this fleet writes carries `+00:00`, so the
+        parse keeps the offset and `now` is taken with one.
+        """
+        if not iso_ts:
+            return None
+        try:
+            started = datetime.fromisoformat(str(iso_ts))
+        except (TypeError, ValueError):
+            return None
+        if started.tzinfo is None:
+            # ⚠ A NAIVE STAMP IS NOT ASSUMED LOCAL AND IS NOT ASSUMED UTC EITHER — it is
+            # refused. Guessing would produce an `elapsed` wrong by the offset and a `stuck`
+            # derived from it, silently. Nothing this fleet writes is naive; if one appears,
+            # the honest answer is that the age is unknown.
+            return None
+        return max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+
+    def _flight_row(self, kind: str, answer: dict, cap: int) -> dict:
+        """One operation's in-flight summary, computed from what the delegate returned."""
+        state = str(answer.get("state") or "unknown")
+        # ⚠ `started_at` on the non-terminal states; `ts` is the COMPLETION stamp on the
+        # terminal ones and must never be read as a start — that is the WHEN-vs-WHOSE shape
+        # this codebase keeps finding, in miniature.
+        started_at = answer.get("started_at")
+        elapsed = self._elapsed_seconds(started_at)
+        live = state in self._FLIGHT_LIVE[kind]
+
+        # ⛔⛔ THE DEFINITION, AND IT IS DELIBERATELY NARROW. Tim's ruling: true ONLY when there
+        # is no terminal row AND the elapsed time exceeds the cap. `running` IS that conjunction
+        # already — the delegates reach it only with a `started` row, no outcome row, and a live
+        # worker thread — so `stuck` implies `running` and is checked against the state rather
+        # than re-derived from the rows the delegates already read. A run that has concluded is
+        # not stuck, a run inside its budget is not stuck, and a run whose age cannot be
+        # established is not stuck either (an unknown age must not manufacture an alarm).
+        #
+        # ⚠⚠ THE COST OF GETTING THIS WRONG IS MEASURED, TWICE, SAME READER. 2026-09-02 and
+        # 2026-09-21 the consumer concluded a live preflight was dead by enumerating processes
+        # that could never have shown it — the second time it finished normally four minutes
+        # after being declared dead. A `stuck` that fired early would have CONFIRMED that
+        # wrong conclusion with an authoritative-looking field, which is worse than the silence
+        # it replaces. It must be hard to trip and obvious when it trips.
+        stuck = bool(live and elapsed is not None and elapsed > cap)
+        row = {
+            "state": state,
+            "run_id": answer.get("run_id"),
+            "started_at": started_at,
+            "elapsed_seconds": elapsed,
+            "stuck": stuck,
+            # ⭐ NEVER A BARE NUMBER — the cap is quoted beside WHAT IT BOUNDS, because the two
+            # caps here differ by a factor of two and the obvious guess picks the wrong one.
+            "cap_seconds": cap,
+            "cap_prices": ("the pre-push GATE PHASE, which is the whole of a preflight"
+                           if kind == "preflight" else
+                           "the entire `git push` subprocess — hook AND network — which is why "
+                           "it is not the 1800s gate-phase budget"),
+            "detail_via": f"{kind}_status()",
+        }
+        if stuck:
+            row["note"] = (
+                f"NO TERMINAL ROW AND {elapsed}s ELAPSED, past the {cap}s cap this run is "
+                f"bounded by. The worker still reports alive, so this is not a stale lock — it "
+                f"is a run that should have been killed by its own timeout and was not. "
+                f"Read {kind}_status() for the transcript before restarting anything: a "
+                f"restart loses the run and, for a push, the remote may already have the ref.")
+        elif live and elapsed is None:
+            # ⚠ SAY THAT THE AGE IS UNKNOWN RATHER THAN LET `stuck: false` CARRY IT. Absence is
+            # never success here either: a false `stuck` on an unmeasurable run must not read
+            # as "checked and fine".
+            row["note"] = (
+                f"state is {state!r} and its age could not be established, so `stuck` is "
+                f"false for want of evidence rather than because this run was checked.")
+        return row
+
+    def in_flight(self) -> dict:
+        """What this server is running right now, and whether it is past its budget."""
+        return {
+            "preflight": self._flight_row(
+                "preflight", self.preflight_status(),
+                # ⚠ A PREFLIGHT RUNS EXACTLY ONE PHASE — `gates.run("pre-push")` — so its
+                # ceiling is that phase's budget, read from the same table the runner indexes.
+                cap=gates_mod.PHASE_TIMEOUT["pre-push"]),
+            "push": self._flight_row("push", self.push_status(), cap=PUSH_TIMEOUT),
+        }
+
     def status(self) -> dict:
         """Tree, branch, unpushed count, and what would block a push right now."""
         blockers: list[str] = []
         tree = self.git.tree_state()
         branch = self.git.branch()
         unpushed = self.git.unpushed_count()
+
+        # ⚠⚠ A FAILURE TO READ THE IN-FLIGHT STATE MUST RENDER AS ITS OWN STATE, NEVER AS
+        # QUIET. `status` is the check-in surface, so an omitted block reads as "nothing is
+        # running" — absence rendering as success, which is the bug this repo names first.
+        # ⚠ It is caught and reported rather than raised because the rest of this answer is
+        # still true and useful; losing the branch and the blockers to an unreadable audit
+        # would be the wrong trade.
+        try:
+            in_flight = self.in_flight()
+        except Exception as exc:                                    # noqa: BLE001
+            in_flight = {"error": f"{type(exc).__name__}: {exc}",
+                         "note": ("the in-flight state could NOT be read, so this answer says "
+                                  "nothing about whether a preflight or push is running. Do "
+                                  "not read it as idle — call preflight_status() and "
+                                  "push_status() directly.")}
         if not self.gates.available():
             blockers.append("the gate pipeline is missing from this repo")
 
@@ -427,6 +586,9 @@ class GitRobot:
             # correct call from this" — it answers cleanly, and about the wrong object.
             "would_block_push": blockers,
             "would_block_push_scope": "tip",
+            # ⭐⭐ THE CHECK-IN. Delegated, never re-derived — see `in_flight` above for why
+            # that distinction is load-bearing and for what `stuck` does and does not claim.
+            "in_flight": in_flight,
             "range_question": (
                 None if unpushed <= 1 else
                 f"⚠ {unpushed} commits are unpushed and this field examined ONLY the tip. "
@@ -1130,7 +1292,9 @@ class GitRobot:
             # mid-gate and looked like a network fault. Sized well above the measured
             # pipeline rather than just above it, because the pipeline grows whenever a
             # control is added and the next person to add one will not revisit this number.
-            result = target.run(["push", "origin", branch], timeout=3600)
+            # ⚠ THE NUMBER LIVES AT MODULE SCOPE so `status.in_flight` can quote the cap that
+            # actually bounds this call rather than a copy of it — see `PUSH_TIMEOUT`.
+            result = target.run(["push", "origin", branch], timeout=PUSH_TIMEOUT)
             # ⛔⛔ A NON-ZERO `git push` DOES NOT ESTABLISH THAT NOTHING WAS PUBLISHED, AND THIS
             # RECORDED `failed` FOR A PUSH THAT HAD PUBLISHED. Measured 2026-09-18 on ZeroParadox
             # run 22fb604fe894: the pipeline passed, the remote APPLIED the ref, and then
@@ -1272,6 +1436,16 @@ class GitRobot:
             return {"state": "running", "run_id": run_id,
                     "branch": started.get("args", {}).get("branch"),
                     "head": started.get("head"),
+                    # ⭐⭐ WHEN IT STARTED, ADDED 2026-09-21, AND ITS ABSENCE WAS THE WHOLE GAP.
+                    # `preflight_status` has published `started_at` on every non-terminal state
+                    # since it was written; this one published none, so a caller polling it
+                    # could not tell a 30-second push from a 40-minute one — `running` read
+                    # identically either way, which is the state where the elapsed time IS the
+                    # question. ⚠ It is the STARTED row's ts, the same object the terminal
+                    # branch above returns as `ts`; naming it `started_at` rather than `ts`
+                    # keeps "when it began" and "when it finished" from wearing one name.
+                    "started_at": started.get("ts"),
+                    "cap_seconds": PUSH_TIMEOUT,
                     "note": ("still running; the pre-push hook re-runs the full pipeline. "
                              "Median 672s over 47 recorded runs, min 26s, max 1800s (the "
                              "budget). It scales with the RANGE, so a two-file push and a "
@@ -1279,6 +1453,9 @@ class GitRobot:
         return {"state": "died", "run_id": run_id,
                 "branch": started.get("args", {}).get("branch"),
                 "head": started.get("head"),
+                # ⚠ SAME REASON AS THE `running` BRANCH, and here it also dates the loss: a
+                # caller deciding whether to ask the remote wants to know how long ago this was.
+                "started_at": started.get("ts"),
                 "note": ("the worker is gone and no receipt was written — the server most "
                          "likely restarted mid-push. THIS DOES NOT MEAN NOTHING WAS PUSHED: "
                          "git can be killed after the remote accepted the ref. Ask the remote, "

@@ -152,9 +152,24 @@ def test_the_git_timeout_clears_the_hook_not_just_the_network(robot, repo):
     1498s, so the old ceiling killed the push mid-gate and it looked like a network fault.
 
     Read from source rather than exercised, because reproducing it means a 25-minute run: the
-    claim is about which ceiling was chosen, not about behaviour on a fast test remote."""
+    claim is about which ceiling was chosen, not about behaviour on a fast test remote.
+
+    ⚠ REWRITTEN 2026-09-21 WHEN THE LITERAL MOVED TO A CONSTANT. This asserted the TEXT
+    `timeout=3600` inside `push`, so lifting the number to module scope — so `status.in_flight`
+    could quote the cap that actually bounds a running push — failed a test whose subject had
+    not changed at all. ⭐ The repair makes it stricter, not looser: it pins the VALUE, and
+    separately pins that `push` passes THAT object rather than a number of its own. The old
+    form would have passed a second hardcoded 3600 sitting beside a constant saying something
+    else, which is the two-copies shape the lift existed to prevent.
+    """
     import inspect
     from core import engine
     src = inspect.getsource(engine.GitRobot.push)
     assert 'timeout=900' not in src, "900s is below the measured 1498s hook"
-    assert 'timeout=3600' in src
+    assert engine.PUSH_TIMEOUT >= 1800, (
+        f"the ceiling is {engine.PUSH_TIMEOUT}s; the measured hook alone took 1498s and its "
+        f"own phase budget is {engine.gates_mod.PHASE_TIMEOUT['pre-push']}s")
+    assert engine.PUSH_TIMEOUT == 3600
+    assert 'timeout=PUSH_TIMEOUT' in src, (
+        "push no longer passes the published constant, so the cap a caller is quoted and the "
+        "cap git runs under would be free to drift apart")

@@ -88,6 +88,39 @@ class ReadResult(Result, total=False):
     output: str
 
 
+class FlightRow(TypedDict, total=False):
+    """One long-running operation's check-in summary, as `status.in_flight` reports it.
+
+    ⚠⚠ `cap_seconds` IS NOT ONE NUMBER ACROSS THE TWO ROWS AND MUST NOT BE READ AS ONE. A
+    preflight is bounded by the pre-push GATE PHASE (1800s); a push is bounded by the whole
+    `git push` subprocess (3600s), hook and network together. `cap_prices` says which, on every
+    row, because a caller comparing an elapsed time against the wrong ceiling is this repo's
+    founding defect in its cheapest form.
+
+    ⛔ `stuck: false` IS NOT "FINE". It is false for a concluded run, for a run inside its
+    budget, AND for a run whose age could not be established — `note` distinguishes the last
+    one, and `state` is the field that says what is actually happening.
+    """
+    state: str
+    run_id: str | None
+    started_at: str | None
+    elapsed_seconds: int | None
+    stuck: bool
+    cap_seconds: int
+    cap_prices: str
+    detail_via: str
+    note: str
+
+
+class InFlight(TypedDict, total=False):
+    """Both long-running operations, or — if the audit could not be read — `error` and `note`
+    INSTEAD of them. ⚠ An absent row is never "nothing is running"; see the `error` note."""
+    preflight: FlightRow
+    push: FlightRow
+    error: str
+    note: str
+
+
 class StatusResult(Result, total=False):
     """⚠ `would_block_push` is TIP-SCOPED and must never be read as "the push will go" — see the
     tool docstring. `would_block_push_scope` and `range_question` exist to say so and must not be
@@ -102,6 +135,10 @@ class StatusResult(Result, total=False):
     would_block_push: list[Any]
     would_block_push_scope: str
     range_question: str
+    # ⭐ THE CHECK-IN, added 2026-09-21. Delegated from preflight_status()/push_status() — a
+    # SUMMARY of each, deliberately without the gate transcripts, since `status` is documented
+    # cheap. `detail_via` on each row names the tool holding the rest.
+    in_flight: InFlight
 
 
 class PreflightStatusResult(Result, total=False):
@@ -130,7 +167,16 @@ class PushStatusResult(Result, total=False):
     run_id: str
     branch: str
     head: str
+    # ⚠ TWO DIFFERENT INSTANTS, TWO NAMES, NEVER ONE. `ts` is when the run CONCLUDED and appears
+    # on the terminal states; `started_at` is when it BEGAN and appears on `running` and `died`.
+    # The WHEN-vs-WHOSE collapse this repo keeps finding is the same shape as a start stamp and
+    # a finish stamp sharing a key.
     ts: str
+    # ⭐ Added 2026-09-21: without it a caller polling `running` could not tell a 30-second push
+    # from a 40-minute one, which is the state where elapsed time IS the question.
+    # `preflight_status` had published it since it was written; this one had not.
+    started_at: str
+    cap_seconds: int
     output: str | None
 
 
