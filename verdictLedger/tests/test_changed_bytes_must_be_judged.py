@@ -231,6 +231,64 @@ def test_can_push_reports_a_broken_registry_freeze(ledger, tmp_path):
     assert "REGISTRY FREEZE IS BROKEN" in text, "the push path stayed silent about a moved freeze"
     # ⚠ and it must not let the reader confuse the two objects that both answer to "bar"
     assert "NOT the `push_bar`" in text
+    # ⚠ under the LEGACY basis the two halves really are the same object, so the pair is honest
+    assert "registry_file_sha" in text
+    assert ledger.config.registry_sha[:12] in text, "the 'now' half must be the live file sha"
+
+
+def test_the_broken_freeze_compares_two_values_of_the_same_kind(ledger, tmp_path):
+    """⛔⛔ THE RENDER PRINTED A SCOPE DIGEST BESIDE A FILE HASH AND CALLED IT A BEFORE/AFTER.
+
+    MEASURED ON THE LIVE FLEET 2026-09-21, `origin/illustrated..illustrated`, the basis the
+    consumer actually runs on since the 09-18 re-freeze:
+
+        frozen at 211569c3d832  ·  registry now d59065e57f7f
+
+    ⚠⚠ `frozen_at` under `basis: scope_digest` is a SCOPE DIGEST. `registry_sha` is a FILE HASH.
+    They are not the same kind of value, so the pair **cannot discriminate** "the bar moved" from
+    "these two hashes were never comparable" — it would print two different strings on a freeze
+    that had not moved at all. That is this repo's founding defect class (a true value read
+    against the wrong object) sitting in the render of the very field added to remove it.
+
+    ⛔ AND THE IMPLIED REMEDY WAS WORSE THAN THE DIAGNOSIS. The next line tells the reader to
+    re-freeze, and the only "now" value on offer was the file sha — writing that into
+    `frozen_scope_digest` never compares equal to a scope digest, so the freeze would read BROKEN
+    forever and the repair would be indistinguishable from the fault.
+
+    ⭐ WHY IT SURVIVED REVIEW, and it is the reusable half: the test above pins this same render
+    and passes, because it freezes with the LEGACY `frozen_registry_sha`, where frozen-vs-
+    `registry_sha` is a correct pair. The guard existed, was green, and did not cover the basis
+    the fleet had migrated to. A control is only as scoped as its fixture made it.
+
+    ⚠ `basis` was on the payload the whole time — `convergence_bar` names the object it compared
+    precisely so no reader downstream has to infer it. This render inferred it anyway.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    ledger.config.policy = dict(ledger.config.policy or {})
+    # the SCOPE-DIGEST basis, which is what the live fleet runs on — never the legacy field
+    ledger.config.policy["convergence"] = {"frozen_scope_digest": "0" * 64}
+
+    result = _check(ledger, tmp_path, f"{old}..{tip}",
+                    [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)])
+    fz = result["registry_freeze"]
+    text = canpush_mod.render(result)
+
+    assert fz["basis"] == "scope_digest", "fixture: this test exists to cover the NEW basis"
+    assert fz["held"] is False, "the fixture must present a MOVED freeze"
+    assert "REGISTRY FREEZE IS BROKEN" in text
+
+    digest, file_sha = ledger.config.registry_scope_digest, ledger.config.registry_sha
+    assert digest != file_sha, (
+        "fixture: the two identities must differ, or this test cannot tell them apart")
+
+    # ⛔ THE WHOLE POINT: the 'now' half is the SAME KIND as the frozen half.
+    assert digest[:12] in text, "the 'now' half is not the scope digest the freeze was keyed on"
+    assert file_sha[:12] not in text, (
+        "the render still offers the registry FILE sha as the counterpart to a scope digest")
+    # ⚠ and the remedy must name the field that value actually belongs in
+    assert "frozen_scope_digest" in text, "a refusal must name the success condition"
+    assert "frozen_registry_sha" not in text, "the remedy names the wrong field for this basis"
 
 
 def test_stale_and_owed_are_not_presented_as_the_same_work(ledger, tmp_path):

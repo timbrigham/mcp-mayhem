@@ -882,15 +882,43 @@ def render(result: dict) -> str:
             f"  ⚠⚠ THE REGISTRY FREEZE IS BROKEN — the rule set moved since the checkpoint was "
             f"taken, so every green row in this range was judged against a scope that has since "
             f"changed, and a widened scope does NOT re-open a row that already went green.")
+        # ⛔⛔ THE "NOW" HALF MUST COME FROM THE SAME BASIS AS THE "FROZEN" HALF, AND UNTIL
+        # 2026-09-21 IT DID NOT. Measured on the live fleet that day, under the scope_digest
+        # basis this line read:
+        #     frozen at 211569c3d832  ·  registry now d59065e57f7f
+        # `frozen_at` was a SCOPE DIGEST and `registry_sha` is a FILE HASH. Two different
+        # objects printed as a before/after pair — they would differ even if nothing whatever
+        # had moved, so the line cannot distinguish "the bar moved" from "these are not the
+        # same kind of hash". That is this repo's founding defect class, in the render of the
+        # field added to remove it.
+        # ⚠ AND THE REMEDY IT IMPLIED WAS ACTIVELY HARMFUL: the very next line tells the reader
+        # to re-freeze, and the only hash on offer to re-freeze WITH was the file sha. Writing
+        # that into `frozen_scope_digest` never compares equal to a scope digest, so the freeze
+        # would read BROKEN forever and the fix would be indistinguishable from the fault.
+        # ⭐ `basis` was already on the payload — `convergence_bar` names the object it compared
+        # precisely so nobody downstream has to infer it. This render inferred it anyway.
+        _basis = str(fz.get("basis") or "")
+        _now = fz.get("scope_digest") if _basis == "scope_digest" else fz.get("registry_sha")
+        _what = "scope digest" if _basis == "scope_digest" else "registry file sha"
         lines.append(
-            f"       frozen at {str(fz.get('frozen_at'))[:12]}  ·  registry now "
-            f"{str(fz.get('registry_sha'))[:12]}")
+            f"       frozen at {str(fz.get('frozen_at'))[:12]}  ·  now "
+            f"{str(_now)[:12]}   (both are the {_what}; basis: {_basis})")
+        # ⚠ AND THIS LINE NAMED A FIELD TOO — hardcoded to the LEGACY one, so under the
+        # scope_digest basis it pointed the reader at a setting the live freeze does not use.
+        # Caught 2026-09-21 by the assertion one test wrote for the line ABOVE it: the same
+        # defect twice in four lines, because a literal field name in prose is a copy.
+        _field = ("policy.convergence.frozen_scope_digest" if _basis == "scope_digest"
+                  else "policy.convergence.frozen_registry_sha")
         lines.append(
-            "     ⚠ This is the CONVERGENCE freeze (policy.convergence.frozen_registry_sha), NOT "
+            f"     ⚠ This is the CONVERGENCE freeze ({_field}), NOT "
             "the `push_bar` above — different objects, and only one of them is a checkpoint.")
+        # ⚠ AND THE REMEDY NAMES THE FIELD AND THE VALUE (`_field` above), because the field it
+        # must be written into differs BY BASIS and the two hashes are one paste away from
+        # each other.
         lines.append(
-            "     INSTEAD: re-freeze deliberately at the current registry and expect the numbers "
-            "to mean less than they did, or revert the registry. Reported, NOT blocking.")
+            f"     INSTEAD: re-freeze deliberately — set {_field} to {str(_now)[:12]}… (the "
+            f"{_what} above) and expect the numbers to mean less than they did, or revert the "
+            "registry. Reported, NOT blocking.")
     elif not fz.get("frozen") and fz.get("note"):
         lines.append(
             "  ⚠ NO REGISTRY FREEZE IS SET, so there is no agreed rule set to measure this push "
