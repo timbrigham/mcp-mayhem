@@ -461,3 +461,44 @@ def test_the_budget_is_published_while_running_not_only_after(robot, repo, tmp_p
         "the start receipt must carry the budget — the caller is about to poll")
     assert "not policy and not configurable" in started["note"], (
         "and must say it is a built-in, so nobody hunts for a config key that does not exist")
+
+
+def test_running_says_the_worker_is_a_thread_not_a_process(robot, repo):
+    """⛔⛔ THE SAME FALSE ALARM TWICE, FROM THE SAME READER, 19 DAYS APART.
+
+    2026-09-02 and 2026-09-21: `Get-Process` filtered to python/lean/lake returned zero
+    matches, and `running` was read as a stale lock over a dead run. **Both times the pipeline
+    was genuinely alive.** The second time it finished 4 minutes after being declared dead, in
+    15.5 minutes total, and recorded `failed` normally.
+
+    ⚠⚠ THE WORK IS A THREAD IN THIS PROCESS. That is why the liveness test enumerates THREADS.
+    Process enumeration is not a weaker check, it is an answer to a different question — and its
+    zero is indistinguishable from a real absence, so a careful operator samples six times and
+    concludes wrongly with full rigour.
+
+    ⭐ A caller who cannot see the worker goes looking for it. The remedy is not a better
+    detector — the detector is correct — it is telling the caller where the worker lives.
+    """
+    entry = repo / "tools" / "verify" / "hooks.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(GATE_HOLDS_UNTIL_RELEASED, encoding="utf-8")
+
+    robot.preflight()
+    deadline = time.time() + 20
+    while robot.preflight_status().get("state") != "running" and time.time() < deadline:
+        time.sleep(0.02)
+    try:
+        state = robot.preflight_status()
+        assert state["state"] == "running", state
+        worker = state.get("worker") or ""
+        assert "thread" in worker.lower(), "the response must name WHAT the worker is"
+        assert "NOT a separate process" in worker, (
+            "it must say plainly that process enumeration cannot see it — that is the "
+            "inference that has now been made twice")
+        assert "does not mean the run is dead" in worker, (
+            "and it must close the specific wrong conclusion, not merely describe the mechanism")
+    finally:
+        (repo / "release.txt").write_text("go", encoding="utf-8")
+        deadline = time.time() + 30
+        while robot.preflight_status().get("state") == "running" and time.time() < deadline:
+            time.sleep(0.05)

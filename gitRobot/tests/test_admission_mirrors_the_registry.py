@@ -124,6 +124,30 @@ KNOWN_MISMATCHES = {
     ("rely", ("commit", "push", "tag"), ("tag",)),
     ("copy_editor", ("push",), ()),
     ("check_briefs", ("commit", "push", "tag"), ()),
+    #   pdf_coupling_in_push  registry [commit, push, tag]  admission []   LOOSER, and
+    #              ⭐ DELIBERATE AND EXPECTED. Registered by ZeroParadox 2026-09-21 to split a
+    #              step that was carrying TWO properties under one name: `record_pdf_coupling`
+    #              asks a TREE question (does any build script on disk name this PDF — trivially
+    #              true for all 40, so near-vacuous as a gate) while `check_pdf_coupling(ranges)`
+    #              asks a PUSH-DIFF question (does a script CHANGED IN THIS PUSH name this
+    #              changed PDF — the one with teeth, tightened by their P7-3).
+    #              ⛔⛔ THE SPLIT IS NOT COSMETIC, IT IS A SOUNDNESS FIX. `sign()` stores an
+    #              accept as `verdict: "PASS"`, so signing to clear the push-diff leg would ALSO
+    #              have satisfied the tree-scope property at that basis — one signature
+    #              discharging two questions, one of which nobody examined, on a step pinned at
+    #              `min_coverage: 1.0` over 40 subjects.
+    #              ⚠ NOT ADMITTED HERE ON PURPOSE, and this side needs no change: `sign()`
+    #              validates against the REGISTRY, and `find`/`get` ignore admission entirely, so
+    #              a registered-unadmitted step is signable and consultable while gating nothing.
+    #              Registering is free; admitting is the deliberate act.
+    #              ⚠ ITS REGISTRY ENTRY DECLARES NO `actions` KEY, so it defaults to EVERY action
+    #              — the `rely` / `check_briefs` shape this file already warns reads later as a
+    #              stale registry rather than a deliberate narrowing. Its whole purpose is the
+    #              PUSH diff; `actions: ["push"]` would say so. Raised with them 2026-09-21.
+    #              ⭐ SATISFIED WHEN: the hook consults the ledger for a signed accept and this
+    #              step becomes the gating surface — then it joins `admission.v1.json` and this
+    #              line goes.
+    ("pdf_coupling_in_push", ("commit", "push", "tag"), ()),
 }
 
 

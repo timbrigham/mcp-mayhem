@@ -925,7 +925,30 @@ class GitRobot:
                     "started_at": started["ts"],
                     # ⚠ Same reason as the start receipt: this is the state where a caller
                     # most needs the cap, because it is the one where waiting is the question.
-                    "gate_timeout_seconds": gates_mod.PHASE_TIMEOUT}
+                    "gate_timeout_seconds": gates_mod.PHASE_TIMEOUT,
+                    # ⛔⛔ SAY WHAT THE WORKER *IS*, BECAUSE THE OBVIOUS CHECK CANNOT SEE IT AND
+                    # HAS NOW PRODUCED A FALSE ALARM TWICE. 2026-09-02 and again 2026-09-21,
+                    # same reporter, same inference: `Get-Process` filtered to python/lean/lake
+                    # returned zero matches, and `running` was read as a stale lock over a dead
+                    # run. Both times the pipeline was genuinely alive and finished normally —
+                    # the second time 4 minutes after being declared dead, in 15.5 minutes total.
+                    #
+                    # ⚠⚠ THE WORK IS A THREAD IN THIS PROCESS, NOT A PROCESS. That is exactly
+                    # why the liveness test above enumerates THREADS. Process enumeration is not
+                    # a weaker check here, it is an answer to a different question — and its
+                    # zero is indistinguishable from a real absence, so a careful operator
+                    # measures six times and concludes wrongly with full rigour.
+                    #
+                    # ⭐ A caller who cannot see the worker will go looking for it. Telling them
+                    # where it lives costs one field and removes the entire class.
+                    "worker": (
+                        f"thread 'preflight-{run_id}' inside THIS gitRobot process "
+                        f"(pid {os.getpid()}). ⚠ It is NOT a separate process: enumerating "
+                        f"python/lean/lake processes will NOT show it, and finding none does "
+                        f"not mean the run is dead. Subprocesses it spawns are transient, so a "
+                        f"sample between them also shows nothing. This field IS the liveness "
+                        f"answer — if the thread were gone you would be reading `orphaned` or "
+                        f"`died`, not `running`.")}
         if started.get("pid") == os.getpid():
             # ⚠⚠ OUR PROCESS, NOT OUR THREAD. Nothing is executing and nothing will ever write
             # the verdict, so a caller told `running` waits for an event that cannot arrive.
