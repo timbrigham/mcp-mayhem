@@ -1171,6 +1171,31 @@ def render(result: dict) -> str:
             f"     INSTEAD: re-freeze deliberately — set {_field} to {str(_now)[:12]}… (the "
             f"{_what} above) and expect the numbers to mean less than they did, or revert the "
             "registry. Reported, NOT blocking.")
+        # ⛔⛔ THE ORDERING TRAP, AND IT LIVES HERE BECAUSE HERE IS WHERE SOMEONE ABOUT TO
+        # RE-FREEZE IS READING. Raised by the ZeroParadox session 2026-09-22 while briefing a
+        # re-freeze Tim had just authorised — caught before it bit, which is why it is worth
+        # writing down rather than only fixing.
+        #
+        # `reason` is a SERVED key, so it is inside the enforcement digest. Freeze to the
+        # current digest, then edit a served key in the same change, and the checkpoint is
+        # STALE ON ARRIVAL — `can_push` will correctly report BROKEN on a freeze taken minutes
+        # earlier, and the write itself gives no sign at the time.
+        #
+        # ⚠⚠ AND THE TWO OPERATIONS CO-OCCUR BY CONSTRUCTION, which is what makes it a trap
+        # rather than a footnote: re-freezing is exactly the moment someone is already editing
+        # the registry, because a moved bar is what sent them here. Nothing in the mechanism
+        # enforces the order.
+        #
+        # ⭐ Placed in the LINE and not only in a docstring on today's own evidence: a caveat
+        # in a long description does not survive contact with a specific result line. The
+        # consumer had the two-layer `rely` caveat in a tool description they had read, and
+        # still drew the conclusion it forbids, because the number is met in a different frame.
+        if _basis == "scope_digest":
+            lines.append(
+                "     ⛔ ORDER MATTERS: `reason` is a SERVED key and is INSIDE this digest. If "
+                "you are also editing the registry, EDIT FIRST, derive the digest from the "
+                "post-edit file, then freeze — one commit. Freezing first makes the checkpoint "
+                "stale on arrival, silently, and it surfaces only on the next call.")
     elif not fz.get("frozen") and fz.get("note"):
         lines.append(
             "  ⚠ NO REGISTRY FREEZE IS SET, so there is no agreed rule set to measure this push "

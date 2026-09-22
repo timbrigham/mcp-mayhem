@@ -161,3 +161,4 @@ def test_no_freeze_at_all_points_at_the_new_field(tmp_path):
 
     assert bar["frozen"] is False
     assert "frozen_scope_digest" in bar["note"]
+

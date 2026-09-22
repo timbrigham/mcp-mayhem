@@ -550,3 +550,64 @@ def test_coverage_gap_never_names_a_path_nobody_may_record(ledger, tmp_path):
         f"refuses it, so the remedy it prints cannot be executed by anyone.")
     assert "doc.md" in named, (
         "the fence must not swallow ordinary uncovered paths — that would hide real gaps")
+
+
+def test_the_broken_freeze_line_warns_about_the_edit_then_freeze_order(ledger, tmp_path):
+    """⛔⛔ FREEZE-THEN-EDIT MAKES THE CHECKPOINT STALE ON ARRIVAL, SILENTLY.
+
+    Raised by the ZeroParadox session 2026-09-22 while briefing a re-freeze Tim had just
+    authorised — caught before it bit, which is why it is worth pinning rather than only
+    fixing. `reason` is a SERVED key, so it is INSIDE the enforcement digest. Freeze to the
+    current digest, then correct a `reason` in the same change, and `can_push` correctly
+    reports BROKEN on a freeze taken minutes earlier. The write gives no sign at the time.
+
+    ⚠⚠ THE TWO OPERATIONS CO-OCCUR BY CONSTRUCTION, which is what makes it a trap rather than
+    a footnote: re-freezing is exactly the moment someone is already editing the registry,
+    because a moved bar is what sent them there. Nothing in the mechanism enforces the order.
+
+    ⭐ PINNED IN THE RENDERED LINE, not only in a docstring, on today's own evidence: a caveat
+    in a long description does not survive contact with a specific result line. The consumer
+    had the two-layer `rely` caveat in a served tool description they had read, and still
+    wrote the conclusion it forbids, because the number is met in a different frame.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    ledger.config.policy = dict(ledger.config.policy or {})
+    ledger.config.policy["convergence"] = {"frozen_scope_digest": "0" * 64}
+
+    result = _check(ledger, tmp_path, f"{old}..{tip}",
+                    [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)])
+    text = canpush_mod.render(result)
+
+    assert result["registry_freeze"]["basis"] == "scope_digest"
+    assert result["registry_freeze"]["held"] is False, "fixture: the bar must read BROKEN"
+    assert "ORDER MATTERS" in text, (
+        "the remedy tells a reader to re-freeze and does not warn that freezing BEFORE a "
+        "registry edit makes the checkpoint stale on arrival")
+    assert "SERVED key" in text and "EDIT FIRST" in text, (
+        "the warning must name WHY (served keys are inside the digest) and the ORDER, or a "
+        "reader cannot construct a correct next attempt from it")
+
+
+def test_the_order_warning_is_not_shown_on_the_legacy_file_basis(ledger, tmp_path):
+    """⚠ THE TRAP IS BASIS-SPECIFIC AND THE WARNING MUST NOT FIRE BLIND.
+
+    Under `frozen_registry_sha` ANY byte moves the checkpoint — a comment edit as readily as a
+    served key — so "served keys are inside this digest" is not the useful distinction there,
+    and printing it would teach a legacy reader a rule that does not describe their basis.
+    ⭐ A true sentence shown to the wrong reader is this repo's founding defect in miniature,
+    and it is the same mistake the freeze render itself made until this morning.
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    ledger.config.policy = dict(ledger.config.policy or {})
+    ledger.config.policy["convergence"] = {"frozen_registry_sha": "0" * 64}
+
+    result = _check(ledger, tmp_path, f"{old}..{tip}",
+                    [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)])
+    text = canpush_mod.render(result)
+
+    assert result["registry_freeze"]["basis"] == "registry_file_sha"
+    assert "REGISTRY FREEZE IS BROKEN" in text, "fixture: the broken block must still render"
+    assert "ORDER MATTERS" not in text, (
+        "the served-key ordering rule was shown to a reader whose basis moves on every byte")
