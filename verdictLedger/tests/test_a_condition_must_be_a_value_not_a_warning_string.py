@@ -221,3 +221,44 @@ def test_a_path_no_family_claims_still_trips_the_double_warning(ledger, tmp_path
         "a path NO family claims went unreported — the defect the witness block exists for")
     assert "claimed by NO family at all" in text, (
         "the strictly-worse case must be named in the line, not only in the payload")
+
+
+def test_the_witness_names_the_layer_it_prices(ledger, tmp_path):
+    """⛔⛔ AN INSTRUMENT THAT SEES ONE OF TWO ENFORCEMENT LAYERS MUST SAY WHICH.
+
+    Raised by the ZeroParadox session 2026-09-22, correcting a conclusion I had just drawn and
+    was about to record. `tools/verify/required.v2.json` is claimed at push by exactly one
+    ADMITTED step — `check_encoding` — because `rely`, whose scope covers it, is
+    registered-not-admitted. I read that as an admission-set gap. **It is not.** `/rely`'s
+    ROUTING LEG in the pre-push hook is a per-file signature check over changed routed files,
+    it BLOCKS, and it named that exact file on the `1c56442` push. The file is gated; this
+    module is blind to the layer gating it.
+
+    ⛔ THE MIS-FILING WOULD HAVE CAUSED THE WRONG FIX — admitting `rely` at push, duplicating
+    an obligation the hook already enforces, at the cost of a full review verdict on every
+    checker edit.
+
+    ⭐ AND THE KNOWLEDGE WAS ALREADY IN THIS REPO, one file over: `ledger_server/server.py`
+    says the hook's routing legs are *"an obligation that lives in `batch.py`, has no
+    admission key, and this server cannot see."* **A fact documented where the number is not
+    reported is a fact the number's reader does not have.**
+    """
+    base, shas = _repo(tmp_path, n=2)
+    old, tip = shas[0], shas[1]
+    records = [_rec(STEP, PATH, _blob(tmp_path, tip, PATH), tip)]
+
+    result = _check(ledger, tmp_path, f"{old}..{tip}", records,
+                    admission=("check_hashes",), commit_admission=("check_hashes",))
+    w = result["witness"]
+
+    assert w["enforcement_layer"] == "ledger_admission", (
+        "the witness block must name which of the two enforcement layers it priced")
+    assert "routing legs" in w["blind_to"] and "batch.py" in w["blind_to"]
+    assert "never" in w["blind_to"], (
+        "it must say plainly that unwitnessed is not proof that nothing gates the path")
+
+    assert w["unclaimed_count"] >= 1, "fixture floor: the alarm must actually be firing"
+    text = canpush_mod.render(result)
+    assert "LEDGER ADMISSION layer only" in text, (
+        "the caveat lives only in the payload; the 2026-09-07 defect was invisible for three "
+        "days for exactly that reason — a reader reads the LINE")

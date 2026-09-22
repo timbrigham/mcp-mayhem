@@ -339,6 +339,40 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
             "unclaimed_by_every_family": unclaimed,
             "unclaimed_count": len(unclaimed),
             "covered_by_another_family": len(changed) - len(unclaimed),
+            # ⛔⛔ THIS INSTRUMENT SEES ONE OF THE TWO ENFORCEMENT LAYERS, AND UNTIL 2026-09-22
+            # IT DID NOT SAY SO. Raised by the ZeroParadox session, and the decisive part is
+            # that THIS SERVER ALREADY DOCUMENTED THE FACT somewhere else —
+            # `ledger_server/server.py` on `can_push`: the pre-push hook's routing legs are
+            # *"an obligation that lives in `batch.py`, has no admission key, and this server
+            # cannot see."* The knowledge was in the repo; the field reporting the number did
+            # not carry it.
+            #
+            # ⚠⚠ THE LIVE INSTANCE, AND IT IS THE ONE THAT NEARLY GOT MIS-FILED.
+            # `tools/verify/required.v2.json` is claimed at push by exactly one ADMITTED step,
+            # `check_encoding` (mechanical) — `rely`, whose scope covers it, is
+            # registered-not-admitted, so it witnesses nothing HERE. That reads like an
+            # admission-set gap. It is not: `/rely`'s ROUTING LEG in the pre-push hook is a
+            # per-file signature check over changed routed files, it is BLOCKING, and it named
+            # that exact file on the `1c56442` push. **The file is gated. This instrument is
+            # blind to the layer that gates it.**
+            #
+            # ⛔ RECORDING IT AS AN ADMISSION GAP WOULD HAVE CAUSED THE WRONG FIX — admitting
+            # `rely` at push, duplicating an obligation the hook already enforces and charging
+            # a full review-type verdict on every checker edit. Their correction, and it is
+            # right. `rely` IS TWO DIFFERENT THINGS WITH ONE NAME: the ledger TYPE and the
+            # hook's ROUTING LEG. Excluding the first never disabled the second.
+            #
+            # ⭐ SO THE DISCRIMINATOR IS ONE CLAUSE LONGER THAN THIS MODULE CAN EVALUATE: not
+            # "is the right judge ADMITTED" but "is the right judge ENFORCING, in whatever
+            # layer it enforces in". This module can only answer for the ledger layer, so it
+            # names the layer instead of implying it answered for both.
+            "enforcement_layer": "ledger_admission",
+            "blind_to": ("the pre-push hook's routing legs (`batch.py`), which enforce "
+                         "per-file `/rely` signatures over changed routed files with no "
+                         "admission key. A path reported here as unwitnessed may be gated "
+                         "there — `tools/verify/required.v2.json` is the live instance. "
+                         "⚠ An unwitnessed path is a question to ask, never a proof that "
+                         "nothing gates it."),
             "note": ("counts paths CHANGED by this range whose scope is claimed by at least "
                      "one ADMITTED step of that family. A family at 0 examined nothing this "
                      "push touched, however green its rows read. ⚠ `unclaimed_by_every_family` "
@@ -977,6 +1011,17 @@ def render(result: dict) -> str:
         lines.append(
             f"     ⚠ Reported, NOT blocking — whether this refuses a push is the admission "
             f"set's call, not the ledger's.")
+        # ⚠⚠ NAME WHAT THIS PRICES, IN THE LINE. The rule is this repo's first one and the
+        # field above is where it was being broken: these counts price the LEDGER ADMISSION
+        # layer only, and the pre-push hook enforces a second layer this server cannot see.
+        # A reader who takes "unwitnessed" for "ungated" draws the wrong conclusion and the
+        # wrong remedy — measured on `tools/verify/required.v2.json`, which is gated by a
+        # BLOCKING hook routing leg and reads unwitnessed here.
+        lines.append(
+            f"     ⚠ These count the LEDGER ADMISSION layer only. The pre-push hook enforces "
+            f"per-file `/rely` signatures over changed routed files with no admission key, "
+            f"and this server cannot see that layer — so an unwitnessed path is a question "
+            f"to ask, never proof that nothing gates it.")
 
     if result.get("forgiven"):
         # ⚠ "a real FAIL" WAS WRONG THE MOMENT `failing` LANDED ON UNDECIDED. `failed` is
