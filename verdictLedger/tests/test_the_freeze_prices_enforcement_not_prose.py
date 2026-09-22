@@ -221,3 +221,49 @@ def test_the_held_note_stays_quiet_on_the_legacy_basis(tmp_path):
     if bar["held"]:
         assert "EDIT FIRST" not in bar["note"], (
             "the served-key ordering rule was shown to a reader whose basis moves on any byte")
+
+
+def test_a_loop_break_is_reachable_in_the_served_requirement(tmp_path):
+    """⭐⭐ THE SERVED PAYLOAD IS THE CROSS-BOUNDARY READ, AND IT NEEDS A GUARD BECAUSE A DAY
+    OF FALSE-ABSENCE CLAIMS TURNED ON IT.
+
+    The loop-break REGISTER lives in this repo; the REGISTRY lives in the consumer's. Only the
+    served requirement has both. The ZeroParadox session asserted three times that `adversary`
+    has no `loop_break` — each time correctly scoped to the file it could read, each time
+    concluding about the system. It has one, Tim's, 2026-09-08, and `requirements()` serves it.
+
+    ⛔ So "I cannot read the other repo" does not entail "no route exists". The boundary is
+    real and stays; what crosses it is the RESOLVED ANSWER, not the files.
+
+    ⚠ THE GUARD IS THAT THE MERGE REMAINS VISIBLE. If a refactor moved `loop_break` into an
+    internal dict and stopped publishing it, nothing would fail — and the only party who could
+    notice is the one who cannot read the register. **A claim nobody can check is one people
+    assert**, which is exactly what happened three times before the route was found.
+    """
+    required = json.loads(json.dumps(BASE))
+    cfg = _write(tmp_path / "srv", required)
+
+    # a carve for a step the registry declares, exactly as the live register does
+    # ⚠ `loopbreaks` is an INSTANCE attribute, not a property — patching the class raises
+    # AttributeError, which is how this fixture was wrong on its first run.
+    cfg.loopbreaks = {
+        "schema": "zp.loopbreaks.v1",
+        "breaks": {"adversary": {"exclude": [".claude/commands/adversary-review.md"],
+                                 "reason": "the gate grades the brief that tells it how to grade",
+                                 "decided": "2026-09-08", "decided_by": "tim",
+                                 "review_by": "2026-10-08"}}}
+
+    served = cfg.requirements("push")
+    spec = served.get("adversary")
+    assert spec is not None, "fixture: adversary must be required at push"
+
+    lb = spec.get("loop_break")
+    assert lb, ("the carve is not reachable in the served requirement, so the only party who "
+                "could notice its absence is the one who cannot read the register")
+    assert lb["exclude"] == [".claude/commands/adversary-review.md"]
+    assert lb["decided_by"] == "tim" and lb["decided"] == "2026-09-08", (
+        "a carve must carry WHO decided it and WHEN into the served payload — an undated, "
+        "unattributed exemption is the loose direction this register refuses at load")
+    # ⚠ and the carve must actually narrow the scope, not merely be reported beside it
+    assert ".claude/commands/adversary-review.md" in (spec.get("scope_exclude") or []), (
+        "loop_break was published but not applied — a disclosure that changes nothing")

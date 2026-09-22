@@ -987,6 +987,30 @@ class Config:
                                     "reason": _brk.get("reason"),
                                     "decided": _brk.get("decided"),
                                     "decided_by": _brk.get("decided_by")}
+            # ⭐⭐ THIS MERGE IS THE CROSS-BOUNDARY READ, AND IT TOOK A DAY OF FALSE ABSENCE
+            # CLAIMS TO NOTICE. Named here 2026-09-22 because here is where the two halves
+            # actually meet: the REGISTER lives in this repo (`config/loopbreaks.v1.json`),
+            # the REGISTRY lives in the consumer's (`tools/verify/required.v2.json`), and
+            # **only the served requirement has both**.
+            #
+            # ⛔⛔ THE CONSUMER SESSION ASSERTED THREE TIMES THAT `adversary` HAS NO
+            # `loop_break`, each time correctly scoped to the file it could read and each time
+            # concluding about the system. It does have one — Tim's, 2026-09-08 — and
+            # `requirements()` serves it. Their own `/rely` round found the route from entirely
+            # inside its own scope: call the server, read the SERVED payload, and the answer
+            # names a decision recorded in a repo the caller has no access to.
+            #
+            # ⚠⚠ SO "I CANNOT READ THE OTHER REPO" DOES NOT ENTAIL "NO ROUTE EXISTS", and that
+            # non-sequitur produced four false-absence claims in one day, in both directions.
+            # The boundary is real, load-bearing, and stays — what crosses it is the RESOLVED
+            # ANSWER, not the files. A caller who cannot see a register can still ask the
+            # server that merges it.
+            #
+            # ⭐ THE DESIGN RULE THAT FOLLOWS: anything this server RESOLVES from two sources
+            # must be reachable in a served payload, or one side of the boundary is left with
+            # no way to check a claim about it — and a claim nobody can check is one people
+            # assert. `loop_break` clears that bar; a resolution that only ever appeared in an
+            # internal dict would not.
 
         return out
 
