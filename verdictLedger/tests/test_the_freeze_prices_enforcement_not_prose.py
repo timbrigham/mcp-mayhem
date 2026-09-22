@@ -172,3 +172,52 @@ def test_no_freeze_at_all_points_at_the_new_field(tmp_path):
     assert bar["frozen"] is False
     assert "frozen_scope_digest" in bar["note"]
 
+
+
+def test_the_held_bar_carries_the_ordering_caveat_too(tmp_path):
+    """⛔⛔ THE GUARD WAS SILENT ON THE ONE PATH THAT PRODUCES THE DEFECT.
+
+    Found by the ZeroParadox session 2026-09-22, reading the warning I had just shipped for
+    them. It printed only inside the BROKEN block, so:
+
+        BROKEN -> re-freeze         the reader sees it. The path it was written for.
+        HELD   -> edit + re-freeze  the block never rendered. They freeze to the digest they
+                                    read BEFORE editing, it is stale on arrival, and the
+                                    warning appears only afterwards, describing what they did.
+
+    ⚠⚠ The second path is the TIDY version of what we did today — one commit, edit and freeze
+    together, from a bar that was not broken. **A guard that fires everywhere except the
+    configuration that produces the defect is a guard that has not been tested against its
+    own case.**
+
+    ⭐ It lands on the NOTE and not in an alarm: they raised the cry-wolf trade instead of
+    prescribing "print it whenever the registry is dirty", which would fire on ordinary work
+    and teach its reader to skip it — the failure we spent today undoing in `witness`.
+    """
+    cfg = _write(tmp_path / "held", BASE)
+    frozen = cfg.registry_scope_digest
+    cfg = _write(tmp_path / "held2", BASE,
+                 policy={"convergence": {"frozen_scope_digest": frozen}})
+    bar = inventory_mod.convergence_bar(cfg)
+
+    assert bar["held"] is True, "fixture: the bar must be HELD, which is the silent path"
+    assert "EDIT FIRST" in bar["note"], (
+        "a reader about to edit-and-re-freeze from a held bar gets no ordering warning at all")
+    assert "SERVED key" in bar["note"]
+
+
+def test_the_held_note_stays_quiet_on_the_legacy_basis(tmp_path):
+    """⚠ SAME BASIS-SPECIFICITY AS THE BROKEN BLOCK. Under `frozen_registry_sha` every byte
+    moves the checkpoint, so "served keys are inside this digest" does not describe that
+    reader's basis, and printing it would teach them a rule that is false for them."""
+    cfg = _write(tmp_path / "a", BASE)
+    import hashlib, pathlib
+    sha = hashlib.sha256((tmp_path / "a" / "required.v2.json").read_bytes()).hexdigest()
+    cfg = _write(tmp_path / "b", BASE,
+                 policy={"convergence": {"frozen_registry_sha": sha}})
+    bar = inventory_mod.convergence_bar(cfg)
+
+    assert bar["basis"] == "registry_file_sha"
+    if bar["held"]:
+        assert "EDIT FIRST" not in bar["note"], (
+            "the served-key ordering rule was shown to a reader whose basis moves on any byte")

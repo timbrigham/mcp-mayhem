@@ -215,8 +215,33 @@ def convergence_bar(config) -> dict:
             "policy.convergence.frozen_scope_digest to the current scope_digest "
             "before starting a convergence run.")}
     if frozen == now:
+        # ⛔⛔ THE ORDERING CAVEAT BELONGS ON THE HELD STATE TOO, AND SHIPPING IT ONLY IN THE
+        # BROKEN BLOCK LEFT THE ONE PATH WHERE IT IS SILENT. Found by the ZeroParadox session
+        # 2026-09-22, reading the guard I had just written for them:
+        #
+        #   BROKEN -> re-freeze        the reader sees the warning. The path it was written for.
+        #   HELD   -> edit + re-freeze the block never rendered, so the warning never printed.
+        #             They freeze to the digest they read BEFORE editing, it is stale on
+        #             arrival, and the warning appears only afterwards, describing what they
+        #             just did.
+        #
+        # ⚠⚠ THE SECOND PATH IS THE TIDY VERSION OF WHAT WE DID TODAY, not an exotic case —
+        # one commit, edit and freeze together, from a bar that was not broken. The guard was
+        # silent in exactly the configuration that produces the defect.
+        #
+        # ⭐ IT GOES ON THE NOTE AND NOT INTO AN ALARM, deliberately. They raised the cry-wolf
+        # trade rather than prescribing a fix — "print it whenever the registry is dirty" would
+        # fire on ordinary work and teach its reader to skip it, which is the failure we spent
+        # today undoing in the `witness` block. A NOTE attached to the value is read exactly
+        # when someone consults the value, which is the only moment the caveat matters.
         return {**base, "frozen": True, "held": True,
-                "note": f"the registry is unchanged since this run was frozen (basis: {basis})"}
+                "note": (f"the registry is unchanged since this run was frozen (basis: {basis})"
+                         + (" ⚠ IF YOU ARE ABOUT TO RE-FREEZE AND EDIT THE REGISTRY IN ONE "
+                            "CHANGE: `reason` is a SERVED key and is inside this digest, so "
+                            "EDIT FIRST and derive the value from the post-edit file. Freezing "
+                            "to the digest above and then editing a served key makes the "
+                            "checkpoint stale on arrival, silently."
+                            if basis == "scope_digest" else ""))}
     out = {**base, "frozen": True, "held": False, "frozen_at": frozen,
            "note": ("⚠⚠ THE BAR MOVED MID-RUN. The registry has changed since "
                     "this convergence run was frozen, so any step that went green earlier "
