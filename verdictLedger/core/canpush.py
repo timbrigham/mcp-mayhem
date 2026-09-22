@@ -366,7 +366,20 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
             # "is the right judge ADMITTED" but "is the right judge ENFORCING, in whatever
             # layer it enforces in". This module can only answer for the ledger layer, so it
             # names the layer instead of implying it answered for both.
+            # ⛔⛔ A COUNT, NOT ONLY A NAME, AND THE REASON IS THIS SESSION'S OWN LESSON
+            # APPLIED TO THE FIX FOR IT. The first version published only
+            # `enforcement_layer: "ledger_admission"`, and ZeroParadox asked the right
+            # question about it: **does that read as a qualifier or as a reassurance?** A
+            # field naming the layer, sitting beside a count, skims as *"good, the layer is
+            # named"* rather than *"this number answers half the question."*
+            #
+            # ⚠⚠ 1 OF 2 CANNOT BE SKIMMED AS COMPLETE. That is the whole argument, and it is
+            # the same one that produced `coverage_gaps` an hour earlier: `witness` worked
+            # because it published counts; `unvalidated` failed because it published prose. A
+            # name is prose with a colon in front of it.
             "enforcement_layer": "ledger_admission",
+            "enforcement_layers_visible": 1,
+            "enforcement_layers_total": 2,
             "blind_to": ("the pre-push hook's routing legs (`batch.py`), which enforce "
                          "per-file `/rely` signatures over changed routed files with no "
                          "admission key. A path reported here as unwitnessed may be gated "
@@ -1018,7 +1031,8 @@ def render(result: dict) -> str:
         # wrong remedy — measured on `tools/verify/required.v2.json`, which is gated by a
         # BLOCKING hook routing leg and reads unwitnessed here.
         lines.append(
-            f"     ⚠ These count the LEDGER ADMISSION layer only. The pre-push hook enforces "
+            f"     ⚠ These count 1 OF 2 ENFORCEMENT LAYERS — the ledger admission set. "
+            f"The pre-push hook enforces "
             f"per-file `/rely` signatures over changed routed files with no admission key, "
             f"and this server cannot see that layer — so an unwitnessed path is a question "
             f"to ask, never proof that nothing gates it.")

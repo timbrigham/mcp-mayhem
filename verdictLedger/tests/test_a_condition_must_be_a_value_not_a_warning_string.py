@@ -253,12 +253,23 @@ def test_the_witness_names_the_layer_it_prices(ledger, tmp_path):
 
     assert w["enforcement_layer"] == "ledger_admission", (
         "the witness block must name which of the two enforcement layers it priced")
+    # ⛔⛔ AND AS A COUNT, BECAUSE A NAME SKIMS AS REASSURANCE. ZeroParadox's question about
+    # the first version of this fix: *"does `enforcement_layer` read as a qualifier or as a
+    # reassurance? A field named `ledger_admission` sitting beside a count can be skimmed as
+    # 'good, the layer is named' rather than 'this number answers half the question'."*
+    # ⭐ 1 of 2 cannot be skimmed as complete. Same lesson as `coverage_gaps` an hour earlier:
+    # `witness` worked because it published counts and `unvalidated` failed because it
+    # published prose — and a name is prose with a colon in front of it.
+    assert w["enforcement_layers_visible"] == 1
+    assert w["enforcement_layers_total"] == 2
+    assert w["enforcement_layers_visible"] < w["enforcement_layers_total"], (
+        "the ratio must show the answer is partial without the reader parsing anything")
     assert "routing legs" in w["blind_to"] and "batch.py" in w["blind_to"]
     assert "never" in w["blind_to"], (
         "it must say plainly that unwitnessed is not proof that nothing gates the path")
 
     assert w["unclaimed_count"] >= 1, "fixture floor: the alarm must actually be firing"
     text = canpush_mod.render(result)
-    assert "LEDGER ADMISSION layer only" in text, (
+    assert "1 OF 2 ENFORCEMENT LAYERS" in text, (
         "the caveat lives only in the payload; the 2026-09-07 defect was invisible for three "
         "days for exactly that reason — a reader reads the LINE")
