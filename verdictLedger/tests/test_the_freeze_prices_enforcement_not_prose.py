@@ -71,6 +71,16 @@ def test_rationale_moves_the_file_hash_and_not_the_enforcement_digest(tmp_path):
     ("min_coverage", 1.0),
     ("family", "mechanical"),
     ("module", "other_gate.py"),
+    # ⛔⛔ `reason` WAS MISSING FROM THIS LIST AND A SHIPPED REFUSAL LINE DEPENDS ON IT.
+    # Added 2026-09-22. The re-freeze remedy now prints "⛔ ORDER MATTERS: `reason` is a
+    # SERVED key and is INSIDE this digest… EDIT FIRST, then freeze" — a claim I took from
+    # the consumer's message and shipped into a user-facing line before verifying it.
+    # ⚠⚠ IT IS TRUE, measured: a `reason` edit moves the scope digest, an `_`-prefixed edit
+    # does not. But it was TRUE AND UNGUARDED, which is the same exposure as any other
+    # unenforced convention — `_strip_rationale` is a denylist, so `reason` is inside the
+    # digest by NOT being excluded, and nothing failed if someone later added it to the
+    # strip list. A refusal that instructs a reader is a contract; it needs a test.
+    ("reason", "a corrected reason string"),
 ])
 def test_every_enforcement_field_moves_the_digest(tmp_path, field, value):
     """⛔ THE OTHER DIRECTION, AND THE ONE THAT MATTERS MORE. A digest that ignores a real rule
