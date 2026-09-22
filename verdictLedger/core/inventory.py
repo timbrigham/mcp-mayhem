@@ -290,7 +290,8 @@ def registry_types_at(config, repo: Optional[str], files: dict) -> tuple:
 def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None,
           refusals: Optional[dict] = None,
-          changed: Optional[set] = None, repo: Optional[str] = None) -> dict:
+          changed: Optional[set] = None, published: Optional[set] = None,
+          repo: Optional[str] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
 
     ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
@@ -820,7 +821,20 @@ def build(*, config, records, action: str, files: dict,
             # ⚠ `changed is None` means the caller asked about a REF, not a RANGE, so "did this
             # push touch it" has no answer. It keeps blocking: absence must not quietly weaken a
             # gate.
-            if changed is not None and not (set(stale_paths) & set(changed)):
+            # ⛔⛔ THE SET THIS BRANCH MUST ASK ABOUT IS WHAT THE PUSH **PUBLISHES**, NOT WHAT
+            # ONE COMMIT TOUCHED. Split out 2026-09-21 (Tim's ruling) after a reproduction:
+            # `can_push` passed its per-commit diff here, so at the TIP a path changed early in
+            # the range and not re-touched by the tip commit read as "out of range" while the
+            # push shipped exactly those bytes. `published` is the range's changed set at the
+            # tip and the commit's own at every intermediate — see the long note at the call
+            # site for the fail-open the mis-scoping composed into.
+            #
+            # ⚠ IT FALLS BACK TO `changed`, NOT TO "EVERYTHING", so a caller that has not been
+            # taught the distinction keeps the OLD, STRICTER-OR-EQUAL behaviour rather than
+            # silently widening forgiveness. A new parameter must never loosen a gate for
+            # callers that do not pass it.
+            _publishes = changed if published is None else published
+            if changed is not None and not (set(stale_paths) & set(_publishes)):
                 r_stale_out_of_range = True
                 why = (f"{why} ⚠ REPORTED, NOT BLOCKING: none of the {len(stale_paths)} stale "
                        f"path(s) are changed by this range, so this push publishes no bytes this "

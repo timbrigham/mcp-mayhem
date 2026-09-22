@@ -271,3 +271,56 @@ def test_check_hashes_gates_the_push_and_not_every_commit():
         "the TIP must still be checked — the push is what publishes the bytes")
     assert any(k.startswith("_check_hashes_is_a_tip_property") for k in cfg), (
         "the scoping decision must carry its reasoning in the file, not only in a commit message")
+
+
+def test_a_push_only_step_must_declare_a_scope():
+    """⛔⛔ THE THIRD LEG OF A FAIL-OPEN THAT WAS REPRODUCED, NOT ARGUED — 2026-09-21.
+
+    A step that is admitted at `push`, NOT admitted at `commit`, and declares NEITHER `scope`
+    NOR `when` falls through every mechanism that could refuse it:
+
+        intermediates   do not gate it — it is not in the commit admission set
+        the TIP row     forgave it when its stale paths lay outside the tip commit's own diff
+        the ratchet     skips it — `_judging_steps` consults only steps that STATE an
+                        obligation surface, deliberately, because silence is not a claim to
+                        everything
+
+    A fixture composing all three returned `allowed: True` over a tip reading
+    `stale: ['check_prose'], required 2, satisfied 1, complete True` — a push publishing bytes
+    an admitted step had never judged.
+
+    ⭐ THE TIP LEG IS FIXED IN verdictLedger (`published` now prices the RANGE at the tip), so
+    this is the belt to that braces. It is worth having anyway, and the reason is specific:
+    **the two halves live in different repositories.** The tip fix is in code this repo owns;
+    whether a push-only step declares a scope is decided in `required.v2.json`, which it does
+    not own and cannot enforce. This test is the only place the two files are read together.
+
+    ⚠⚠ IT WAS A COINCIDENCE WHEN IT WAS FOUND, NOT A DESIGN. The push-only set was CREATED the
+    same day by narrowing `check_hashes` to the tip, and the scopes of the other three members
+    — adversary, editorial, prior_art — were under active edit that same afternoon. Nothing
+    linked the safety of one file's narrowing to the other file's scopes, which is exactly the
+    shape `_removing_an_entry_can_invalidate_a_downgrade_elsewhere` already records one door
+    over: a property resting on a compensating control, with no link to that control.
+
+    SATISFIED WHEN: every step in (push admission - commit admission) declares `scope` or
+    `when` in the registry, so the changed-path ratchet consults it over the whole range.
+    """
+    reg = _registry()
+    types = reg.get("types") or reg.get("required")
+    admission = json.loads(ADMISSION.read_text(encoding="utf-8"))["admission"]
+
+    push_only = set(admission.get("push") or ()) - set(admission.get("commit") or ())
+    assert push_only, (
+        "fixture floor: no step is push-only, so this check examined NOTHING. An assertion "
+        "that never ran is indistinguishable from one that passed.")
+
+    unscoped = sorted(
+        s for s in push_only
+        if not ((types.get(s) or {}).get("scope") or (types.get(s) or {}).get("when")))
+
+    assert not unscoped, (
+        f"{unscoped} are admitted at push, NOT at commit, and declare no scope or when in the "
+        f"registry. Nothing gates them on intermediates and the changed-path ratchet does not "
+        f"consult them, so a STALE row over bytes the push publishes can go unrefused. "
+        f"INSTEAD: give each a `scope` (or `when`) in required.v2.json so the ratchet covers "
+        f"it, or admit it at `commit` as well so intermediates do.")

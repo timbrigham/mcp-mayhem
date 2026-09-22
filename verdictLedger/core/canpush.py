@@ -403,9 +403,45 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                 prev_files = {}          # a root commit: everything in it is changed
         changed = {p for p in set(prev_files) | set(files)
                    if prev_files.get(p) != files.get(p)}
+        # ⛔⛔ TWO DIFFERENT QUESTIONS, AND ONE ARGUMENT WAS ANSWERING BOTH — WHICH IS THIS
+        # REPO'S FOUNDING DEFECT WEARING A PARAMETER NAME. Fixed 2026-09-21, Tim's ruling,
+        # after the gap below was REPRODUCED rather than argued:
+        #
+        #     "what did THIS COMMIT touch"    prices `min_coverage`. Per-commit is correct and
+        #                                     deliberate — Tim, 2026-09-07: *"I don't want to
+        #                                     end up in that same damn boat of some random
+        #                                     unrelated file getting included in scope."*
+        #     "what does THIS PUSH publish"   scopes STALE forgiveness. The TIP row is the push
+        #                                     authorisation, and a push publishes the RANGE.
+        #
+        # ⚠⚠ THE TIP ROW WAS PRICING THE SECOND AGAINST THE FIRST. A path changed early in the
+        # range and not re-touched by the tip commit fell OUTSIDE the tip's own diff, so a STALE
+        # row over it was forgiven as "out of range" — while the push published exactly those
+        # bytes. Measured on the live fleet the day this was written: `inventory()` on the tip
+        # answered `complete: False` and `can_push`'s row for the SAME ref answered
+        # `complete: true`, both correct under their own scoping, disagreeing with nothing to
+        # explain it. A merge tip makes it worst, since a merge's first-parent diff can be tiny.
+        #
+        # ⛔ AND THE THREE MECHANISMS COMPOSED INTO A REAL FAIL-OPEN, DEMONSTRATED IN A FIXTURE:
+        # a step that is push-admitted, NOT commit-admitted, and declares no scope is (1) not
+        # gated on intermediates, (2) forgiven at the tip by the mis-scoping above, and (3)
+        # skipped by the ratchet, which by design consults only steps that state an obligation
+        # surface. The probe returned `allowed: True` over a tip reading `stale: [check_prose]`.
+        # ⚠ It was not live — all four push-only steps declare scopes — but the push-only SET
+        # was created the same day by narrowing `check_hashes`, and the scopes of the other
+        # three were under active edit that afternoon. Held by a coincidence between two files,
+        # one of them in a repo this one does not own.
+        #
+        # ⭐ INTERMEDIATES ARE UNCHANGED. Their bar is the one that applied when they were made,
+        # and per-commit staleness is right for them; only the tip's authorisation moves.
+        published = changed
+        if is_tip:
+            _across, _ = _changed_across(repo, commits[0] + "^", commit)
+            published = set(_across)
         inv = inventory_mod.build(config=config, records=records, action=this_action,
                                   files=files, ref=commit, admission=this_admission,
-                                  refusals=refusals, changed=changed, repo=repo)
+                                  refusals=refusals, changed=changed, published=published,
+                                  repo=repo)
         prev_files = files
         if is_tip:
             tip_files = files
