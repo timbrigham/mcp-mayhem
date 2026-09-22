@@ -124,7 +124,7 @@ KNOWN_MISMATCHES = {
     ("rely", ("commit", "push", "tag"), ("tag",)),
     ("copy_editor", ("push",), ()),
     ("check_briefs", ("commit", "push", "tag"), ()),
-    #   pdf_coupling_in_push  registry [commit, push, tag]  admission []   LOOSER, and
+    #   pdf_coupling_in_push  registry [push]  admission []   LOOSER, and
     #              ⭐ DELIBERATE AND EXPECTED. Registered by ZeroParadox 2026-09-21 to split a
     #              step that was carrying TWO properties under one name: `record_pdf_coupling`
     #              asks a TREE question (does any build script on disk name this PDF — trivially
@@ -140,39 +140,38 @@ KNOWN_MISMATCHES = {
     #              validates against the REGISTRY, and `find`/`get` ignore admission entirely, so
     #              a registered-unadmitted step is signable and consultable while gating nothing.
     #              Registering is free; admitting is the deliberate act.
-    #              ⚠ ITS REGISTRY ENTRY DECLARES NO `actions` KEY, so it defaults to EVERY action
-    #              — the `rely` / `check_briefs` shape this file already warns reads later as a
-    #              stale registry rather than a deliberate narrowing. Its whole purpose is the
-    #              PUSH diff; `actions: ["push"]` would say so. Raised with them 2026-09-21.
+    #              ⭐ NARROWED TO `["push"]` IN THE REGISTRY 2026-09-21 (`8c86c572`), so the
+    #              half of this note that asked for it is now spent. It previously declared NO
+    #              `actions` key and defaulted to EVERY action — the `rely` / `check_briefs`
+    #              shape this file warns reads later as a stale registry rather than a
+    #              deliberate narrowing. Its whole purpose is the PUSH diff and it now says so.
+    #              ⚠⚠ THE ROW STAYS, AND THAT IS THE POINT WORTH READING TWICE: the registry
+    #              edit did NOT resolve this mismatch, it CHANGED ITS SHAPE — from
+    #              (every action vs nothing) to (push vs nothing). The disagreement was never
+    #              about WHICH actions; it is that the step gates nothing here at all, which is
+    #              deliberate and unchanged. A row like this is exactly what a resolution can be
+    #              mistaken for: the tuple moved, so the ratchet fired, and a reader clearing
+    #              it on that signal alone would have dropped a live exemption.
     #              ⭐ SATISFIED WHEN: the hook consults the ledger for a signed accept and this
     #              step becomes the gating surface — then it joins `admission.v1.json` and this
     #              line goes.
-    ("pdf_coupling_in_push", ("commit", "push", "tag"), ()),
-    #   check_hashes  registry [commit, push, tag]  admission [push, tag]   LOOSER, and
-    #              ⭐ DELIBERATE, Tim's ruling 2026-09-21, and the premise was falsified before
-    #              it was accepted. `check_hashes` asks whether build-script bytes match the
-    #              token in `register.md`; `R-REGISTER`'s workflow (edit, bump, rebuild,
-    #              recompute) completes per ARC, and stub-first deliberately commits incomplete
-    #              work as rollback points.
-    #              ⛔⛔ THE SHARPER REASON, and why this is a scoping FIX rather than a
-    #              loosening: a STALE row does not mean the hashes DISAGREE, it means no verdict
-    #              exists at those bytes. Requiring it per-commit required a PASSING verdict for
-    #              a property the protocol deliberately makes FALSE mid-arc — a green record for
-    #              a state the workflow intends to be red.
-    #              ⚠ THE TIP STILL REQUIRES IT, which is what keeps this from being a hole: the
-    #              push publishes HEAD, so the bytes that reach the world are still checked.
-    #              Only intermediates stop being asked a question their own protocol answers
-    #              "not yet".
-    #              ⭐ MEASURED on `origin/illustrated..illustrated` (42 commits): blocking
-    #              18/42 → 2/42, every removed blocker `stale:check_hashes`, and the scoped
-    #              stale paths were `register.md` plus build scripts at all 26 commits carrying
-    #              them — exactly the files R-REGISTER touches.
-    #              ⚠ By admission's own rule the REGISTRY is the half to correct: its entry
-    #              declares no narrowing, so it claims every action by default. An
-    #              `actions: ["push", "tag"]` there would make the two surfaces agree and this
-    #              line go — bundled with the consumer's other pending registry edits so one
-    #              `/rely` round covers them all.
-    ("check_hashes", ("commit", "push", "tag"), ("push", "tag")),
+    ("pdf_coupling_in_push", ("push",), ()),
+    # ⭐⭐ `check_hashes` WAS HERE AND IS GONE, 2026-09-21, AND THE LIFECYCLE IS THE LESSON.
+    # It was added the moment admission narrowed the step to the tip (Tim's ruling: a STALE row
+    # does not mean the hashes DISAGREE, it means no verdict exists at those bytes, so requiring
+    # it per-commit demanded a green record for a state `R-REGISTER` deliberately makes false
+    # mid-arc). The note said the REGISTRY was the half to correct, because its entry declared
+    # no narrowing and so claimed every action by default. The consumer landed
+    # `actions: ["push", "tag"]` in `8c86c572` and the surfaces now agree, so the row came out
+    # in the same round rather than being left to rot.
+    #
+    # ⚠ THE WINDOW BETWEEN THE TWO EDITS IS NOT A BUG AND MUST NOT BE ENGINEERED AWAY. This
+    # ratchet is exact equality, so it fails when new debt appears AND when listed debt is fixed
+    # without updating the list — which means between their commit and this one it failed as
+    # RESOLVED. That red is the check doing its job across a repository boundary nothing else
+    # spans. A one-directional check would have let the stale row sit indefinitely, asserting a
+    # disagreement that no longer existed — the same defect class as the freeze line that told a
+    # reader to compare a scope digest against a file hash.
 }
 
 
