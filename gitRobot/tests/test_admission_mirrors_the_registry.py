@@ -98,17 +98,31 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 #
 # ⛔ DO NOT ADD A LINE HERE TO MAKE THIS PASS. Adding one declares a new place where the two
 # surfaces disagree about what gates a push.
-#   copy_editor  registry ['push']  admission []                              LOOSER, and
+#   copy_editor  registry ['tag']  admission []                               LOOSER, and
 #              ⛔ DELIBERATE AND TEMPORARY — the only entry here with a stated expiry.
 #              Registered 2026-09-06 on Tim's call, deliberately NOT admitted. The D9 panel
 #              (three copy editors, 2-of-3) is what `UNDECIDED` and `failing`-narrowing were
 #              built for, and it has 0 records in 2,170 because its brief has never run.
 #              ADMISSION IS WHAT MAKES AN `UNDECIDED` BLOCK, so admitting on registration
 #              would let the first exercise of a gate nobody has watched work refuse a push.
+#              ⭐ MOVED `['push']` → `['tag']` BY THE CONSUMER 2026-09-22 (`27ac3868`), Tim's
+#              ruling: a release mints a permanent DOI, so the three-reader panel is priced
+#              where publication is irreversible rather than on every push, where it was
+#              costing ~40% of the review budget of all work. The entry gained a real `scope`
+#              at the same time (5 globs, 4 excludes) — and per the consumer's own
+#              measurement a NULL scope was never the vacuous case: it is the registry's
+#              STRICT default claiming every tracked path, 536 of them. Declaring a scope is
+#              what makes the owed list finite (122), not what widens it.
+#              ⚠⚠ THE ROW CHANGED SHAPE, IT DID NOT RESOLVE — the second time in two days,
+#              and the distinction is the thing to read. The disagreement was never about
+#              WHICH action; it is that the step gates NOTHING here, which is unchanged. A
+#              reader clearing this row because the ratchet fired would drop a live exemption.
 #              ⭐ SATISFIED WHEN: one real panel has run and been inspected — then
 #              `copy_editor` joins `admission.v1.json` (this side's file) and this line goes.
-#              Registry entry carries `_why_not_admitted_yet` naming the same condition, so
-#              both halves state their own removal test rather than either owning it alone.
+#              ⛔ THAT IS TIM'S CALL AND IT IS OPEN AS OF 2026-09-22. The consumer has
+#              declared the step at `tag`; admitting it is the half that lives here, and a
+#              peer's report is never the authority for widening an admission set. Until he
+#              rules, `tag` gates 22 steps and this is not one of them.
 #   check_briefs  registry [ALL — no `actions` key]  admission []             LOOSER, and
 #              ⛔ EXPECTED AND CORRECT FOR NOW. Registered 2026-09-06 alongside `copy_editor`
 #              so the brief-conformance leg can RECORD. Registering is not admitting; nothing
@@ -122,7 +136,7 @@ ADMISSION = Path(__file__).resolve().parents[1] / "config" / "admission.v1.json"
 KNOWN_MISMATCHES = {
     ("build", ("tag",), ("commit", "push", "tag")),
     ("rely", ("commit", "push", "tag"), ("tag",)),
-    ("copy_editor", ("push",), ()),
+    ("copy_editor", ("tag",), ()),
     ("check_briefs", ("commit", "push", "tag"), ()),
     #   pdf_coupling_in_push  registry [push]  admission []   LOOSER, and
     #              ⭐ DELIBERATE AND EXPECTED. Registered by ZeroParadox 2026-09-21 to split a
