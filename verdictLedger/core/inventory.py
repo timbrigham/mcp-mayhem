@@ -291,7 +291,8 @@ def build(*, config, records, action: str, files: dict,
           ref: Optional[str] = None, admission: Optional[list] = None,
           refusals: Optional[dict] = None,
           changed: Optional[set] = None, published: Optional[set] = None,
-          repo: Optional[str] = None) -> dict:
+          repo: Optional[str] = None, subject_index: Optional[tuple] = None,
+          scope_audit: Optional[dict] = None) -> dict:
     """``files`` maps path -> GIT BLOB ID for the content being promoted.
 
     ⚠⚠ THE BLOB ID, NOT A CONTENT DIGEST, and the distinction cost an afternoon.
@@ -316,8 +317,31 @@ def build(*, config, records, action: str, files: dict,
     as an empty one and must never read as satisfied — see `admission_state`.
     """
     reqs = config.requirements(action)
+    # ⭐⭐ THE INDEX IS A PURE FUNCTION OF `records`, AND A RANGE WALK REBUILT IT ONCE PER
+    # COMMIT. Measured 2026-09-22 by profiling a real 43-commit push: `_subject_index` ran 43
+    # times over the same 5,375-record stream, 349s of a 675s profiled run — **52% of the work
+    # was recomputing a value that could not have changed.** `canpush.check` holds one
+    # `records` list for the whole walk, so it now builds this once and passes it down.
+    #
+    # ⛔⛔ THIS IS NOT A COSMETIC SPEEDUP, IT IS A REACHABILITY FIX. `gitRobot.push` calls
+    # `can_push` over the whole range SYNCHRONOUSLY before it emits the `run_id`, so the cost
+    # of this walk is paid inside the client's 300s call window. Measured the same day: a
+    # 43-commit push spent 339s here and the client abandoned the call 39 seconds short — **the
+    # handle that exists so a long push survives a short window was itself gated behind the
+    # most expensive call in the flow.** The bigger the arc, the more certainly the caller
+    # lost it, which is exactly backwards.
+    #
+    # ⚠ SAFE BECAUSE `build` ONLY READS THESE STRUCTURES — verified by reading every use
+    # before the change, not assumed: one lookup (`by_path[(step, path)]`) and no assignment,
+    # `.pop`, `.setdefault` or `del` against any of the six. A mutated index shared across
+    # commits would corrupt every row after the first, silently and in the direction that
+    # reads as coverage.
+    #
+    # ⚠ OPTIONAL, AND ABSENT MEANS COMPUTE — never "assume an empty index". `ledger.py` and
+    # every direct caller keep the old behaviour untouched; a new parameter must not change
+    # what a caller who does not pass it receives.
     (by_content, by_path, legacy_tips, evidence_paths,
-     ev_content, ev_by_subject) = _subject_index(records)
+     ev_content, ev_by_subject) = subject_index or _subject_index(records)
     pin_types, pin_basis = registry_types_at(config, repo, files)
     pin_checked = not pin_basis.startswith("unchecked")
 
@@ -1162,8 +1186,29 @@ def build(*, config, records, action: str, files: dict,
     #     it is the same shape as all of them: the path really is outside the globs, and
     #     "outside the globs" is not what the field claims to mean.
     _raw_types_s2 = (config.required.get("types") or {})
+    # ⭐⭐ COMMIT-INVARIANT, AND A RANGE WALK RECOMPUTED IT ONCE PER COMMIT. This loop reads
+    # only `reqs` (derived from config + action), `records`, and `admission` — nothing about
+    # the commit being judged. Across a 43-commit range there are exactly TWO distinct
+    # answers, one for the tip (`push`) and one for the intermediates (`commit`), and it was
+    # computing 43. Measured 2026-09-22: `fnmatch` was called 44.6 MILLION times in one range
+    # walk, 228s of a 675s profiled run, with 89M of those calls spent inside Windows'
+    # `ntpath.normcase` → `LCMapStringEx`. Nearly all of it was the same subject paths being
+    # re-tested against the same globs.
+    #
+    # ⚠ THE KEY CARRIES BOTH VARIABLES, NOT JUST THE ACTION. `admitted` is stamped on every
+    # row this loop emits, so two calls sharing an action but differing in admission are NOT
+    # interchangeable. Keying on action alone would serve one call's rows to another — a
+    # cache returning a true value computed against the wrong object, which is the defect
+    # class this module exists to remove, so it would be a poor place to introduce one.
+    #
+    # ⚠ THE LOOP BODY IS UNCHANGED. On a hit the iterable is empty and the loop simply does
+    # not run, rather than the body being re-indented under a conditional — deliberately, so
+    # that a before/after comparison of this function's output is a real check and not a
+    # reading of two differently-shaped blocks.
+    _audit_key = (action, tuple(sorted(admission or ())))
+    _cached_audit = None if scope_audit is None else scope_audit.get(_audit_key)
     subjects_outside_scope = []
-    for _step, _spec in sorted(reqs.items()):
+    for _step, _spec in (() if _cached_audit is not None else sorted(reqs.items())):
         _when = _spec.get("when")
         _globs = _spec.get("scope") or ([_when] if _when else [])
         if not _globs:
@@ -1207,6 +1252,12 @@ def build(*, config, records, action: str, files: dict,
                             "including these subjects is inflated in the direction that "
                             "does not get re-run. REPORTED, NEVER BLOCKING."),
         })
+
+    # ⚠ STORE OR RESTORE — and an absent cache still computes, never "assume none found".
+    if _cached_audit is not None:
+        subjects_outside_scope = _cached_audit
+    elif scope_audit is not None:
+        scope_audit[_audit_key] = subjects_outside_scope
 
     # Only ADMITTED types decide `complete`. Everything else is reported so the
     # caller can see it, and so a promotion gap is visible rather than silent.

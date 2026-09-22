@@ -308,13 +308,87 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
         for f in (FAMILIES - fams):
             uncovered.setdefault(f, []).append(path)
 
+    # ⭐⭐ A PATH NO FAMILY CLAIMS IS A DIFFERENT FACT FROM A PATH ANOTHER FAMILY CLAIMS BY
+    # DESIGN, AND THIS BLOCK REPORTED THEM IDENTICALLY. Split 2026-09-22 on Tim's ruling,
+    # raised by the ZeroParadox session after the ⚠⚠ fired on an INTENDED configuration:
+    # two deposited PDFs sat outside every admitted REVIEW step, and that is correct — a PDF
+    # is a rendered binary object, review judges SOURCE, and the source→PDF link is already
+    # mechanically gated by `check_hashes` and `pdf_coupling`.
+    #
+    # ⛔ THE WARNING WAS RIGHT ABOUT THE FACTS AND WRONG ABOUT THE ALARM, which is the more
+    # expensive kind of wrong: an alarm that fires on a configuration nobody intends to
+    # change trains its reader to skip it, and then it is not there on the day it means
+    # something. Same failure as a flaky test — the cost is paid later, by the reader who
+    # was right to stop looking.
+    #
+    # ⚠ THE DISCRIMINATOR IS A SET INTERSECTION THIS FUNCTION ALREADY HELD: a path
+    # unwitnessed by `review` but witnessed by SOME admitted family is covered, by a
+    # different family, on purpose. A path witnessed by NO admitted family at all is the
+    # real gap — nothing whatever looked at it, and that is the 2026-09-07 defect this
+    # function was built for.
+    witnessed_by_any = {p for p in changed
+                        if any(p not in uncovered.get(f, ()) for f in FAMILIES)}
+    unclaimed = sorted(p for p in changed if p not in witnessed_by_any)
     return {"resolved": True,
             "changed_paths": len(changed),
             "witnessed_by_family": {f: by_family.get(f, 0) for f in sorted(FAMILIES)},
             "unwitnessed_by_family": {f: uncovered[f] for f in sorted(uncovered)},
+            # ⭐ THE FIELD A CALLER SHOULD BRANCH ON. `unwitnessed_by_family` answers "which
+            # family missed this" and is the right answer to a different question; this
+            # answers "did ANYTHING look", which is the one the alarm is about.
+            "unclaimed_by_every_family": unclaimed,
+            "unclaimed_count": len(unclaimed),
+            "covered_by_another_family": len(changed) - len(unclaimed),
             "note": ("counts paths CHANGED by this range whose scope is claimed by at least "
                      "one ADMITTED step of that family. A family at 0 examined nothing this "
-                     "push touched, however green its rows read. Reported, never blocking.")}
+                     "push touched, however green its rows read. ⚠ `unclaimed_by_every_family` "
+                     "is the alarm: a path absent from one family's scope may be covered by "
+                     "another family BY DESIGN (a rendered PDF is judged mechanically, not by "
+                     "review), and reporting those two as one condition trains a reader to "
+                     "ignore both. Reported, never blocking.")}
+
+
+def _coverage_gaps(rows: list) -> dict:
+    """Gating steps that read SATISFIED without examining their whole scope, AS NUMBERS.
+
+    ⛔⛔ THE FINDING THIS ANSWERS, from the ZeroParadox session 2026-09-22: *"A step that
+    examined a sliver is indistinguishable BY VALUE from one that examined everything; the
+    difference lives entirely in a warning string, and consumers branch on the value."* They
+    were right, and the proof was two fields away in the same response — `witness` reports
+    counts, so a caller can act on it.
+
+    ⚠ `worst` IS A RATIO AND THE COUNTS TRAVEL WITH IT. A bare "thinnest step" names an
+    outlier; the count says whether it is a condition. Measured 2026-09-07 when that lesson
+    was first paid for: NINE of nineteen gating steps read SATISFIED with 823 in-scope paths
+    unexamined between them, and the line named ONE — understating it ninefold, in the
+    direction that reads as healthier.
+    """
+    by_step: dict = {}
+    for row in rows:
+        for step, examined, in_scope in (row.get("unvalidated") or ()):
+            # ⚠ WORST-CASE PER STEP ACROSS THE RANGE, not last-seen. A step that examined its
+            # whole scope at the tip and a sliver at commit 3 has published a sliver; taking
+            # whichever commit happened to be iterated last would report the flattering one.
+            prev = by_step.get(step)
+            if prev is None or (examined / in_scope if in_scope else 1) < prev["ratio"]:
+                by_step[step] = {"examined": examined, "in_scope": in_scope,
+                                 "ratio": (examined / in_scope) if in_scope else 1.0}
+    unexamined = sum(v["in_scope"] - v["examined"] for v in by_step.values())
+    worst = min(by_step.items(), key=lambda kv: kv[1]["ratio"], default=None)
+    return {
+        "steps": len(by_step),
+        "paths_unexamined": unexamined,
+        "by_step": {k: {"examined": v["examined"], "in_scope": v["in_scope"]}
+                    for k, v in sorted(by_step.items())},
+        "worst_step": None if worst is None else worst[0],
+        "worst_examined": None if worst is None else worst[1]["examined"],
+        "worst_in_scope": None if worst is None else worst[1]["in_scope"],
+        "note": ("gating steps whose rows read SATISFIED while paths in their declared scope "
+                 "were never examined at these bytes. REPORTED, NEVER BLOCKING — whether an "
+                 "unexamined path refuses a push is `coverage.require_complete`, which is "
+                 "policy. ⚠ `steps: 0` means every gating step examined its whole scope; it "
+                 "does NOT mean coverage was not checked."),
+    }
 
 
 def check(*, records: list, config, repo: str, rev_range: str, action: str = "push",
@@ -378,6 +452,13 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     by_content_keys = {(r.get("step"), s.get("path"), s.get("git_blob_id"))
                        for r in records for s in (r.get("subjects") or [])
                        if s.get("git_blob_id")}
+    # ⭐⭐ BUILT ONCE FOR THE WHOLE WALK — see the long note at `inventory.build`. It is a pure
+    # function of `records`, which does not change across the commits of one call, and
+    # rebuilding it per commit was 52% of a measured 43-commit run.
+    _index = inventory_mod._subject_index(records)
+    # ⚠ Shared across the walk, keyed by (action, admission) inside `build` — two
+    # entries for a range, not one per commit. See the note at its use site.
+    _scope_audit: dict = {}
     rows = []
     prev_files = None
     for i, commit in enumerate(commits):
@@ -441,7 +522,8 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         inv = inventory_mod.build(config=config, records=records, action=this_action,
                                   files=files, ref=commit, admission=this_admission,
                                   refusals=refusals, changed=changed, published=published,
-                                  repo=repo)
+                                  repo=repo, subject_index=_index,
+                                  scope_audit=_scope_audit)
         prev_files = files
         if is_tip:
             tip_files = files
@@ -482,6 +564,11 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
             "narrowed": sorted({f"{r['step']} (from {r['narrowed_from']})"
                                 for r in inv["rows"]
                                 if r.get("gating") and r.get("narrowed_from")}),
+            # ⭐ THE SAME FACT AS A PAIR, so `narrowed_passes` on the result can be assembled
+            # without parsing the human string above — see the note at its construction.
+            "narrowed_pairs": sorted({(r["step"], r["narrowed_from"])
+                                      for r in inv["rows"]
+                                      if r.get("gating") and r.get("narrowed_from")}),
             # ⭐⭐ HOW MANY GATING STEPS HAVE NOT EXAMINED THEIR SCOPE, not just the worst
             # one. Added 2026-09-07. `thinnest` has reported the extreme since 2026-08-23 and
             # a reader sees ONE step named — measured the same day this landed, NINE of
@@ -665,6 +752,37 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "witness": _witness(config=config, repo=repo,
                             base=rows[0]["commit"] + "^",
                             tip_files=tip_files, admitted=admitted),
+        # ⛔⛔ THE CONDITION AS A **VALUE**, NOT ONLY AS A WARNING STRING. Added 2026-09-22 on
+        # Tim's ruling, and the finding is the ZeroParadox session's: `can_push` reported 11
+        # gating steps reading SATISFIED over **1123 in-scope paths never examined** —
+        # `adversary` 98/121, `editorial` 99/122, `prior_art` 95/340 — and every number lived
+        # in prose. **A step that examined a sliver was indistinguishable BY VALUE from one
+        # that examined everything, and consumers branch on values.**
+        #
+        # ⭐ THE MODEL WAS ALREADY TWO FIELDS AWAY AND THAT IS WHY THIS IS EMBARRASSING RATHER
+        # THAN SUBTLE: `witness` reports counts, so a caller can act on it. `unvalidated` was
+        # per-commit tuples plus a rendered sentence, so the AGGREGATE — the number a reader
+        # actually quotes — existed only in text. Their phrasing: this is `R-ZERONULL` at the
+        # value level, an unknown rendering as a pass.
+        #
+        # ⚠ REPORTED, NOT BLOCKING, unchanged. Whether an unexamined path refuses a push is
+        # `coverage.require_complete`, which is policy and is FALSE. This changes only what a
+        # caller can READ without parsing a blob — which is the standard every other field on
+        # this response is already held to.
+        "coverage_gaps": _coverage_gaps(rows),
+        # ⚠ AND THE SIBLING FINDING: a NARROWED row is green because the covering record
+        # indicts OTHER paths, not because anything here was clean. Their phrasing, kept
+        # because it is better than anything this module had: *"the row says pass; what it
+        # records is that somebody else was convicted."* It was a list of display strings;
+        # it is now a value a caller can branch on, with the source verdict split out.
+        # ⚠ BUILT FROM THE STRUCTURED PAIRS ON EACH ROW, NEVER BY PARSING THE DISPLAY STRING
+        # BACK APART. `narrowed` is `"step (from FAIL)"` for humans; re-splitting it here
+        # would make the render the source of truth for a machine-readable field, so a
+        # cosmetic wording change would silently alter what callers receive.
+        "narrowed_passes": [
+            {"step": s, "from_verdict": v}
+            for s, v in sorted({p for row in rows
+                                for p in (row.get("narrowed_pairs") or ())})],
     }
 
 
@@ -760,16 +878,19 @@ def render(result: dict) -> str:
         # ⚠ THE COUNT AND THE TOTAL, not only the extreme — see `unvalidated` above. Naming
         # one step when nine are in the same state reads as an outlier rather than a
         # condition.
-        uv = {}
-        for r in result.get("commits") or []:
-            for st, sn, sc in (r.get("unvalidated") or []):
-                uv[st] = (sn, sc)
-        missing = sum(sc - sn for sn, sc in uv.values())
-        if uv:
+        # ⚠⚠ THE PROSE READS THE PUBLISHED FIELD, IT DOES NOT RE-DERIVE IT. Until 2026-09-22
+        # this block recomputed the aggregate from the commit rows, so the sentence a human
+        # read and the value a machine read were two computations of one fact with nothing
+        # comparing them — and only the sentence carried the aggregate at all. One source,
+        # two transports, which is the rule this fleet already applies to its vocabularies.
+        gaps = result.get("coverage_gaps") or {}
+        if gaps.get("steps"):
             lines.append(
-                f"  ⚠ UNVALIDATED COVERAGE — {len(uv)} gating step(s) read SATISFIED without "
-                f"examining their full scope: {missing} in-scope path(s) never looked at. "
-                f"Thinnest is {step} at {seen}/{scope} (reported, not blocking).")
+                f"  ⚠ UNVALIDATED COVERAGE — {gaps['steps']} gating step(s) read SATISFIED "
+                f"without examining their full scope: {gaps['paths_unexamined']} in-scope "
+                f"path(s) never looked at. Thinnest is {gaps['worst_step']} at "
+                f"{gaps['worst_examined']}/{gaps['worst_in_scope']} "
+                f"(reported, not blocking; the same numbers are in `coverage_gaps`).")
         else:
             lines.append(f"  ⚠ NARROWED COVERAGE — thinnest gating step {step} examined "
                          f"{seen}/{scope} in-scope paths (reported, not blocking)")
@@ -808,6 +929,37 @@ def render(result: dict) -> str:
     w = result.get("witness") or {}
     if w.get("resolved") is False:
         lines.append(f"  ⚠ WITNESS UNKNOWN — {w.get('why')}")
+    # ⛔⛔ THE ALARM WAS DEMOTED HERE AND THE DEMOTION WAS REVERTED THE SAME HOUR, BECAUSE AN
+    # EXISTING TEST PROVED THE DISCRIMINATOR WAS A PROXY. Keeping the whole story, because the
+    # mistake is more instructive than the fix.
+    #
+    # THE FINDING WAS REAL. ZeroParadox reported the ⚠⚠ firing over two deposited PDFs, and
+    # Tim ruled that configuration CORRECT: a PDF is a rendered binary object, review judges
+    # SOURCE, and the source→PDF link is already mechanically gated by `check_hashes` +
+    # `pdf_coupling`. Measured on the live range: 67 changed paths, 53 outside every admitted
+    # REVIEW step, 0 outside every family. An alarm that fires on a configuration nobody
+    # intends to change teaches its reader to skip it, so it is not there on the day it means
+    # something.
+    #
+    # ⛔⛔ BUT "COVERED BY ANOTHER FAMILY" IS NOT "THE RIGHT JUDGE LOOKED", AND THAT IS THE
+    # PROXY. Demoting the ⚠⚠ whenever SOME family claimed the path failed
+    # `test_a_family_that_examined_nothing_in_the_push_is_named` — the 2026-09-07 regression
+    # test, where eleven prose files were covered by a MECHANICAL step and by no review step.
+    # Under the demotion that defect would have printed as a mild aside. **A markdown file
+    # checked for encoding is still unreviewed prose.** Tim's PDF ruling holds because the
+    # SOURCE→artifact link is separately gated, not because the path has any family's claim
+    # on it — and this code cannot tell those two apart from scope globs alone.
+    #
+    # ⭐ SO THE ⚠⚠ IS UNCHANGED AND `unclaimed_by_every_family` IS PUBLISHED BESIDE IT as the
+    # strictly-worse case it genuinely is. The real discriminator — "is this a generated
+    # artifact whose source is reviewed" — is registry knowledge this module does not have,
+    # and inventing it here would be the same proxy one level down. It is Tim's and the
+    # consumer's to declare, in the registry, where a reader can see it.
+    #
+    # ⚠ THE GUARD THAT CAUGHT THIS WAS WRITTEN IN SEPTEMBER FOR A DIFFERENT DEFECT and it
+    # fired on a change made with a ruling in hand. That is the argument for keeping
+    # regression tests whose original incident is long fixed.
+    unclaimed = w.get("unclaimed_by_every_family") or []
     for fam, paths in sorted((w.get("unwitnessed_by_family") or {}).items()):
         lines.append(
             f"  ⚠⚠ NO {fam.upper()} STEP EXAMINED THIS PUSH — {len(paths)} of "
@@ -817,6 +969,11 @@ def render(result: dict) -> str:
             lines.append(f"       {path}")
         if len(paths) > SHOWN:
             lines.append(f"       … and {len(paths) - SHOWN} more")
+        # ⭐ THE NEW FACT IS OFFERED AS CONTEXT, NOT AS AN EXCUSE — see the long note below.
+        if unclaimed:
+            lines.append(
+                f"     ⛔ {len(unclaimed)} of them are claimed by NO family at all: "
+                f"{', '.join(unclaimed[:3])}{' …' if len(unclaimed) > 3 else ''}")
         lines.append(
             f"     ⚠ Reported, NOT blocking — whether this refuses a push is the admission "
             f"set's call, not the ledger's.")
