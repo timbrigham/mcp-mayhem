@@ -381,3 +381,42 @@ def test_EVERY_audit_call_site_names_the_repo_not_just_the_receipt():
         f"audit.append call sites that do not name their repository: lines {missing}. "
         f"Two repositories flow through one gitRobot; a row that does not say which one is "
         f"read as the other tree, in the direction that says work landed when it did not.")
+
+
+def test_a_content_commit_on_the_main_checkout_needs_no_worktree(robot, repo, tmp_path,
+                                                                 fake_gate):
+    """⛔⛔ THE MAIN CHECKOUT IS A SANCTIONED PLACE TO COMMIT CONTENT, AND NOTHING SAID SO.
+
+    Reported by Tim 2026-09-23: changes were made directly on the main tree, they went through,
+    and the question afterwards was whether they SHOULD have — raised on the strength of
+    worktree guidance in a served response body.
+
+    ⭐ THEY SHOULD HAVE, AND THE AUDIT AGREES OVERWHELMINGLY. Measured the same day over the
+    full log: **225 commits on main against 83 in worktrees**, and **not one commit refusal in
+    534 has ever cited a worktree** — all 29 refusals were the pre-commit gate or
+    `gate_round.json`.
+
+    ⚠⚠ THE DEFECT WAS AN OMISSION, WHICH IS WHY NO TEST CAUGHT IT. The `instructions` block
+    listed `worktree` among "the five that matter" and called it "the sanctioned alternative"
+    that refusals almost always name — every clause TRUE — and never stated the complement, so
+    a careful reader inferred a requirement that has never existed. `_SHARED_DEPS`' comment
+    compounded it by calling worktree-per-change "the mandatory rule", accurate as history and
+    misleading as present tense.
+
+    ⭐ This test exists so the claim is RUN rather than asserted in prose that can drift again:
+    the worktree parameter is optional, and omitting it is an ordinary supported commit.
+    """
+    fake_gate(0)
+    (repo / "content.md").write_text("written straight onto main\n", encoding="utf-8")
+    robot.stage(["content.md"])
+    msg = tmp_path / "m.txt"
+    msg.write_text("a content change made on the main checkout\n", encoding="utf-8")
+
+    receipt = robot.commit(str(msg), reason="content change, no worktree")
+
+    assert receipt["decision"] == "allowed", (
+        f"a content commit on the main checkout was refused: {receipt}")
+    # ⚠ and it must be the MAIN tree that moved, not some other target
+    assert robot.git.head(), "no HEAD after a commit that reported allowed"
+    body = robot.git.run(["show", "--stat", "--format=%s", "HEAD"], timeout=60).stdout
+    assert "content.md" in body, "the commit did not carry the file staged on main"

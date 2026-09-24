@@ -77,6 +77,15 @@ dead end. Every refusal names the sanctioned alternative, and it is almost alway
 worktree(action='add') - a private detached checkout where nothing you do can reach the
 caller's files. Recording a verdict from inside one is SUPPORTED and correct.
 
+⚠ A WORKTREE IS NOT REQUIRED FOR ORDINARY WORK, and this block used to imply it was by
+promoting it everywhere and never saying the opposite. Committing content on the MAIN
+checkout is allowed, normal, and the plurality of what happens here: measured 2026-09-23
+over the full audit, 225 commits on main against 83 in worktrees, and NO commit has ever
+been refused for not using one - all 29 refusals were the pre-commit gate or gate_round.json.
+Use a worktree when a refusal names it, or when you need concurrency; not because you think
+the main tree is off-limits. If you changed files on main and they went through, that is the
+system working, not a gap in it.
+
 A worktree from add is DETACHED, so it has no branch name. Carry its commit SHA back:
 merge(branch=<the sha>, reason=...) accepts any commit-ish, despite that parameter being
 called 'branch'.

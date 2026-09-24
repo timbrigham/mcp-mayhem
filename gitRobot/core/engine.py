@@ -1475,6 +1475,21 @@ class GitRobot:
     # produce a working tree is not a sanctioned path**, and the mandatory rule could not be
     # enforced because compliance was impossible.
     #
+    # ⚠⚠ AND IT WAS NEVER MADE ENFORCEABLE AFTERWARDS — READ THIS BEFORE CONCLUDING OTHERWISE.
+    # The junction fixed the BUILD problem; nothing was added that REQUIRES a worktree for a
+    # content change, and committing on the main checkout is allowed, normal, and the plurality
+    # of what happens. Measured 2026-09-23 over the full audit: **225 commits on main against
+    # 83 in worktrees, and not one commit refusal in 534 has ever cited a worktree** — all 29
+    # refusals were the pre-commit gate or `gate_round.json`.
+    #
+    # ⛔ THE PARAGRAPH ABOVE READS AS THOUGH A MANDATORY RULE IS MERELY DORMANT, AND A READER
+    # ACTED ON THAT. Reported by Tim 2026-09-23: changes were made on the main tree, they went
+    # through correctly, and the question raised afterwards was whether they SHOULD have — on
+    # the strength of worktree guidance in a served response body. They should have, and 225
+    # commits agree. The served `instructions` block now says so out loud; this is the
+    # internal half, because a comment describing an unenforced intention as "the mandatory
+    # rule" is how the next reader re-derives a requirement that does not exist.
+    #
     # ⚠ A JUNCTION, NOT A COPY: `.lake` is far too large to duplicate per worktree (a `du` over
     # it did not finish in two minutes). Tim confirms a link to the folder was tested and works.
     _SHARED_DEPS = (".lake",)
