@@ -267,3 +267,48 @@ def test_a_loop_break_is_reachable_in_the_served_requirement(tmp_path):
     # ⚠ and the carve must actually narrow the scope, not merely be reported beside it
     assert ".claude/commands/adversary-review.md" in (spec.get("scope_exclude") or []), (
         "loop_break was published but not applied — a disclosure that changes nothing")
+
+
+def test_rationale_is_stripped_inside_a_list_nested_dict(tmp_path):
+    """⛔⛔ THE RECURSION READING IS PINNED HERE BECAUSE THE LIVE REGISTRY CANNOT PIN IT.
+
+    ZeroParadox filed `CALIB-1` 2026-09-23: calibrating the digest recipe against a known-good
+    value proves the recipe reproduces that value, and **cannot discriminate two readings of
+    "strip `_`-prefixed keys recursively"** — into dicts only, versus into dicts AND lists —
+    because `required.v2.json` currently holds no underscore key inside a list-nested dict.
+    **Calibrating against a past value tests a rule only on today's SHAPE.**
+
+    ⭐ MEASURED, not argued. On today's shape the two readings produce an IDENTICAL digest, so
+    no amount of calibration separates them. On a `_` key inside a dict inside a list they
+    diverge — and under the dicts-only reading, editing ONLY that prose MOVES the digest.
+    That is precisely the false alarm the 2026-09-18 rebuild exists to prevent: a freeze that
+    breaks for reasons nobody caused is one people learn to ignore.
+
+    ⚠ `_strip_rationale` already recurses into lists and always has. **The defect was that
+    nothing said so** — the behaviour was correct and unguarded, held in place by the live
+    data's shape rather than by a control. A reimplementation taking the other reading agrees
+    today and diverges the first time the shape changes, silently, which is the
+    reference-vs-reimplementation trap in its quietest form.
+
+    ⚠ It becomes live the moment anyone adds `_`-prefixed rationale inside a list of objects —
+    which the pending scope work could easily do.
+    """
+    from core.config import _digest_enforcement
+
+    plain = {"types": {"x": {"scope": ["*.md"],
+                             "rules": [{"glob": "*.lean", "_note": "prose"}]}}}
+    reworded = json.loads(json.dumps(plain))
+    reworded["types"]["x"]["rules"][0]["_note"] = "COMPLETELY different prose"
+
+    assert _digest_enforcement(plain) == _digest_enforcement(reworded), (
+        "rewording an `_`-prefixed key INSIDE a list-nested dict moved the enforcement digest, "
+        "so a pure-prose edit would break the convergence freeze — the exact false alarm the "
+        "digest basis was built to remove")
+
+    # ⚠ AND THE FLOOR: the stripping must not be vacuous. If `rules` were dropped wholesale,
+    # the assertion above would pass for the wrong reason.
+    changed = json.loads(json.dumps(plain))
+    changed["types"]["x"]["rules"][0]["glob"] = "*.py"
+    assert _digest_enforcement(plain) != _digest_enforcement(changed), (
+        "a REAL field inside the same list-nested dict did not move the digest — the recursion "
+        "is dropping enforcement, not just rationale")
