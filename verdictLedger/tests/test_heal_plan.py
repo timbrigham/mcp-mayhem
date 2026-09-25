@@ -226,3 +226,63 @@ def test_a_superseded_fail_is_not_reported(ledger):
                 ["check_invariants"], action="push")
     assert "prior_art" not in [e["step"] for e in out["failing_but_not_gating"]], \
         "a FAIL already answered by a later PASS was reported as live"
+
+
+def test_a_stale_entry_names_the_paths_and_not_only_the_count(ledger):
+    """⛔⛔ THE COUNT WAS PUBLISHED WITHOUT THE IDENTITY, AND THE COUNT IS THE HALF THAT CANNOT
+    DISCRIMINATE.
+
+    Tim's ruling 2026-09-25, after `subjects_stale: 1` sent a caller into a heal that could not
+    work and then could not explain why: they recorded 418 subjects where 419 were needed, got
+    exit 0 and a receipt reading `recorded PASS`, and the step stayed STALE.
+
+    ⚠⚠ MEASURED, which is why the fix is the identity and not a threshold: across the live
+    stream `check_figures` records carry 365 to 428 subjects, with 417 the commonest value seen
+    75 times. **418 sits squarely inside the normal spread.** No count-based rule separates a
+    reduced universe from an ordinary partial run, and with `coverage.require_complete` false
+    the majority of records are partial by design. *"419 needed, 418 recorded"* is unactionable;
+    *"the path still unjudged is X"* is a diagnosis.
+
+    ⭐ And the information was already computed — `stale_paths` sits on the row this entry is
+    built from. It stopped one field short of the reader.
+    """
+    stale = {"git_blob_id": "a" * 40, "path": "doc.md"}
+    ledger.append(good(step="check_invariants", verdict="PASS", subjects=[stale]))
+    # the file MOVED, so the verdict no longer covers the bytes on disk
+    out = _plan(ledger, ledger.store.records(), {"doc.md": "b" * 40}, ["check_invariants"])
+
+    entry = next(e for e in out["auto"] if e["step"] == "check_invariants")
+    assert entry["subjects_stale"] == 1, "fixture: the step must be subject-stale"
+    assert entry["stale_paths"] == ["doc.md"], (
+        f"the entry published a count without the identity: {entry}")
+    # ⛔ and the remedy must NAME them, or a reader cannot construct a passing next attempt
+    assert "doc.md" in entry["heals_by"]
+    assert "VERIFY THE RE-RUN COVERED THEM" in entry["heals_by"], (
+        "the remedy does not warn that a run from a reduced checkout can come back short, "
+        "exit 0, and leave the step stale — which is how this defect presented")
+
+
+def test_the_subject_stale_remedy_is_not_bare_when_the_producer_is_current(ledger):
+    """⛔⛔ THE BRANCH I MISREAD, PINNED SO IT CANNOT DRIFT BACK.
+
+    The producer-moved caveat fires only `if row.get("evidence_stale")`. A subject-stale row
+    with a CURRENT producer — the common case — used to receive exactly *"re-running the checker
+    at this basis and recording the result"*: eleven words, no target, no warning.
+
+    ⚠⚠ Asked whether this text sent a caller to a worktree, I read the assembled string, saw the
+    warning, and reported that it points AWAY from one — without noticing the warning sits
+    inside that conditional. The consumer had acted on the other branch and was right; I told
+    them, and Tim, that they were mistaken. **A true value read against the wrong object: I
+    quoted a branch as if it were the string.** This test exercises the branch I did not read.
+    """
+    stale = {"git_blob_id": "a" * 40, "path": "doc.md"}
+    ledger.append(good(step="check_invariants", verdict="PASS", subjects=[stale]))
+    out = _plan(ledger, ledger.store.records(), {"doc.md": "b" * 40}, ["check_invariants"])
+    entry = next(e for e in out["auto"] if e["step"] == "check_invariants")
+
+    assert not entry.get("evidence_stale"), (
+        "fixture floor: this must be the SUBJECT-stale branch, or it tests the half that was "
+        "already correct")
+    assert len(entry["heals_by"]) > 80, (
+        f"the common-case remedy is still bare ({len(entry['heals_by'])} chars): {entry['heals_by']!r}")
+    assert "doc.md" in entry["heals_by"]

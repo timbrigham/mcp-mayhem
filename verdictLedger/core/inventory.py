@@ -1828,6 +1828,32 @@ def heal_plan(*, config, records, action: str, files: dict, admission: list,
             "subjects_stale": row.get("subjects_stale"),
             "evidence_stale": row.get("evidence_stale"),
             "evidence_moved": row.get("evidence_moved") or [],
+            # ⛔⛔ WHICH PATHS, NOT JUST HOW MANY — AND THE COUNT WAS PUBLISHED WITHOUT THE
+            # IDENTITY FOR AS LONG AS THIS FIELD HAS EXISTED. Added 2026-09-25, Tim's ruling,
+            # after the count sent a caller into a heal that could not work and then could not
+            # explain why.
+            #
+            # ⚠⚠ THE COUNT IS THE HALF THAT CANNOT DISCRIMINATE, AND THAT IS MEASURED. The
+            # consumer healed a stale step from a worktree, recorded 418 subjects where 419
+            # were needed, got exit 0 and a receipt reading `recorded PASS`, and the step
+            # stayed STALE. They proposed refusing any record covering fewer in-scope paths
+            # than exist at its basis — and across the live stream `check_figures` records
+            # carry 365 to 428 subjects with 417 the commonest value seen 75 times. **418 sits
+            # squarely inside the normal spread**, so no threshold separates a reduced universe
+            # from an ordinary partial run, and with `coverage.require_complete` false the
+            # majority of records are partial by design.
+            #
+            # ⭐ THE IDENTITY DISCRIMINATES WHERE THE COUNT CANNOT. "419 needed, 418 recorded"
+            # is unactionable; "the path still unjudged is `X`" is a diagnosis. It also answers
+            # a question nobody could answer from the count: whether the misses are a real
+            # coverage hole or an `applies_to` broader than the checker's target. Measured the
+            # same day on `check_figures` — of its 109 never-examined paths, **40 are rendered
+            # PDFs and 12 are `.ttf` FONTS**, plus CI workflows, `LICENSE` and `CNAME`. A
+            # figures checker was never going to open a font.
+            #
+            # ⚠ IT IS ALREADY COMPUTED — see `stale_paths` on the row above. The information
+            # was in the same function and stopped one field short of the reader.
+            "stale_paths": row.get("stale_paths") or [],
         }
         status = row.get("status")
         if status in ("FAIL", "FAILED"):
@@ -1854,8 +1880,34 @@ def heal_plan(*, config, records, action: str, files: dict, admission: list,
             # REFUSAL CONTRACT FORBIDS OUTRIGHT: could a reader construct a passing next
             # attempt from this alone? There, no -- every attempt led back to the same wall.
             # It now says WHERE to stand, which is the part that was missing.
+            # ⛔⛔ THE CAVEAT USED TO BE CONDITIONAL AND THE COMMON CASE GOT THE BARE STRING.
+            # Corrected 2026-09-25. Everything below the `evidence_stale` clause fires only
+            # when the PRODUCER moved; a SUBJECT-stale row with a current producer — the common
+            # case — received exactly "re-running the checker at this basis and recording the
+            # result", eleven words with no target and no warning.
+            #
+            # ⚠⚠ AND I MISREAD MY OWN CODE ON THIS, WHICH IS WHY IT IS WRITTEN OUT. Asked
+            # whether this text sent a caller to a worktree, I read the assembled string, saw
+            # the warning, and reported that it points away from one — without noticing the
+            # warning sits inside `if row.get("evidence_stale")`. The consumer had acted on the
+            # OTHER branch and was right; I told them, and Tim, that they were mistaken. **A
+            # true value read against the wrong object: I quoted a branch as if it were the
+            # string.** Two surfaces pointed at the worktree and I had only closed one.
+            #
+            # ⭐ NAMING THE PATHS IS WHAT MAKES THE REMEDY CONSTRUCTIBLE, which is the standard
+            # a refusal is held to here: could a reader build a passing next attempt from this
+            # alone? From "re-run at this basis", no — it does not say what is missing, so a
+            # run that comes back short reads as success. From the paths, yes.
+            _sp = row.get("stale_paths") or []
             entry["heals_by"] = (
                 "re-running the checker at this basis and recording the result"
+                + (f" — the path(s) still unjudged at this basis are: "
+                   f"{', '.join(_sp[:6])}{f' … and {len(_sp) - 6} more' if len(_sp) > 6 else ''}. "
+                   f"⚠ VERIFY THE RE-RUN COVERED THEM: a checker enumerates the tree it lives "
+                   f"in, so a run from a reduced checkout can come back with FEWER subjects, "
+                   f"exit 0, and leave this step stale. Compare the subjects recorded against "
+                   f"the paths named here rather than trusting the exit code."
+                   if _sp else "")
                 + (" — its PRODUCER moved, so run the APPROVED build and let the record cite "
                    "that blob. A checker reads the tree it lives in, so this cannot be done "
                    "by re-running the copy sitting at this ref; a record citing an approved "
