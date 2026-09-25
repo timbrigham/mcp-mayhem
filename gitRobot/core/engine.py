@@ -1269,11 +1269,43 @@ class GitRobot:
         # `repo_mode` and then read `self.git` anyway (checked: every other repo_mode-aware
         # method uses its target).
         run_id = _refusal_id("push", f"{target.head()}|{branch}|{len(self.audit.read())}")
+        # ⛔⛔ WHICH REPOSITORY, BY URL, NOT BY ALIAS. Added 2026-09-25 after Tim asked the
+        # question that opened it: *"origin main should be safe in theory, as long as the URL
+        # it means doesn't change."* It is not pinned and nothing verified it — `push` ran
+        # `git push origin <branch>` and trusted that `origin` meant today what it meant
+        # yesterday.
+        #
+        # ⚠⚠ `origin` IS A LOCAL ALIAS AND THAT IS THE DEFECT CLASS THIS FILE IS NAMED FOR: a
+        # name that reads as a stable published reference and is actually a pointer through a
+        # config value. `git remote set-url origin <anything>` and every sentence containing
+        # "origin/main" silently prices a different repository, while every number stays true.
+        #
+        # ⛔ NOT HYPOTHETICAL. Measured the same day in the consumer's checkout: a SECOND remote
+        # named `fake` was configured, pointing at a scratchpad temp directory left by a probe.
+        # So "is this commit on a remote" was already the wrong question at that moment, not
+        # merely a future risk.
+        #
+        # ⭐ THIS IS DISCLOSURE, NOT A GATE. It does not refuse a re-pointed remote — deciding
+        # that is policy, and a push to a deliberately different remote is legitimate (see
+        # `.claude-local`, which has its own). What it removes is the SILENCE: a re-point now
+        # shows up in the audit at the moment it is used, rather than after somebody wonders.
+        # Same argument as `status` reporting the repo it read, fixed for the same reason.
+        #
+        # ⚠ `get-url` and not `-v`, because the fetch and push URLs can DIFFER — a push must
+        # report where the PUSH goes. Best-effort: a remote that cannot be resolved is recorded
+        # as unresolved rather than omitted, because an absent field reads as "nothing to say".
+        remote_url = "unresolved"
+        try:
+            _u = target.run(["remote", "get-url", "--push", "origin"], timeout=30)
+            remote_url = (_u.stdout or "").strip() or "unresolved"
+        except Exception:                                                   # noqa: BLE001
+            pass
         self.audit.append(
             actor=self.actor, op="push", args=args, decision="started",
             repo=str(getattr(target, "repo", "") or ""),
             head=target.head(), branch=target.branch(), tree=target.tree_state(),
-            reason=reason, detail="push started", run_id=run_id,
+            reason=reason, detail=f"push started; remote origin resolves to {remote_url}",
+            remote_url=remote_url, run_id=run_id,
         )
 
         # ⭐ WHAT THIS PUSH DOES **NOT** PUBLISH, NAMED RATHER THAN COUNTED. A push publishes
@@ -1321,7 +1353,16 @@ class GitRobot:
             if not result.ok:
                 published = self._remote_has(target, branch, target.head())
             decision = "allowed" if result.ok else "failed"
+            # ⛔⛔ ON EVERY PUSH RECEIPT, NOT ONLY THE ASYNC ONE. The first cut of this field put
+            # it on the `wait=False` return and the audit row and MISSED the receipt `_do_push`
+            # builds — so a push that FAILED came back without naming the remote. Caught
+            # 2026-09-25 by the test written for it, firing on the failure path.
+            # ⚠⚠ THAT IS THE WORST PLACE TO OMIT IT. A failed push is exactly when a caller asks
+            # "where was it even trying to go", and a re-pointed `origin` FAILS LOOKING LIKE
+            # SOMETHING ELSE — "src refspec does not match any", "repository not found". Naming
+            # the remote only on success documents the case that needs no explanation.
             extra = {"output": result.output, "ok": result.ok, "run_id": run_id,
+                     "remote_url": remote_url,
                      "not_published": not_published}
             if published is True:
                 # ⚠ The DECISION stays `failed`: git failed, and an audit row must record the
@@ -1373,6 +1414,10 @@ class GitRobot:
                 # is the ONLY thing a caller sees before `push_status` catches up, so it is
                 # the first place a wrong repo would be believed.
                 "head": target.head(),
+                # ⭐ AND WHICH REMOTE, BY URL. Same argument one field over: this receipt is
+                # the first place a RE-POINTED remote would be believed, and `branch` alone
+                # cannot tell a caller where the branch is going. See the audit row above.
+                "remote_url": remote_url,
                 "inventory": None if inv is None else inv.get("line"),
                 "note": ("the push is running in the background; poll push_status(). The "
                          "pre-push hook re-runs the full pipeline as the backstop, measured "
@@ -1420,6 +1465,11 @@ class GitRobot:
             if record.get("run_id") == run_id and record.get("decision") in ("allowed", "failed"):
                 return {"state": record["decision"], "run_id": run_id,
                         "branch": started.get("args", {}).get("branch"),
+                        # ⚠ From the STARTED row, which is where it was resolved — reading it
+                        # again now would price the remote as it is TODAY against a push that
+                        # happened earlier, which is the wrong-object shape this field exists
+                        # to remove.
+                        "remote_url": started.get("remote_url"),
                         "head": started.get("head"), "ts": record["ts"],
                         # ⛔ `extra` IS NOT ON THE ROW. `_receipt` merges it into the RETURNED
                         # receipt and never audits it, so this read was null on every push
@@ -1436,6 +1486,7 @@ class GitRobot:
             return {"state": "running", "run_id": run_id,
                     "branch": started.get("args", {}).get("branch"),
                     "head": started.get("head"),
+                    "remote_url": started.get("remote_url"),
                     # ⭐⭐ WHEN IT STARTED, ADDED 2026-09-21, AND ITS ABSENCE WAS THE WHOLE GAP.
                     # `preflight_status` has published `started_at` on every non-terminal state
                     # since it was written; this one published none, so a caller polling it

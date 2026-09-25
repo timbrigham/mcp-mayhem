@@ -173,3 +173,63 @@ def test_the_git_timeout_clears_the_hook_not_just_the_network(robot, repo):
     assert 'timeout=PUSH_TIMEOUT' in src, (
         "push no longer passes the published constant, so the cap a caller is quoted and the "
         "cap git runs under would be free to drift apart")
+
+
+def test_the_push_names_the_remote_by_url_not_by_alias(robot, repo, tmp_path, fake_gate,
+                                                       ledger_ok):
+    """⛔⛔ `origin` IS A LOCAL ALIAS AND EVERY SENTENCE CONTAINING IT IS ROUTED THROUGH A
+    MUTABLE CONFIG VALUE.
+
+    Tim's question 2026-09-25 opened this: *"origin main should be safe in theory, as long as
+    the URL it means doesn't change."* It was not pinned and nothing verified it — `push` ran
+    `git push origin <branch>` and trusted that `origin` meant today what it meant yesterday.
+    A name that reads as a stable published reference and is actually a pointer: the defect
+    class this repo is named for, sitting under the whole push path.
+
+    ⛔ NOT HYPOTHETICAL. Measured the same day in the consumer's checkout: a SECOND remote named
+    `fake` was configured, aimed at a scratchpad temp directory left by a probe. So "is this
+    commit on a remote" was already the wrong question at that moment.
+
+    ⭐ DISCLOSURE, NEVER A GATE. A push to a deliberately different remote is legitimate —
+    `.claude-local` has its own — so this does not refuse a re-point. It removes the SILENCE:
+    a re-point shows up in the audit and on the receipt at the moment it is used.
+
+    ⚠ `get-url --push`, not `-v`: fetch and push URLs can differ, and a push must report where
+    the PUSH goes.
+    """
+    fake_gate(0)
+    receipt = robot.push("illustrated", reason="checking the remote is named by url")
+
+    assert receipt.get("remote_url"), f"the receipt does not name the remote: {receipt}"
+    assert receipt["remote_url"] != "origin", (
+        "the receipt names the ALIAS, which is the thing that can be re-pointed")
+
+    started = [r for r in robot.audit.read()
+               if r.get("op") == "push" and r.get("decision") == "started"]
+    assert started, "no started row for the push"
+    assert started[-1].get("remote_url") == receipt["remote_url"], (
+        "the audit row and the receipt disagree about where this push went — two answers to "
+        "one question, which is the defect this field exists to remove")
+    # ⚠ and push_status must read it from the STARTED row, not resolve it again: re-resolving
+    # would price the remote as it is TODAY against a push that happened earlier.
+    assert robot.push_status().get("remote_url") == receipt["remote_url"]
+
+
+def test_an_unresolvable_remote_is_named_unresolved_rather_than_omitted(robot, repo, tmp_path,
+                                                                        fake_gate, ledger_ok,
+                                                                        monkeypatch):
+    """⚠ ABSENCE IS NEVER SUCCESS, ON THIS FIELD TOO. A push whose remote cannot be resolved
+    must say so — an absent field reads as "nothing to say", and here the thing there is to say
+    is that we do not know where this went."""
+    fake_gate(0)
+    real = robot.git.run
+
+    def no_remote(args, **kw):
+        if args and args[0] == "remote":
+            raise RuntimeError("remote unreadable")
+        return real(args, **kw)
+    monkeypatch.setattr(robot.git, "run", no_remote)
+
+    receipt = robot.push("illustrated", reason="remote cannot be resolved")
+    assert receipt.get("remote_url") == "unresolved", (
+        f"an unresolvable remote was omitted rather than named: {receipt}")

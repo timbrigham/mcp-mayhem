@@ -77,6 +77,13 @@ class ReceiptResult(Result, total=False):
     run_id: str
     state: str
     note: str
+    # ⭐ WHICH REPOSITORY A PUSH TARGETED, BY URL. `branch` says where ON the remote; this says
+    # WHICH remote, and `origin` is a local alias a `set-url` re-points silently. On EVERY push
+    # receipt including the failed ones — a re-pointed remote fails looking like something else
+    # ("src refspec does not match any"), so naming it only on success documents the easy case.
+    # ⚠ "unresolved" when it could not be read, never absent: an absent field reads as "nothing
+    # to say", and here the thing to say is that we do not know where this went.
+    remote_url: str
 
 
 class ReadResult(Result, total=False):
@@ -177,6 +184,10 @@ class PushStatusResult(Result, total=False):
     # `preflight_status` had published it since it was written; this one had not.
     started_at: str
     cap_seconds: int
+    # ⭐ WHICH REPOSITORY, BY URL. `branch` says where on the remote; this says WHICH remote,
+    # and `origin` is a local alias that a `set-url` re-points silently. Read from the STARTED
+    # row rather than resolved again, so it prices the push that happened.
+    remote_url: str
     output: str | None
 
 

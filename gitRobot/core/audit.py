@@ -76,6 +76,17 @@ class AuditLog:
         alternative: Optional[str] = None,
         run_id: Optional[str] = None,
         repo: Optional[str] = None,
+        # ⛔⛔ WHICH REPOSITORY BY URL, NOT BY ALIAS. Added 2026-09-25 on Tim's question:
+        # *"origin main should be safe in theory, as long as the URL it means doesn't change."*
+        # It was not pinned and nothing verified it. `repo` above names the local TREE the row
+        # touched; this names the REMOTE the push targets, and the two are different objects —
+        # one tree can push anywhere `origin` currently points.
+        # ⚠ `origin` is a LOCAL ALIAS, so every sentence containing "origin/main" is routed
+        # through a mutable config value. Measured the same day: the consumer's checkout had a
+        # SECOND remote named `fake` aimed at a scratchpad temp directory, left by a probe.
+        # ⭐ DISCLOSURE, never a gate: a push to a deliberately different remote is legitimate
+        # (`.claude-local` has its own). What this removes is the silence.
+        remote_url: Optional[str] = None,
     ) -> dict:
         decision = _decision(decision)
         """Append one immutable record and return it.
@@ -103,6 +114,10 @@ class AuditLog:
             "op": op,
             "args": args,
             "decision": decision,
+            # ⚠ Only when the caller resolved one, so ordinary local ops are not padded with a
+            # null — but a push that COULD NOT resolve it passes "unresolved" rather than None,
+            # because an absent field reads as "nothing to say" and that is the wrong claim.
+            **({"remote_url": remote_url} if remote_url else {}),
             # ⛔⛔ THE ROW MUST NAME WHICH REPOSITORY IT TOUCHED, AND UNTIL 2026-09-20 IT DID NOT.
             # Two repositories flow through one gitRobot — the main checkout and `.claude-local`
             # via `repo_mode` — and a row carried `head`, `branch` and `tree` from the right
