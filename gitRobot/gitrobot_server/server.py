@@ -77,6 +77,18 @@ dead end. Every refusal names the sanctioned alternative, and it is almost alway
 worktree(action='add') - a private detached checkout where nothing you do can reach the
 caller's files. Recording a verdict from inside one is SUPPORTED and correct.
 
+⛔⛔ BUT "SUPPORTED" IS A CLAIM ABOUT THIS SERVER, NOT ABOUT YOUR CHECKER'S ANSWER, and that
+sentence has now cost a wasted heal twice. A worktree is a DIFFERENT UNIVERSE: it does not
+carry gitignored or nested content the main checkout has, so a checker that enumerates the
+tree sees FEWER files there and can report a shortfall as success. Measured by the consumer
+2026-09-25 (their HEALWT-1, class DC-63): healing a stale step from a worktree recorded 418
+subjects where 419 were needed, exit 0, receipt "recorded PASS", and the step stayed STALE.
+First instance was 2026-09-21, a checker exiting 0 in a worktree where the main checkout
+exits 1. ⚠ gitRobot cannot detect this - the universe a checker enumerates is the checker's
+business. So: recording from a worktree is permitted and audited; whether the COUNT is
+complete is yours to verify, and a subject count lower than the main checkout's is the
+signature.
+
 ⚠ A WORKTREE IS NOT REQUIRED FOR ORDINARY WORK, and this block used to imply it was by
 promoting it everywhere and never saying the opposite. Committing content on the MAIN
 checkout is allowed, normal, and the plurality of what happens here: measured 2026-09-23
