@@ -282,8 +282,79 @@ async def append(record: RecordIn) -> AppendResult:
 
     ⚠ A REFUSAL IS TERMINAL. Do not retry it — fix the record. Retrying a rejected
     record is how a validation rule gets worn down, and the errors list names every
-    violation at once so one round trip is enough."""
-    return await _guard(_ledger().append, _as_record(record))
+    violation at once so one round trip is enough.
+
+    ⭐⭐ `still_stale` SAYS WHETHER THIS RECORD CLEARED WHAT IT PLAUSIBLY CAME TO CLEAR.
+    A record may be perfectly honest and still leave the step STALE — see below. `appended:
+    true` means the ledger took it; it has never meant the step went green, and a caller
+    reading it that way has lost a round."""
+    rec = _as_record(record)
+    out = await _guard(_ledger().append, rec)
+    # ⛔⛔ THE RECEIPT SAID "recorded PASS" AND A CALLER READ IT AS "THE HEAL WORKED".
+    # Tim's ruling 2026-09-25, and the measurement is why this is DISCLOSURE and not a
+    # refusal. The consumer healed a stale step and recorded 418 subjects; every blob was
+    # genuinely at the ref, `register.md` was not among them, and the step correctly STAYED
+    # STALE. **Nothing false entered the ledger and the gate held.** The record was true
+    # about 418 paths and silent about a 419th, which with `coverage.require_complete` false
+    # is the ordinary shape of most records here.
+    #
+    # ⚠⚠ SO REFUSING IT WOULD HAVE BEEN WRONG, and that was the original proposal — mine and
+    # theirs both. It would reject legitimate partial coverage to catch a reporting failure.
+    # The defect was never in the gate; it was in the sentence the caller read afterwards.
+    #
+    # ⭐ AND THE RECEIPT IS THE POINT OF USE. `heal_plan` already names the stale paths since
+    # `db8cadc`, but the failure mode is a caller who believes the heal worked and therefore
+    # does not look again. A caveat has to sit where the number is read, not where it can be
+    # fetched — the lesson this pair paid for twice this week.
+    #
+    # ⚠ BEST-EFFORT AND NEVER FATAL. It needs the tree at the record's basis, so it costs one
+    # `ls-tree`; if anything about that fails the append still succeeds and `still_stale` is
+    # simply absent. A disclosure that can break a write is worse than no disclosure.
+    try:
+        if out.get("appended"):
+            out["still_stale"] = await anyio.to_thread.run_sync(
+                functools.partial(_still_stale_after, rec))
+    except Exception:                                                   # noqa: BLE001
+        pass
+    return out
+
+
+def _still_stale_after(rec: dict) -> dict:
+    """Which paths this record's step still has unjudged at the basis it names.
+
+    ⚠ Computed from the SAME index and scope the inventory uses, so the receipt and a later
+    `heal_plan` cannot disagree — two answers to one question is the defect this file exists
+    to remove, and a receipt that contradicted the plan would be a new instance of it.
+    """
+    led = _ledger()
+    step = rec.get("step") or ""
+    basis = ((rec.get("basis") or {}).get("value") or "")
+    if not (step and basis):
+        return {"checked": False, "why": "the record names no step or no basis"}
+    files = canpush_mod._files_at(REPO, basis)
+    inv = inventory_mod.build(config=led.config, records=led.store.records(),
+                              action="commit", files=files, ref=basis,
+                              admission=[step], repo=REPO)
+    row = next((r for r in inv["rows"] if r.get("step") == step), None)
+    if row is None:
+        return {"checked": False, "why": f"{step} is not registered, so nothing is claimed"}
+    paths = row.get("stale_paths") or []
+    return {
+        "checked": True,
+        "status": row.get("status"),
+        "cleared": row.get("status") == "SATISFIED",
+        "paths": paths,
+        "count": len(paths),
+        "note": (
+            f"⛔ THIS RECORD DID NOT CLEAR THE STEP. {step} is still {row.get('status')} at "
+            f"{basis[:12]} with {len(paths)} path(s) unjudged: {', '.join(paths[:5])}"
+            f"{' …' if len(paths) > 5 else ''}. ⚠ The record was ACCEPTED and is honest about "
+            f"what it covers — `appended: true` is not `cleared`. A checker enumerates the "
+            f"tree it lives in, so a run that skips a path by its own config comes back short, "
+            f"exits 0, and leaves this row exactly as it was."
+            if row.get("status") != "SATISFIED" else
+            f"{step} is SATISFIED at {basis[:12]} — this record cleared it."),
+    }
 
 
 

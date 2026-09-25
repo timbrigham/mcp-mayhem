@@ -286,3 +286,41 @@ def test_the_subject_stale_remedy_is_not_bare_when_the_producer_is_current(ledge
     assert len(entry["heals_by"]) > 80, (
         f"the common-case remedy is still bare ({len(entry['heals_by'])} chars): {entry['heals_by']!r}")
     assert "doc.md" in entry["heals_by"]
+
+
+def test_a_record_that_leaves_the_step_stale_says_so_on_the_receipt(ledger, monkeypatch):
+    """⛔⛔ `appended: true` HAS NEVER MEANT `cleared`, AND THE RECEIPT LET A CALLER READ IT
+    THAT WAY.
+
+    Tim's ruling 2026-09-25 — DISCLOSURE, not a refusal, and the measurement is why. The
+    consumer healed a stale step and recorded 418 subjects: **every blob genuinely at the ref,
+    one path (`register.md`) absent, and the step correctly STAYED STALE.** Nothing false
+    entered the ledger and the gate held. The record was true about 418 paths and silent about
+    a 419th, which with `coverage.require_complete` false is the ordinary shape of most records.
+
+    ⚠⚠ SO REFUSING IT WOULD HAVE BEEN WRONG — and that was the original proposal, theirs and
+    mine both. It would reject legitimate partial coverage in order to catch a REPORTING
+    failure. The defect was never in the gate; it was in the sentence read afterwards.
+
+    ⭐ This test pins the property at the ledger level rather than through the server's git
+    call: a step left STALE by a record must be visibly still-stale, and the count alone is
+    not the answer — the PATHS are, because 419-vs-418 is unactionable and `register.md` is a
+    diagnosis.
+    """
+    stale = {"git_blob_id": "a" * 40, "path": "doc.md"}
+    other = {"git_blob_id": "c" * 40, "path": "other.md"}
+    ledger.append(good(step="check_invariants", verdict="PASS", subjects=[stale]))
+
+    # a SECOND record that covers a different path — honest, accepted, and it heals nothing
+    ledger.append(good(step="check_invariants", verdict="PASS", revision=1, subjects=[other]))
+
+    files = {"doc.md": "b" * 40, "other.md": "c" * 40}     # doc.md MOVED; other.md current
+    out = _plan(ledger, ledger.store.records(), files, ["check_invariants"])
+    entry = next(e for e in out["auto"] if e["step"] == "check_invariants")
+
+    assert entry["stale_paths"] == ["doc.md"], (
+        f"a record covering other.md left doc.md stale and the plan does not name it: {entry}")
+    assert "doc.md" in entry["heals_by"]
+    # ⛔ the floor: the second record WAS accepted. This is a reporting guard, not a gate.
+    assert len(ledger.store.records()) == 2, (
+        "the honest partial record was rejected — this must disclose, never refuse")

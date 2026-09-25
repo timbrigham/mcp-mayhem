@@ -47,6 +47,14 @@ class AppendResult(Result, total=False):
     id: str
     appended: bool
     reason: str          # only on the dedupe path: "identical record already present"
+    # ⭐⭐ DID THIS RECORD CLEAR WHAT IT CAME TO CLEAR? Added 2026-09-25, Tim's ruling.
+    # `appended: true` means the ledger TOOK the record; it has never meant the step went
+    # green, and a caller reading it that way loses a round. Measured: a heal recorded 418
+    # honest subjects at correct blobs, omitted one path, and the step correctly stayed
+    # STALE while the receipt said "recorded PASS".
+    # ⚠ BEST-EFFORT: absent when the basis tree cannot be read. Its absence is not a claim
+    # that the step cleared — `checked: false` says so explicitly when it is present.
+    still_stale: dict[str, Any]
 
 
 class GenesisResult(AppendResult, total=False):
