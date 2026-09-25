@@ -310,8 +310,23 @@ async def append(record: RecordIn) -> AppendResult:
     # ⚠ BEST-EFFORT AND NEVER FATAL. It needs the tree at the record's basis, so it costs one
     # `ls-tree`; if anything about that fails the append still succeeds and `still_stale` is
     # simply absent. A disclosure that can break a write is worse than no disclosure.
+    # ⛔⛔ ON THE DEDUPE PATH TOO, AND THE FIRST VERSION MISSED IT. Keyed on `out.get("appended")`
+    # it fired only on a fresh write — so a caller RE-APPENDING an identical record got
+    # `appended: false` and no word about whether the step was still stale. That is the same
+    # failure one door over and arguably worse: a dedupe means "your record was already here
+    # and nothing changed", which is exactly what a caller retrying a heal that does not work
+    # keeps receiving. Found 2026-09-25 when the consumer asked for a call that surfaces this
+    # field WITHOUT writing a record, and the honest answer was that none existed.
+    #
+    # ⚠ `"appended" in out` rather than its truth: the call reached a decision about storage.
+    # A REFUSAL never gets here — `_guard` returns `ok: false` with no `appended` key — and a
+    # refused record must not be told anything about staleness, because nothing was stored and
+    # the claim was rejected.
+    #
+    # ⭐ It also means a dedupe is a WRITE-FREE way to ask "is this step clear at this basis",
+    # which is a legitimate read the surface did not previously offer.
     try:
-        if out.get("appended"):
+        if "appended" in out:
             out["still_stale"] = await anyio.to_thread.run_sync(
                 functools.partial(_still_stale_after, rec))
     except Exception:                                                   # noqa: BLE001
