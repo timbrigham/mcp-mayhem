@@ -395,6 +395,91 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
                      "ignore both. Reported, never blocking.")}
 
 
+def _inherited_published(repo: str, commits: list) -> dict:
+    """Which of these commits are ALREADY PUBLISHED on the remote this push targets.
+
+    ⭐⭐ Tim's ruling 2026-09-25. A commit that is already an ancestor of a ref on the push
+    target was published by a different, sanctioned route — for `ce32401a` that is GitHub
+    creating a merge commit for PR #139, pulled in by the `R-BRANCH`-mandated
+    `merge(origin/main)`. **This push is not its publication event and publishes no new bytes
+    from it.** See `config.forgive_inherited_published` for why that is grandfathering rather
+    than a loosening.
+
+    ⛔⛔ KEYED ON THE REMOTE WE ARE PUSHING TO, WITH NO CONFIGURED URL, AND THAT IS DELIBERATE.
+    Tim raised the hazard that made it necessary: *"origin main should be safe in theory, as
+    long as the URL it means doesn't change."* `origin` is a local alias and a `set-url`
+    re-points it silently — measured the same day, the consumer's checkout already carried a
+    second remote named `fake` aimed at a scratchpad temp directory.
+    ⭐ So the condition is self-referential ON PURPOSE: *already on the remote this push
+    targets*. If `origin` is re-pointed, BOTH HALVES MOVE TOGETHER — we would be pushing to
+    the re-pointed place too, and "already there" stays exactly true and still means this push
+    publishes nothing new. A pinned URL would have to be kept in step with reality by hand;
+    this cannot drift because it never names a URL at all. The remaining hazard — *you pushed
+    to the wrong place* — is a different defect, and gitRobot's receipt now names the resolved
+    URL so it is visible.
+
+    ⚠⚠ THE TRACKING REF IS A LOCAL CACHE AND IS VERIFIED, NOT TRUSTED. `origin/main` is updated
+    only by `fetch`, so a stale one could claim a commit is published when it had been
+    force-removed remotely. Every tracking ref used here is checked against `ls-remote` and a
+    disagreement forgives NOTHING — the whole answer fails closed rather than the one ref, since
+    a cache wrong about one ref is not evidence about the others.
+    """
+    try:
+        raw = _git(repo, "for-each-ref", "--format=%(refname) %(objectname)",
+                   "refs/remotes/origin")
+    except ValueError as exc:
+        return {"checked": False, "why": f"remote-tracking refs unreadable: {exc}", "commits": []}
+    tracked = {}
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and not parts[0].endswith("/HEAD"):
+            tracked[parts[0].split("refs/remotes/origin/", 1)[-1]] = parts[1]
+    if not tracked:
+        return {"checked": False, "why": "no remote-tracking refs for origin", "commits": []}
+    # ⛔ THE AUTHORITY IS THE REMOTE, NOT THE CACHE.
+    try:
+        ls = _git(repo, "ls-remote", "--heads", "origin")
+    except ValueError as exc:
+        return {"checked": False,
+                "why": (f"could not reach the remote to verify the tracking refs ({exc}), so "
+                        f"nothing is forgiven — a cache that cannot be checked is not evidence"),
+                "commits": []}
+    live = {}
+    for line in ls.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            live[parts[1].split("refs/heads/", 1)[1]] = parts[0]
+    stale = sorted(b for b, sha in tracked.items() if live.get(b) != sha)
+    if stale:
+        return {"checked": False,
+                "why": (f"the local tracking refs disagree with the remote on {len(stale)} "
+                        f"branch(es) — {', '.join(stale[:4])}. Nothing is forgiven: a cache "
+                        f"wrong about one ref is not evidence about the others. Fetch first."),
+                "commits": []}
+    out = []
+    for c in commits:
+        for branch, sha in tracked.items():
+            if _is_ancestor(repo, c, sha):
+                out.append({"commit": c, "published_on": f"origin/{branch}"})
+                break
+    return {"checked": True, "verified_against": "ls-remote",
+            "branches_checked": len(tracked), "commits": out,
+            "note": ("commits already reachable from a ref on the remote this push targets, so "
+                     "this push publishes no new bytes from them. ⚠ Provenance, NOT churn: a "
+                     "commit authored here whose blobs merely changed before the tip is NOT "
+                     "in this list and still blocks.")}
+
+
+def _is_ancestor(repo: str, maybe_ancestor: str, descendant: str) -> bool:
+    """`git merge-base --is-ancestor`, as a bool. A non-zero exit is 'no', not an error."""
+    try:
+        subprocess.run(["git", "merge-base", "--is-ancestor", maybe_ancestor, descendant],
+                       cwd=repo, capture_output=True, timeout=60, check=True)
+        return True
+    except Exception:                                                       # noqa: BLE001
+        return False
+
+
 def _coverage_gaps(rows: list) -> dict:
     """Gating steps that read SATISFIED without examining their whole scope, AS NUMBERS.
 
@@ -686,10 +771,35 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     # commit range could never be pushed commit-by-commit-green. The only escape was rewriting
     # history, which is what `squash` does and which is remediation-only on principle.
     bar = getattr(config, "push_bar", "every_commit")
+    # ⭐⭐ ALREADY-PUBLISHED COMMITS, Tim's ruling 2026-09-25 — computed ONCE for the range and
+    # only when policy opts in. Defaults off: a forgiveness that arrives switched on is a gate
+    # that quietly widened. See `config.forgive_inherited_published` and `_inherited_published`.
+    inherited = {"checked": False, "why": "policy.push.forgive_inherited_published is not set",
+                 "commits": []}
+    if getattr(config, "forgive_inherited_published", False):
+        inherited = _inherited_published(repo, [r["commit"] for r in rows if not r["is_tip"]])
+    _inherited_at = {c["commit"]: c["published_on"] for c in (inherited.get("commits") or [])}
     forgiven = []
+    published_already = []
     blocking = []
     for r in rows:
         if r["complete"]:
+            continue
+        # ⛔⛔ ITS OWN LIST, NEVER FOLDED INTO `forgiven`, BECAUSE THE REASON IS DIFFERENT.
+        # `forgiven` means "a real defect, superseded by the tip". This means "not published by
+        # this push at all". A reader who cannot tell them apart cannot tell a fixed defect from
+        # an unexamined inheritance, and collapsing two reasons into one list is the shape this
+        # module exists to refuse.
+        #
+        # ⚠ NEVER THE TIP. The tip IS what this push publishes; if it were already on the remote
+        # there would be nothing to push. `_inherited_published` is handed non-tip commits only,
+        # and this guard restates it so a future edit to that call cannot quietly widen it.
+        if not r["is_tip"] and r["commit"] in _inherited_at:
+            published_already.append({
+                "commit": r["commit"],
+                "published_on": _inherited_at[r["commit"]],
+                "short": r["missing"] + r["stale"] + r["legacy"] + r["refused"] + r["failed"],
+            })
             continue
         if (bar == "tip_green" and not r["is_tip"]
                 and not r["missing"] and not r["stale"] and not r["legacy"]
@@ -795,6 +905,14 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         # ⚠ REPORTED, NOT BLOCKING, and deliberately: making a stale freeze refuse would block
         # every push in the fleet this instant, which is a policy change and Tim's call. See
         # `.mcp-local/queue/gate-ratchets-only-bytes-it-has-seen.md` steps 5 and 6.
+        # ⭐⭐ ALREADY PUBLISHED ON THE PUSH TARGET — its own field, never merged into
+        # `forgiven`, because "a defect the tip fixed" and "not published by this push" are
+        # different claims. `inherited_published.checked` is FALSE when policy has not opted in
+        # or when the remote could not be reached to verify the tracking cache, and in both
+        # cases NOTHING is forgiven — absence here must never read as "nothing qualified".
+        "published_already": published_already,
+        "published_already_count": len(published_already),
+        "inherited_published": inherited,
         "registry_freeze": inventory_mod.convergence_bar(config),
         "witness": _witness(config=config, repo=repo,
                             base=rows[0]["commit"] + "^",
@@ -1036,6 +1154,31 @@ def render(result: dict) -> str:
             f"per-file `/rely` signatures over changed routed files with no admission key, "
             f"and this server cannot see that layer — so an unwitnessed path is a question "
             f"to ask, never proof that nothing gates it.")
+
+    # ⛔⛔ A FORGIVENESS IS NEVER SILENT. Same standard `forgiven` is held to four lines down:
+    # a commit that stopped blocking must say WHY, or a reader cannot tell a gate that passed
+    # from a gate that was stepped around. Tim's ruling 2026-09-25 created this category; this
+    # line is what keeps it auditable.
+    if result.get("published_already"):
+        pa = result["published_already"]
+        lines.append(
+            f"  ⚠ {len(pa)} commit(s) NOT BLOCKING BECAUSE THEY ARE ALREADY PUBLISHED on the "
+            f"remote this push targets — this push publishes no new bytes from them:")
+        for e in pa[:SHOWN]:
+            lines.append(f"       {e['commit'][:12]}  already on {e['published_on']}  "
+                         f"(short: {', '.join(e['short'][:4]) or '—'})")
+        if len(pa) > SHOWN:
+            lines.append(f"       … and {len(pa) - SHOWN} more")
+        lines.append(
+            f"     ⚠ PROVENANCE, NOT CHURN. A commit authored here whose blobs merely changed "
+            f"before the tip is NOT in this list and still blocks. Verified against ls-remote, "
+            f"so a stale tracking cache forgives nothing.")
+    elif (result.get("inherited_published") or {}).get("checked") is False and result.get("commits"):
+        # ⚠ SAY WHY IT COULD NOT BE CHECKED, rather than letting an empty list read as "none
+        # qualified". The two are different facts and only one is an answer.
+        _why = (result["inherited_published"] or {}).get("why") or ""
+        if "not set" not in _why:
+            lines.append(f"  ⚠ ALREADY-PUBLISHED FORGIVENESS NOT APPLIED — {_why}")
 
     if result.get("forgiven"):
         # ⚠ "a real FAIL" WAS WRONG THE MOMENT `failing` LANDED ON UNDECIDED. `failed` is

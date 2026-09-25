@@ -480,6 +480,41 @@ class Config:
         return value if value in ("tip_green", "every_commit") else "every_commit"
 
     @property
+    def forgive_inherited_published(self) -> bool:
+        """Does a commit ALREADY PUBLISHED on the push target stop blocking this range?
+
+        ⭐⭐ Tim's ruling 2026-09-25, and the case that produced it. `ce32401a` is GitHub's own
+        merge commit for PR #139 — created by the remote when the PR merged, pulled in by the
+        `R-BRANCH`-mandated `merge(origin/main)`, and **already an ancestor of `origin/main`**.
+        Four mechanical steps read STALE there, so the gate demanded verdicts on a commit whose
+        bytes the world already has. **Pushing `illustrated` publishes no new content from it.**
+
+        ⚠⚠ THAT IS THE GRANDFATHERING CASE THE RATCHET MODEL ALREADY DESCRIBES — Tim, 2026-09-17:
+        accept today's baseline, ratchet new bytes. Bytes inherited from a required merge of a
+        published ref are baseline; they were authored elsewhere and this branch is not their
+        publication event.
+
+        ⛔⛔ AND IT IS **NOT** THE SAME AS FORGIVING STALE, which Tim ruled against the same week.
+        The difference is what each keys on, and it is measurable on the live range:
+
+            commit      blobs absent at tip    ancestor of origin/main
+            ce32401a           141                     YES     <- inherited, already published
+            69d1d979             9                      no     <- authored HERE, never judged
+            3233e56f             0                      no
+
+        A STALE forgiveness fires on the LEFT column — churn — and so cannot tell an inherited
+        commit from one we wrote, never reviewed, and overwrote before pushing. This fires on
+        the RIGHT column, which is PROVENANCE. `69d1d979` is exactly what the ratchet is for and
+        this leaves it blocking.
+
+        ⚠ DEFAULTS **FALSE**. A forgiveness that arrives switched on is a gate that quietly
+        widened; the consumer's policy has to say so deliberately, which is also where the
+        reason gets stated.
+        """
+        raw = (self.policy.get("push") or {}).get("forgive_inherited_published")
+        return raw is True
+
+    @property
     def push_bar_source(self) -> str:
         """`"policy"` if the bar was configured, `"default"` if nothing named it.
 
