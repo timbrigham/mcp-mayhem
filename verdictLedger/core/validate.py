@@ -731,7 +731,41 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                            f"old one. `git add` the fix and re-run — the basis changes "
                            f"and there is nothing to supersede. Only if the content "
                            f"genuinely has not moved is this a REGRADE, and that is "
-                           f"revision {rev + 1}.")
+                           f"revision {rev + 1}. "
+                           # ⛔⛔ AND THE REGRADE IS UNREACHABLE FOR A WHOLE FAMILY, WHICH THIS
+                           # MESSAGE USED TO SEND THEM TO ANYWAY. The comment above already
+                           # says a remedy the tool cannot perform is LED-2's shape arriving in
+                           # a validation message — that was fixed for the STAGE case and left
+                           # standing in the regrade clause, which is the branch a HISTORICAL
+                           # basis always takes, because history cannot be staged.
+                           #
+                           # Measured 2026-09-25 by the ZeroParadox session, hitting exactly
+                           # this: four mechanical checkers at a merge commit, all exit 2, and
+                           # the named escape wired to every family except theirs. Their
+                           # emitter (`tools/verify/record.py`) takes `--revision` but its
+                           # `--tier` is {A, H} and `--how` is {delegated, agreement,
+                           # signature, override} — no M, no mechanical — while
+                           # `common.emit_verdict` exposes no revision at all.
+                           #
+                           # ⚠⚠ SO THE MESSAGE NOW FORECLOSES THE TWO WRONG ROUTES IT USED TO
+                           # LEAVE OPEN, because a caller who cannot reach the right one will
+                           # reach for a neighbour. They declined both unprompted and their
+                           # reasons are the ones written here: hand-building a mechanical
+                           # verdict outside the emit path is the act this system exists to
+                           # prevent, and relabelling it as a review-tier `override` asserts
+                           # the mechanical gate ERRED when it did not — it was produced by a
+                           # build that could not see the path.
+                           f"⛔ IF YOUR EMITTER CANNOT SET A REVISION — mechanical checker "
+                           f"wrappers typically cannot, and a historical basis can never be "
+                           f"staged — then the regrade above is NOT available to you and this "
+                           f"record cannot be made by that path. Do NOT hand-build one through "
+                           f"`append`, and do NOT relabel it as a review-tier `override`: the "
+                           f"first bypasses the emit path this gate exists to enforce, and the "
+                           f"second asserts the earlier verdict was WRONG when it was merely "
+                           f"produced by a build that could not see everything. The fix is in "
+                           f"the emitter, and until it exists the slot at revision {rev} holds "
+                           f"whatever landed first — which is why a heal that reports success "
+                           f"without clearing the step is expensive: it CONSUMES THE KEY.")
             if rev > 0 and seen is not None and (rev - 1) not in seen.get("revisions", {}):
                 out.append(f"V11: revision {rev} has no revision {rev - 1} to supersede "
                            f"at this basis — a chain never crosses bases")

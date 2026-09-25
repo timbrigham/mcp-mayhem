@@ -293,6 +293,32 @@ def test_v11_names_the_field_that_differs(ledger):
     assert "STAGE THE FIX FIRST" in msg, (
         "the common case is an unstaged fix, and the message must say so "
         "before offering a supersede the checker wrappers cannot perform")
+    # ⛔⛔ AND THE SUPERSEDE MUST BE FORECLOSED FOR CALLERS WHO CANNOT REACH IT, which this
+    # test's own comment has said since it was written and never asserted. Added 2026-09-25
+    # after the ZeroParadox session hit it: four mechanical checkers at a HISTORICAL basis,
+    # all exit 2, and the named escape wired to every family except theirs — their emitter
+    # takes `--revision` but its `--tier` is {A, H} and `--how` has no `mechanical`, while
+    # `common.emit_verdict` exposes no revision at all.
+    #
+    # ⚠⚠ A HISTORICAL BASIS ALWAYS TAKES THE REGRADE BRANCH, because history cannot be
+    # staged. So "stage the fix first" is not merely unhelpful there, it is inapplicable —
+    # and the clause after it was the only advice left standing, pointing at a door that
+    # family cannot open. `A remedy the tool cannot perform is LED-2's shape arriving in a
+    # validation message` is this module's own sentence about exactly this.
+    assert "IF YOUR EMITTER CANNOT SET A REVISION" in msg, (
+        "the message offers a regrade without saying it is unavailable to emitters that "
+        "cannot set a revision — which is every mechanical wrapper, and a historical basis "
+        "can never be staged, so that branch is the only one left")
+    # ⚠ and it must close the two NEIGHBOURING routes, because a caller who cannot reach the
+    # right remedy reaches for one that looks adjacent. Both were declined unprompted by the
+    # consumer and both would have been wrong: hand-building bypasses the emit path this gate
+    # exists to enforce, and a review-tier `override` asserts the earlier verdict was WRONG
+    # when it was merely produced by a build that could not see everything.
+    assert "Do NOT hand-build" in msg and "override" in msg, (
+        "the message leaves the two wrong neighbours open")
+    assert "CONSUMES THE KEY" in msg, (
+        "it must say why a heal that reports success without clearing the step is expensive — "
+        "the slot at this revision holds whatever landed first")
 
 
 def test_an_unchanged_re_run_still_dedupes_rather_than_conflicting(ledger):
