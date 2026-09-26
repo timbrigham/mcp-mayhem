@@ -100,12 +100,14 @@ PUSH_TIMEOUT = 3600
 # report a preflight cannot drift apart — a scope warning on one path and silence on the other is
 # how the 2026-09-22 freeze caveat shipped half-applied.
 PREFLIGHT_SCOPE = (
-    "PRICES THE GATE PIPELINE ONLY, AT THIS HEAD. It does NOT consult the verdictLedger "
-    "admission set, so a pass here is NOT a prediction that the push will be allowed — "
-    "measured 2026-09-26: PASSED 21/21 while can_push REFUSED the same range on a stale "
-    "admitted step. It is also TIP-SCOPED and says nothing about intermediate commits. "
-    "TO LEARN WHETHER THE PUSH WILL GO: can_push(rev_range='origin/<branch>..<branch>'), "
-    "which walks every commit against the admission set, or status() for the tip-only answer.")
+    "`passed` PRICES THE GATE PIPELINE ONLY, AT THIS HEAD — not the verdictLedger admission "
+    "set, so `passed: true` is NOT a prediction that the push will be allowed. Measured "
+    "2026-09-26: PASSED 21/21 while can_push REFUSED the same range on a stale admitted step. "
+    "THE ADMISSION ANSWER IS NOW A SEPARATE FIELD: `admission_at_tip`, added the same day on "
+    "Tim's ruling — read that, not `passed`, for what the ledger says. ⚠ IT IS STILL TIP-SCOPED: "
+    "a push publishes a RANGE and an intermediate commit can block one both fields call clear "
+    "(measured 2026-09-05, eleven of them after a green preflight). THE PUSH ANSWER IS "
+    "can_push(rev_range='origin/<branch>..<branch>'), which walks every commit.")
 
 
 def _refusal_id(op: str, detail: str) -> str:
@@ -917,6 +919,70 @@ class GitRobot:
 
     # -- push, and the response window ----------------------------------------
 
+    def _admission_at_tip(self, head: str) -> dict:
+        """The ledger's admission answer for THIS HEAD, for `preflight` to report beside its own.
+
+        ⭐⭐ THE SECOND HALF OF TIM'S 2026-09-26 RULING. The first half was a disclosure saying
+        preflight does not consult the admission set; this is preflight consulting it. The
+        disclosure stays, because what it warns about is still true of `passed` — and it is now
+        narrower: the tip-vs-range half remains, since this prices THE TIP and a push publishes a
+        RANGE.
+
+        ⛔⛔ IT IS A SEPARATE FIELD AND `passed` IS UNTOUCHED. Tim's call, and the reason is in
+        this repo's history rather than in taste: `passed` is what the consumer's hook and scripts
+        branch on, and CLAUDE.md requires a value a live consumer dispatches on to change
+        client-first and coordinated. The one time that discipline was skipped, flipping `isError`
+        unilaterally was measured to collapse every structured refusal the consumer received into
+        `None`.
+
+        ⚠⚠ AND IT REPORTS RATHER THAN REFUSES, WHICH IS THE OTHER HALF OF THE SAME ARGUMENT. A
+        preflight that started refusing on admission would change what a green MEANS for a caller
+        mid-arc — and `preflight` is advisory by construction: it exists so the findings arrive
+        while you can still act on them. The refusal already lives in `can_push`, which is the
+        authority. Two things must not both be the authority.
+
+        ⛔ ABSENCE IS NEVER SUCCESS, so every failure mode here gets its own named state rather
+        than an omission or a cheerful default. An unreachable ledger is the one that matters:
+        `preflight` previously had no ledger dependency at all, so a silent `None` would read as
+        "nothing to report" on the exact surface that has produced three false greens.
+        """
+        try:
+            inv = ledger_client.inventory(head, "push", ledger_client.admission_for("push"))
+        except ledger_client.LedgerUnreachable as exc:
+            return {"state": "UNKNOWN", "why": f"verdictLedger unreachable: {exc}",
+                    "would_push_be_allowed_at_this_tip": None,
+                    "note": "NOT a pass. The admission set could not be read, so this preflight "
+                            "says nothing about whether a push is allowed — and a push will "
+                            "refuse while the ledger is unreachable. Retry when it answers."}
+        except GitRobotError as exc:
+            return {"state": "UNKNOWN", "why": f"admission set unreadable: {exc}",
+                    "would_push_be_allowed_at_this_tip": None,
+                    "note": "NOT a pass. gitRobot could not read its own admission set, so it "
+                            "cannot say what gates a push. A push will refuse until this reads."}
+        state = inv.get("admission_state")
+        complete = bool(inv.get("complete"))
+        return {
+            "state": state,
+            "would_push_be_allowed_at_this_tip": complete,
+            "required": inv.get("required"), "satisfied": inv.get("satisfied"),
+            # ⚠ The step lists, so a caller learns WHAT to run rather than only that something
+            # is owed — the difference between a blocker and a remedy.
+            "missing": inv.get("missing_steps") or inv.get("missing"),
+            "stale": inv.get("stale_steps") or inv.get("stale"),
+            # ⛔⛔ THE TIP-VS-RANGE CAVEAT SURVIVES THIS FIX AND MUST BE SAID HERE TOO. Consulting
+            # the admission set closed one of the two gaps, not both: this prices THE TIP, and a
+            # push publishes a RANGE. The 2026-09-05 instance cost a 27-minute preflight that went
+            # green and then refused on ELEVEN intermediate commits, and that failure is still
+            # available through this field alone.
+            "scope": ("THE TIP ONLY. A push publishes a RANGE, and an intermediate commit can "
+                      "block a push this field calls clear — measured 2026-09-05, eleven of them "
+                      "after a green preflight. For the push answer: "
+                      "can_push(rev_range='origin/<branch>..<branch>')."),
+            "authority": ("DISCLOSURE, NOT A GATE. can_push is what refuses a push; this reports "
+                          "what the ledger says at this tip so a caller is not left inferring it "
+                          "from a gate-pipeline result that never asked."),
+        }
+
     def preflight(self, *, reason: Optional[str] = None, wait: bool = False) -> dict:
         """Start the pre-push pipeline WITHOUT pushing, and record the verdict.
 
@@ -989,6 +1055,7 @@ class GitRobot:
 
         def _run() -> dict:
             gate = self.gates.run("pre-push", stdin=push_refs)
+            admission = self._admission_at_tip(head)
             self.audit.append(
                 actor=self.actor, op="preflight", args={},
                 decision="allowed" if gate.passed else "failed",
@@ -1002,6 +1069,15 @@ class GitRobot:
                     # ⛔ ON EVERY PATH INCLUDING THE PASS, because the pass is the one that
                     # gets misread. See PREFLIGHT_SCOPE.
                     "passed_prices": PREFLIGHT_SCOPE,
+                    # ⭐⭐ THE SECOND HALF OF TIM'S 2026-09-26 RULING, AND IT IS A NEW FIELD
+                    # RATHER THAN A CHANGE TO `passed` ON PURPOSE. `passed` is a value the
+                    # consumer's hook and scripts branch on; CLAUDE.md requires that kind of
+                    # change to be coordinated CLIENT-FIRST — the same discipline `isError` and
+                    # `state` were handled under, after a unilateral flip was measured to
+                    # collapse every structured refusal the consumer received into `None`.
+                    # ⚠ So `passed` still means exactly "the gate pipeline passed", and this
+                    # answers the question a caller was actually asking.
+                    "admission_at_tip": admission,
                     "note": gate.note, "output": gate.output[-8000:]}
 
         if wait:

@@ -78,6 +78,17 @@ class ReceiptResult(Result, total=False):
     state: str
     # ⚠ present on the preflight receipt paths too — see PreflightStatusResult.passed_prices
     passed_prices: str
+    # ⭐⭐ WHAT THE LEDGER SAYS AT THIS TIP — the second half of Tim's 2026-09-26 ruling, and a
+    # SEPARATE FIELD from `passed` on purpose. `passed` is a value the consumer branches on, so
+    # changing its meaning is a coordinated client-first change; this answers the question a
+    # caller was actually asking without touching the one they dispatch on.
+    # ⚠ `state` is SET / EMPTY / UNSET / UNKNOWN, and UNKNOWN means the ledger could not be read —
+    # never a pass. `would_push_be_allowed_at_this_tip` is None in that case rather than a boolean,
+    # because True and False both claim knowledge nobody has.
+    # ⛔ STILL TIP-SCOPED. Consulting the admission set closed one of the two gaps: a push
+    # publishes a RANGE, and an intermediate can block one this field calls clear (measured
+    # 2026-09-05, eleven of them after a green preflight). `scope` says so on every payload.
+    admission_at_tip: dict[str, Any]
     note: str
     # ⭐ WHICH REPOSITORY A PUSH TARGETED, BY URL. `branch` says where ON the remote; this says
     # WHICH remote, and `origin` is a local alias a `set-url` re-points silently. On EVERY push

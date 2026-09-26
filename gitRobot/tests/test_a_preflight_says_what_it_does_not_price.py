@@ -37,8 +37,12 @@ def test_the_constant_names_what_is_not_priced_and_the_remedy():
     construct the next action from this text alone."""
     scope = engine.PREFLIGHT_SCOPE
     assert "GATE PIPELINE" in scope
-    # ⛔ the absent check, named
-    assert "does NOT consult" in scope and "admission set" in scope
+    # ⛔ WHAT `passed` IS SCOPED TO. ⚠ This assertion was rewritten when the second half of the
+    # ruling landed: it used to require "does NOT consult", which became FALSE once
+    # `admission_at_tip` shipped — preflight does consult now, just not in `passed`. The test
+    # moved with the truth rather than pinning a sentence that had stopped being one.
+    assert "admission set" in scope
+    assert "`passed` PRICES THE GATE PIPELINE ONLY" in scope
     # ⛔ and it must deny the inference that actually got made, not merely describe itself
     assert "NOT a prediction" in scope
     # ⭐ THE REMEDY, AND IT IS MATCHED AS A CALLABLE RATHER THAN AS A WORD. ⛔ The first
@@ -98,18 +102,76 @@ def test_it_is_one_constant_and_not_a_restatement():
         f"{src.count(literal)} copies of the scope text; it must be defined once and referenced")
 
 
-def test_preflight_still_does_not_consult_the_admission_set():
-    """⚠⚠ PINS THE CURRENT TRUTH SO THE DISCLOSURE CANNOT OUTLIVE IT. Tim ruled 2026-09-26:
-    disclose now, THEN make preflight actually consult the ledger. When that second half lands,
-    this test must fail — and the text above must be rewritten in the same change.
+def test_preflight_now_consults_the_admission_set_in_its_own_field():
+    """⭐⭐ THE SECOND HALF OF THE RULING, AND THIS TEST REPLACED ITS OWN PREDECESSOR.
 
-    ⛔ Without this, the honest disclosure becomes a false one the moment the behaviour improves,
-    which is the exact failure mode of a hand-maintained claim about code: it is written true and
-    nothing makes it stay true. **A disclosure that outlives its cause is a lie with provenance.**
+    Until this landed, `test_preflight_still_does_not_consult_the_admission_set` asserted the
+    opposite and carried its own expiry note: *"when that second half lands, this test must fail —
+    and the text above must be rewritten in the same change."* It did, and it was. **A disclosure
+    that outlives its cause is a lie with provenance**, and the only thing that reliably retires
+    one is a test that breaks when the truth moves.
+
+    ⛔ `passed` IS UNTOUCHED, WHICH IS THE WHOLE SHAPE OF TIM'S CALL. It is a value the consumer
+    branches on, and CLAUDE.md requires such a change to be coordinated client-first — the one
+    time that was skipped, flipping `isError` unilaterally collapsed every structured refusal the
+    consumer received into None.
     """
     src = inspect.getsource(engine.GitRobot.preflight)
-    consults = [t for t in ("ledger_client", "inventory(", "admission_for") if t in src]
-    assert not consults, (
-        f"preflight now consults {consults} — the second half of the ruling has landed, so "
-        f"PREFLIGHT_SCOPE is now FALSE and must be rewritten in this same change. Delete this "
-        f"test and replace it with one asserting the admission set is checked.")
+    assert "_admission_at_tip" in src, "preflight does not consult the admission set"
+    assert '"admission_at_tip": admission' in src, (
+        "the admission answer is computed and not reported — the absent check, one layer in")
+    # ⛔⛔ AND `passed` MUST STILL COME STRAIGHT FROM THE GATE RESULT, MATCHED WITH ITS TERMINATOR.
+    # ⚠ The first version asserted the substring `"passed": gate.passed` and a mutant reading
+    # `"passed": gate.passed and bool(admission…)` SURVIVED it — the forbidden client-breaking
+    # flip, passing a control written to forbid it, because the mutant CONTAINS the substring.
+    # Fourth proxy-matching assertion of my own caught by mutation in one arc. The comma is the
+    # guard: it pins that nothing is composed onto the value.
+    assert '"passed": gate.passed,' in src, (
+        "`passed` no longer comes straight from the gate result; composing the admission answer "
+        "into it is the client-first coordinated change CLAUDE.md forbids doing unilaterally, "
+        "and the whole reason `admission_at_tip` is a separate field")
+
+
+def test_the_admission_field_reports_and_never_refuses(robot, repo, monkeypatch):
+    """⛔⛔ DISCLOSURE, NOT A GATE. Two things must not both be the authority: `can_push` refuses a
+    push, and this reports. A preflight that began refusing on admission would change what a green
+    MEANS for a caller mid-arc, and preflight is advisory by construction."""
+    from core import engine as engine_mod
+    monkeypatch.setattr(engine_mod.ledger_client, "inventory",
+                        lambda *a, **k: {"admission_state": "SET", "complete": False,
+                                         "required": 21, "satisfied": 20, "stale": ["copy_editor"]})
+    monkeypatch.setattr(engine_mod.ledger_client, "admission_for", lambda action: ["copy_editor"])
+    out = robot._admission_at_tip("a" * 40)
+    assert out["would_push_be_allowed_at_this_tip"] is False
+    assert out["required"] == 21 and out["satisfied"] == 20
+    assert "DISCLOSURE, NOT A GATE" in out["authority"]
+    # ⚠ the tip caveat survives the fix — consulting admission closed one gap, not both
+    assert "THE TIP ONLY" in out["scope"] and "can_push" in out["scope"]
+
+
+def test_an_unreachable_ledger_is_UNKNOWN_and_says_it_is_not_a_pass(robot, repo, monkeypatch):
+    """⛔⛔ ABSENCE IS NEVER SUCCESS, ON THE ONE SURFACE THAT HAS PRODUCED THREE FALSE GREENS.
+    `preflight` previously had NO ledger dependency, so a silent None here would read as "nothing
+    to report" — which is exactly how the first two false greens were read."""
+    from core import engine as engine_mod
+
+    def boom(*a, **k):
+        raise engine_mod.ledger_client.LedgerUnreachable("connection refused")
+    monkeypatch.setattr(engine_mod.ledger_client, "inventory", boom)
+    monkeypatch.setattr(engine_mod.ledger_client, "admission_for", lambda action: ["x"])
+    out = robot._admission_at_tip("a" * 40)
+    assert out["state"] == "UNKNOWN"
+    assert out["would_push_be_allowed_at_this_tip"] is None, (
+        "an unreachable ledger produced a boolean — True or False both claim knowledge here")
+    assert "NOT a pass" in out["note"]
+
+
+def test_the_scope_constant_now_points_at_the_new_field(robot):
+    """⚠ The disclosure and the mechanism must move together. If the constant still said preflight
+    does not consult admission, it would be false the moment the field shipped."""
+    scope = engine.PREFLIGHT_SCOPE
+    assert "admission_at_tip" in scope, "the disclosure does not name where the answer now lives"
+    assert "`passed` PRICES THE GATE PIPELINE ONLY" in scope, (
+        "the disclosure no longer scopes `passed`, which is still gate-pipeline-only")
+    # ⛔ the tip-vs-range half is NOT fixed by this change and must still be stated
+    assert "TIP-SCOPED" in scope and "can_push" in scope
