@@ -58,6 +58,53 @@ def _strip_rationale(obj):
     return obj
 
 
+# ⛔⛔ THE PIN FIELDS — ENFORCEMENT THAT THE RULE DIGEST IS DELIBERATELY BLIND TO.
+#
+# ⭐⭐ Tim, 2026-09-26: **freeze at the ends of the arcs.** Measured that day, and the number is
+# the whole argument: SIX re-freezes in one day, every one from pin churn inside a single review
+# arc on a guard living in a pinned checker. The canonical length held at **27254 across all six**
+# and moved only on the one genuine policy change that day (**+846**). So the instrument was
+# already telling us the two populations are distinct; what it was not doing was charging them
+# differently.
+#
+# ⚠⚠ AND SIMPLY NOT RE-FREEZING WAS NOT AVAILABLE, which is the ZeroParadox session's correction
+# and it is right. `approved_modules` IS enforcement and IS inside the scope digest by design —
+# `_refrozen_2026_09_23` says a repin widens nothing and still moves the digest, correctly. So
+# "exempt the repin" against the SAME comparison object means the bar reads BROKEN for the whole
+# length of every arc, which `_cleared_2026_09_18` calls *reporting nothing* and judges worse than
+# no bar at all. **An exemption needs a second object, not a suppressed alarm.**
+#
+# ⛔ THIS IS A DENYLIST ENTRY THAT REMOVES A REAL ENFORCEMENT FIELD, WHICH IS DIFFERENT IN KIND
+# FROM `_strip_rationale` AND MUST NOT BE READ AS MORE OF THE SAME. Stripping `_`-prefixed keys
+# drops prose nothing enforces; stripping this drops a rule that genuinely binds. So the rule
+# digest is BLIND to a pin substitution on purpose, and the only thing that makes that safe is
+# that the scope digest is still computed, still stored, and still SERVED beside it — the churn
+# becomes visible instead of blocking, never invisible. Delete the disclosure and this becomes an
+# unpriced exemption.
+PIN_FIELDS = ("approved_modules",)
+
+
+def _strip_pins(obj):
+    """Drop every pin field, at any depth. Pairs with `_strip_rationale`; see `PIN_FIELDS`."""
+    if isinstance(obj, dict):
+        return {k: _strip_pins(v) for k, v in obj.items() if k not in PIN_FIELDS}
+    if isinstance(obj, list):
+        return [_strip_pins(x) for x in obj]
+    return obj
+
+
+def _digest_rules(doc: dict) -> str:
+    """SHA-256 of the registry with rationale AND pins removed — moves only on a RULE change.
+
+    ⚠ The recursion matters and is not theoretical: `_strip_rationale` was unguarded through
+    lists until 2026-09-25, and a pin field nested inside a list would be the same hole. Both
+    strippers walk lists.
+    """
+    canonical = json.dumps(_strip_pins(_strip_rationale(doc)),
+                           sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _digest_enforcement(doc: dict) -> str:
     """SHA-256 of the parsed registry with rationale removed and keys ordered.
 
@@ -396,6 +443,55 @@ class Config:
         one fixed transport; this one fixes commentary.
         """
         return _digest_enforcement(self.required)
+
+    @property
+    def pin_fields(self) -> tuple:
+        """`PIN_FIELDS`, reachable from a caller holding only a Config.
+
+        ⚠ EXISTS SO NOBODY RESTATES THE NAMES. `inventory.py` deliberately imports nothing from
+        `core` — it takes a config and reads it — and it has to name the excused field in the
+        disclosure it renders. The two ways to get it there without this were an import that
+        breaks that property, or a literal that becomes the second copy which will be wrong.
+        """
+        return PIN_FIELDS
+
+    @property
+    def registry_rule_digest(self) -> str:
+        """What the registry RULES, with rationale AND pins stripped — the arc-length object.
+
+        ⭐⭐ THE COMPARISON OBJECT THE ARC-END FREEZE NEEDS. Tim ruled 2026-09-26 that the freeze
+        belongs at the ends of arcs, and a freeze taken at the arc's end cannot be compared
+        against an object that moves every time a pin is substituted inside the arc — six times
+        in the day that produced the ruling. Against THIS object those six moved nothing, and
+        the one real policy change that day still moved it.
+
+        ⛔ IT IS BLIND TO A PIN SUBSTITUTION AND THAT IS THE POINT, SO THE SCOPE DIGEST IS NOT
+        RETIRED. `registry_scope_digest` stays, is still computed on every call, and is served
+        beside this one — so pin churn shows up as a DISCLOSURE rather than as a blocked bar.
+        ⚠ The pair is the mechanism; either half alone is a defect. This one alone is an
+        exemption nobody can see; the other one alone is the bar that cried wolf six times
+        before lunch.
+
+        ⚠ WHAT THIS CANNOT DO, STATED HERE BECAUSE IT WOULD OTHERWISE BE INFERRED WRONGLY: it
+        does not bound the exemption to the arc. This server cannot observe an arc boundary —
+        the round counter is worktree-local by construction and dies with the worktree — so the
+        re-freeze at the arc's end is a HUMAN act that `convergence_bar` names and asks for. A
+        days-based or count-based proxy was considered and rejected: a control testing a proxy
+        for the property is the shape that holds while the property fails.
+        """
+        return _digest_rules(self.required)
+
+    @property
+    def frozen_rule_digest(self):
+        """The RULE DIGEST this arc was frozen against, or None.
+
+        ⚠ A THIRD FIELD, NOT A REINTERPRETATION OF EITHER EXISTING ONE. `frozen_registry_sha` is
+        a file hash, `frozen_scope_digest` is enforcement-with-pins, and this is
+        enforcement-without-pins. Three distinct objects, three names — the fleet rule that two
+        objects may not share a name, applied before rather than after the eleven-day
+        `push_bar`/`registry_freeze` collision it was learned from.
+        """
+        return (self.policy.get("convergence") or {}).get("frozen_rule_digest")
 
     @property
     def frozen_scope_digest(self):

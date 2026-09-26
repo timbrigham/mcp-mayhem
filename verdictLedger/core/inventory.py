@@ -203,11 +203,46 @@ def convergence_bar(config) -> dict:
     # the payload names the basis so nobody has to infer which object was compared.
     digest_now = config.registry_scope_digest
     frozen_digest = config.frozen_scope_digest
-    if frozen_digest:
+    # ⭐⭐ THE ARC-LENGTH BASIS, PREFERRED WHEN IT EXISTS. Tim, 2026-09-26: **freeze at the ends
+    # of the arcs.** A freeze taken at an arc's end cannot be compared against an object that
+    # moves whenever a pin is substituted inside the arc — six times in the day that produced
+    # the ruling, with the canonical length held at 27254 across all six and moving only on the
+    # one real policy change (+846).
+    rule_now = config.registry_rule_digest
+    frozen_rule = config.frozen_rule_digest
+    if frozen_rule:
+        basis, frozen, now = "rule_digest", frozen_rule, rule_now
+    elif frozen_digest:
         basis, frozen, now = "scope_digest", frozen_digest, digest_now
     else:
         basis, frozen, now = "registry_file_sha", config.frozen_registry_sha, config.registry_sha
-    base = {"basis": basis, "registry_sha": config.registry_sha, "scope_digest": digest_now}
+    base = {"basis": basis, "registry_sha": config.registry_sha, "scope_digest": digest_now,
+            "rule_digest": rule_now}
+    # ⛔⛔ THE EXEMPTION IS DISCLOSED ON EVERY PATH, INCLUDING THE GREEN ONE, AND THAT IS THE
+    # WHOLE SAFETY OF THE SECOND OBJECT. `rule_digest` is deliberately blind to a pin
+    # substitution, so without this block a repin would be invisible rather than merely
+    # non-blocking — an unpriced exemption, which is the shape `R-NOCONV` names.
+    #
+    # ⚠ It renders only when BOTH frozen values exist, because that is the only state in which
+    # "the difference is pins-only" is a derivable fact rather than an assumption. With just the
+    # rule digest frozen, a moved scope digest cannot be attributed.
+    if basis == "rule_digest" and frozen_digest:
+        pins_moved = frozen_digest != digest_now
+        base["pin_exemption"] = {
+            "active": bool(pins_moved and frozen_rule == rule_now),
+            "scope_digest_frozen_at": frozen_digest,
+            "scope_digest_now": digest_now,
+            "what_it_excuses": ("a pin substitution (%s) moves the scope digest and no rule; "
+                                "against the rule digest it moves nothing"
+                                % ", ".join(config.pin_fields)),
+            # ⛔ NAMED, NOT PROXIED. A days- or count-based cap here would be a control testing
+            # a proxy for the property — the property is "the arc ended", and this server cannot
+            # see an arc: the round counter is worktree-local by construction and dies with the
+            # worktree. So the bound is stated as a human act rather than asserted as enforced.
+            "bounded_by": ("THE ARC'S END, WHICH THIS SERVER CANNOT OBSERVE. Re-freeze both "
+                           "values when the arc closes; nothing here expires on its own, and no "
+                           "timer stands in for the boundary."),
+        }
     if not frozen:
         return {**base, "frozen": False, "note": (
             "NO FROZEN BAR. Scope may widen mid-run and a widened scope does NOT "
