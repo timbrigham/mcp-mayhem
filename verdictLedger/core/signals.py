@@ -51,6 +51,10 @@ def compute(*, records: list, config, family: Optional[str] = None,
         "basis_drift": _basis_drift(rows),
         "edge_condition": _edge_condition(rows),
         "overturn": _overturn(rows),
+        # ⚠ UNFILTERED ON PURPOSE, like `coverage_gap`. The question "which steps still do not
+        # report a wall clock" is about the WHOLE registry; answering it over a `step=` filter
+        # would return one row and read as "only this step is outstanding".
+        "unmeasured_cost": _unmeasured_cost(unfiltered, config),
     }
     if family:
         if family not in families:
@@ -139,6 +143,57 @@ def _edge_condition(rows) -> dict:
             for r in rows if (r.get("cost") or {}).get("lock_wait_seconds")]
     return {"basis_count": len(rows), "count": len(hits), "appends": hits[:50],
             "why": "review: an append waited past the soft threshold"}
+
+
+def _unmeasured_cost(rows, config) -> dict:
+    """How far V22's per-step ratchet has actually got — the count that decides when the rule
+    can become unconditional.
+
+    ⭐⭐ THIS IS THE HALF THAT MAKES THE RATCHET A PLAN RATHER THAN A HOPE. V22 obliges only
+    steps that have ALREADY reported a wall clock, so on the day it shipped it obliged NOBODY:
+    across 5,940 records, `cost.seconds` was null on every one. A rule that binds nothing is
+    indistinguishable from a rule that is switched off — unless something counts the gap and
+    keeps saying so.
+
+    ⚠ `ratcheted` is the set V22 enforces against TODAY; `outstanding` is what is left. When
+    `outstanding` reaches zero the rule can be made unconditional, and until then this is the
+    honest answer to "is the cost field wired up yet" — a question that was previously
+    answerable only by reading 5,940 records by hand.
+
+    ⛔ AND `unregistered_reporting` IS NOT PADDING. A step reporting a clock while absent from
+    the registry is reporting into a gate that cannot price it (V8 refuses the record outright,
+    so such a step should be impossible) — counting it separately means a non-zero here is a
+    finding about the registry rather than a step that needs converting.
+    """
+    # ⚠ READ THE SAME PLACE V8 READS. `is_registered` is `step in self.required["types"]`, so
+    # the roster is that dict's keys and nothing else — a second notion of "registered" here
+    # would be the second-copy-of-the-policy `config.py` forbids, and it would disagree with
+    # the rule that refuses unregistered steps.
+    try:
+        registered = set((config.required or {}).get("types") or ()) if config else set()
+    except (AttributeError, TypeError):
+        registered = set()
+    ratcheted, seen = set(), set()
+    for r in rows:
+        step = r.get("step")
+        seen.add(step)
+        if (r.get("cost") or {}).get("seconds") is not None:
+            ratcheted.add(step)
+    # ⚠ `registered or seen` — never silently fall back to an empty roster. A config that could
+    # not be read must not make "no steps outstanding" the answer, which is this repo's
+    # absence-reads-as-success defect pointed at its own progress report.
+    roster = registered or seen
+    outstanding = sorted(roster - ratcheted)
+    return {
+        "basis_count": len(roster),
+        "count": len(outstanding),
+        "ratcheted": sorted(ratcheted),
+        "outstanding": outstanding,
+        "unregistered_reporting": sorted(ratcheted - registered) if registered else [],
+        "roster_from": "registry" if registered else "the stream (registry unreadable)",
+        "why": ("review: these steps do not report cost.seconds, so V22 does not yet bind them. "
+                "The rule becomes unconditional when this count is zero."),
+    }
 
 
 def _overturn(rows) -> dict:

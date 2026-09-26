@@ -102,7 +102,13 @@ class Ledger:
         rec = self._prepare(record)
         violations = validate_mod.validate(
             rec, config=cfg, existing_ids=self.store.ids(), tips=self.store.tips(),
-            known_config_shas=self.store.config_shas() | {cfg.config_sha})
+            known_config_shas=self.store.config_shas() | {cfg.config_sha},
+            # ⚠ V22's ratchet memory. It is passed HERE and nowhere else, because this is the
+            # only production call site — `append` routes through this method. A test pins
+            # that it keeps arriving: V22 cannot evaluate without it and `None` is
+            # indistinguishable from "no step has ever reported", so a silently dropped
+            # kwarg would disable the rule while every test about the rule kept passing.
+            timed_steps=self.store.steps_timing())
         # ⚠⚠ `error_type` HERE BECAUSE THIS REFUSAL IS *RETURNED*, NOT RAISED — AND THAT MADE
         # IT THE ONE REFUSAL ON THE FLEET WITHOUT IT. `_guard` builds its reply as
         # `{"ok": True, **result}` and attaches `error_type` in its `except` branches. A
@@ -317,6 +323,24 @@ class Ledger:
             evidence=list(original.get("evidence") or []),
             revision=revision,
             decided=dict(original.get("decided") or {}),
+            # ⛔⛔ `cost` IS CARRIED FOR THE SAME REASON AND IT WAS MISSED UNTIL V22 LANDED.
+            # Found 2026-09-26 by the existing suite, not by review: the moment V22 ratcheted
+            # `check_invariants`, `test_narrow_supersedes_at_a_higher_revision_without_retyping
+            # _subjects` began failing with V22 — because this builder copied subjects,
+            # evidence, decided and reason, and dropped the one field a new rule had just made
+            # mandatory. **A server-side operation that cannot satisfy its own server's
+            # validator**, which is the unreachable-remedy shape V11's message was rewritten to
+            # warn about, arriving here by the same route: a rule added without walking the
+            # operations that construct records on this side.
+            #
+            # ⚠ AND CARRYING IT FORWARD IS THE HONEST ANSWER, NOT MERELY THE CONVENIENT ONE. A
+            # narrow re-emits the SAME examination with its indictment reduced; the wall clock
+            # that produced it is still the wall clock that produced it, and the original's
+            # `seconds_prices` still describes that number truthfully. Recomputing a duration
+            # here would price THIS server's copy operation and label it as the checker's run —
+            # a true value read against the wrong object, in the field added to stop exactly
+            # that.
+            cost=dict(original.get("cost") or {}),
             run={"id": run_id or os.environ.get("ZPLEDGER_RUN") or f"narrow-{_now()}",
                  "started": _now(), "config_sha": cfg.config_sha, "env": {}},
         )

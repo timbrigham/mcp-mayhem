@@ -243,7 +243,38 @@ def empty_record(**over: Any) -> dict:
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,
-        "cost": {"seconds": None, "usd": 0.0, "lock_wait_seconds": None},
+        # ⛔⛔ `usd` DEFAULTED TO 0.0 UNTIL 2026-09-26 AND THAT WAS THIS FILE'S OWN RULE
+        # BROKEN TWO LINES BELOW ITS STATEMENT. Measured that day across the live stream:
+        # 5,928 of 5,940 records carry `{"seconds": null, "usd": 0.0}` byte-identically, and
+        # **0 records in 5,940 carry a populated value in any cost sub-field.** So `0.0` was
+        # never a measurement — it was the absence of one, wearing the costume of a figure.
+        #
+        # ⚠ AND IT CONFLATED TWO FACTS THAT ARE NOT THE SAME FACT: a step that spent real
+        # money and did not report it, and a step that CANNOT spend money, render as the same
+        # bytes. `required.v2.json` registers 30 step types and `total_cost_usd`
+        # is read in exactly ONE file across their tree — `agent_gate.py`, which can spend;
+        # the other 29 are mechanical checkers with no model call in them. It and it reads a real
+        # `total_cost_usd` off the SDK envelope — then formats it into its `reason` PROSE
+        # (`"…, $%.3f. ADVISORY: …"`), so the fleet's only true dollar figure lives in a
+        # free-text field while the structured field beside it says 0.0. A right number in the
+        # wrong object, which is the defect this repository is named for.
+        #
+        # ⭐ Tim, 2026-09-26: *"I don't think that the actual US dollars cost is of particular
+        # use or honestly something that's all of that measurable… I would think that the wall
+        # clock time would be a hell of a lot more interesting."* He is right, and the count is
+        # the argument: `seconds` is measurable by all 30 emitters with no conversion factor;
+        # `usd` by one of 30. So `seconds` is what V22 makes mandatory and `usd` stays
+        # OPTIONAL — requiring it would force 30 checkers to assert a 0.0 none of them can
+        # honestly claim, which is the defect above with a rule behind it.
+        #
+        # ⚠ `seconds_prices` IS NOT DECORATION. Never report a number without naming what it
+        # prices (§"A CLAIM IS NOT A MEASUREMENT"): a wall clock measured from an emitter
+        # module's import is a LOWER BOUND on the step, one measured around `main()` is the
+        # step, and one measured across a process that ran two steps is neither. The same
+        # `cap_prices` pattern `gitrobot_server/results.py:FlightRow` already carries, for the
+        # same reason — a caller comparing an elapsed time against the wrong object.
+        "cost": {"seconds": None, "seconds_prices": None, "usd": None,
+                 "lock_wait_seconds": None},
         "run": {"id": None, "started": None, "config_sha": None, "env": {}},
     }
     rec.update(over)

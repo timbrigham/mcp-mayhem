@@ -98,7 +98,13 @@ def good(**over):
         "decided": {"how": "mechanical", "passes": 1, "agreed": 1, "who": None},
         "inputs": [],
         "revision": 0,
-        "cost": {"seconds": 0.1, "usd": 0.0},
+        # ⚠ V22, 2026-09-26: a `seconds` without a `seconds_prices` is refused, because the
+        # same elapsed time means three different things depending on the origin the clock
+        # was started from. Carried by the generic fixture for the same reason `evidence` is
+        # — a probe must change exactly ONE thing, and a fixture that trips a rule it is not
+        # testing makes every other probe in the suite ambiguous.
+        "cost": {"seconds": 0.1, "seconds_prices": "test fixture, a fixed literal",
+                 "usd": 0.0},
         "run": {"id": "run-1", "started": None, "config_sha": None, "env": {}},
     }
     rec.update(over)

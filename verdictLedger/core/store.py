@@ -228,6 +228,37 @@ class Store:
                 entry["latest"] = r
         return out
 
+    def steps_timing(self) -> set:
+        """Every step that has EVER reported `cost.seconds` — V22's memory.
+
+        ⭐⭐ THE RATCHET IS DERIVED, NEVER DECLARED, and that choice is the whole design.
+        Tim ruled 2026-09-26 that a save must not complete without a wall clock. Turning that
+        into a hard rule the same day would have refused every append from ~30 gating steps —
+        all 22 emit call sites route through one function in the consumer's `common.py`
+        (`required.v2.json` says so in terms) — so every step would read MISSING and no push
+        could happen until a file in another repo changed. **A rule that locks the fleet to
+        acquire a field is a rule that gets switched off.**
+
+        So the obligation is per-step and earned: a step that has PROVED it can report a
+        wall clock may never stop. A step that never has is untouched and records exactly as
+        before. There is no flag day, no outage, and no way to regress.
+
+        ⛔ AND IT IS DERIVED FROM THE STREAM RATHER THAN LISTED IN CONFIG BECAUSE A LIST WOULD
+        BE THE SECOND COPY. `config.py` forbids exactly that shape: the stream already carries
+        which steps have reported, so a hand-maintained roster of converted steps could only
+        ever disagree with it — and the disagreement would read as a policy decision.
+
+        ⚠ THE CONSEQUENCE FOR AN EMITTER, AND IT IS THE ONE TRAP HERE: once a step reports
+        seconds ONCE, EVERY emit path for that step must report it. A checker that passes a
+        clock on its pass path and not on its fail path ratchets itself on the first pass and
+        is refused on the next failure. Convert a step whole, not by branch.
+        """
+        out = set()
+        for r in self:
+            if (r.get("cost") or {}).get("seconds") is not None:
+                out.add(r.get("step"))
+        return out
+
     def config_shas(self) -> set:
         """Every config identity the stream has ever seen, NEW NAME AND OLD.
 

@@ -235,7 +235,7 @@ def _as_record(record) -> dict:
 @mcp.tool(title='Append a verdict',
           annotations=ToolAnnotations(title='Append a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def append(record: RecordIn) -> AppendResult:
-    """Append one verdict. Validated against V1-V21; REFUSES anything short.
+    """Append one verdict. Validated against V1-V22; REFUSES anything short.
 
     ⚠ THIS DOCSTRING IS THE WRITING GUIDE. `client/record.py` carries the same advice
     for callers that import it, and an agent calling this tool directly never sees
@@ -457,7 +457,7 @@ async def genesis(commit: str, note: Optional[str] = None) -> GenesisResult:
 @mcp.tool(title='Preview validation',
           annotations=ToolAnnotations(title='Preview validation', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def validate(record: RecordIn) -> ValidateResult:
-    """Schema plus V1-V21. Pure, no write — use it to check a record BEFORE
+    """Schema plus V1-V22. Pure, no write — use it to check a record BEFORE
     appending. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
     up and works around the thing."""

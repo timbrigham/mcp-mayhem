@@ -1,4 +1,4 @@
-"""V1–V21. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
+"""V1–V22. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
 
 ⚠ Every violation is returned, never just the first. A caller fixing one rule per
 round trip is a caller who stops using the thing.
@@ -76,7 +76,7 @@ def structural(record: dict) -> list[str]:
     # rule engine and asserts every probe goes green — stayed RED. A probe that survives the
     # rules being switched off is testing a proxy, not the rule. V19 is policy about what a
     # blocking verdict must CARRY, not about whether the record can be READ, so it lives in
-    # `rules()` with V1-V21.
+    # `rules()` with V1-V22.
     if "failing" in record:
         failing = record.get("failing")
         if not isinstance(failing, list) or not all(
@@ -168,8 +168,15 @@ def structural(record: dict) -> list[str]:
 
 
 def rules(record: dict, *, config: Config, existing_ids: set,
-          tips: Optional[dict] = None, known_config_shas: Optional[set] = None) -> list[str]:
-    """V1–V21. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record."""
+          tips: Optional[dict] = None, known_config_shas: Optional[set] = None,
+          timed_steps: Optional[set] = None) -> list[str]:
+    """V1–V22. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record.
+
+    ``timed_steps`` is the set of steps that have ever reported ``cost.seconds`` — V22's
+    ratchet memory, from ``store.steps_timing()``. ⚠ ``None`` means the index was NOT
+    SUPPLIED, which is a wiring fault rather than a clean record; see V22 for why that is
+    pinned by a test instead of guessed at here.
+    """
     out: list[str] = []
     basis = record.get("basis") or {}
     decided = record.get("decided") or {}
@@ -795,6 +802,150 @@ def rules(record: dict, *, config: Config, existing_ids: set,
     # would silently break dedupe. With the key reduced to (step, basis, revision)
     # the prose is payload, free to say whatever is most useful to a human, and the
     # rule it needed disappears with the hash that required it.
+    #
+    # ⭐⭐ AND V22 BELOW IS THE SAME FIELD, NOW MANDATORY — WHICH IS WHY THE RETIREMENT
+    # NOTE STAYS HERE INSTEAD OF BEING DELETED. This file once FORBADE a checker from
+    # reporting its own duration; it now requires it. The thing that changed is not the
+    # policy, it is the key: `schema.payload()` excludes `cost` by name ("observational
+    # fields … must not make the same fact look like a different one"), so a duration can
+    # no longer make a re-run read as a conflict. **The hazard V14 was written for is
+    # closed structurally, not by asking emitters to be careful** — which is the only
+    # reason V22 is safe to require at all.
+    #
+    # ⛔ THE MIRROR HAZARD IS LIVE RIGHT NOW AND IT IS `reason`, WHICH *IS* IN THE PAYLOAD.
+    # The consumer's `agent_gate` formats its dollar figure into its reason prose
+    # (`"… , $%.3f. ADVISORY: …"`). Two otherwise-identical runs at one basis therefore
+    # differ in exactly that varying number, so the second is not a dedupe — it is a V11
+    # conflict whose named delta is `reason`. ⚠ PREDICTED FROM THE TWO CODE PATHS, NOT
+    # OBSERVED: a V11 refusal writes no record, so the stream cannot show it and the
+    # calllog is a rotating buffer that may never be cited as evidence. Moving the figure
+    # out of `reason` and into `cost.usd` removes the hazard as a side effect of V22.
+
+    # ⭐⭐ V22 — A SAVE DOES NOT COMPLETE WITHOUT A WALL CLOCK. Tim, 2026-09-26:
+    # *"Let me make the cost a mandatory field in order to, for the save to be completed
+    # correctly."* Measured the same day, and the measurement is why the rule is shaped the
+    # way it is rather than as a flat requirement: across 5,940 records there are exactly
+    # THREE distinct `cost` shapes and **not one populated value in any of them** —
+    # 5,928 × `{"seconds": null, "usd": 0.0}`, 9 × the same plus a null
+    # `lock_wait_seconds`, 3 × `usd` as int `0`. The field has existed, been carried on
+    # every record, and measured nothing, for the life of the stream.
+    #
+    # ⚠ THAT IS WHY THE ~40% FIGURE COULD NEVER BE CHECKED. The one question anybody
+    # actually asked of this data — what does a panel run cost — was unanswerable in either
+    # direction, because `cost` was structurally present and semantically empty. An absent
+    # field would have been honest; a present empty one reads as "measured, and it was
+    # nothing".
+    #
+    # ⛔⛔ IT IS A PER-STEP RATCHET AND NOT A FLAG DAY, AND THE ALTERNATIVE WAS PRICED
+    # BEFORE IT WAS REJECTED. All ~22 emit call sites in the consumer route through ONE
+    # function in a file this server cannot touch (their `required.v2.json` states it:
+    # *"every one of the 22 call sites routes through them"*). A hard requirement today
+    # therefore refuses every append from ~30 GATING steps at once, every step reads
+    # MISSING, and no push happens until another repository changes. **A rule that locks
+    # the fleet in order to acquire a field is a rule that gets switched off** — and this
+    # file's own §"absence is never success" is worth less than the gate it disables.
+    #
+    # ⭐ SO THE OBLIGATION IS EARNED RATHER THAN DECLARED: `store.steps_timing()` is the set
+    # of steps that have ever reported a wall clock, and a step in that set may never stop.
+    # A step that has never reported is untouched. No outage, no flag day, and the ratchet
+    # is monotone — which is the same changed-path shape the push bar already uses.
+    #
+    # ⚠ `timed_steps is None` MEANS THE INDEX WAS NOT SUPPLIED, WHICH IS A WIRING FAULT AND
+    # NOT A CLEAN RECORD. It cannot be treated as an empty set (that fails OPEN, silently,
+    # on the one path that matters) and it cannot refuse everything (that breaks every
+    # direct caller of `rules()`). So the wiring is pinned by a TEST that fails if
+    # `ledger.py` stops passing it, rather than by a runtime branch that would have to
+    # guess. ⛔ An assertion that never ran is indistinguishable from one that passed: the
+    # test asserts the kwarg reaches `rules`, not merely that nothing broke.
+    # ⛔⛔ A HUMAN ACCEPT AND A HUMAN REGRADE HAVE NO RUN TO PRICE, AND THE RATCHET MUST NOT
+    # DEMAND ONE. Found 2026-09-26 the same way the `narrow` defect was — by running the suite
+    # rather than by reading the rule. `Ledger._decided()` builds the record behind `sign`,
+    # `override` and `accept`; there is no checker, no subprocess and no elapsed anything, so
+    # the only way to satisfy a timing requirement would be to fabricate a number or to price
+    # this server's own write and label it as the step's cost. **That is the defect `usd` was
+    # just rescued from, one field over.**
+    #
+    # ⭐ THE EXEMPT SET IS THE CLOSED SET OF HUMAN ACTS, AND THE DIRECTION IS DELIBERATE. A
+    # `decided.how` value added LATER is BOUND rather than exempt — same argument as
+    # `_strip_rationale`'s denylist in `config.py`: an allowlist of "kinds that must report"
+    # would let a new kind escape silently, while this way a new kind trips a visible bar and
+    # somebody prices it. `agreement` and `delegated` are deliberately NOT here: an agent round
+    # spends real wall clock and real money, which is the case this whole field exists for.
+    #
+    # ⚠ IT IS NOT A BYPASS, AND THAT WAS CHECKED RATHER THAN ASSUMED. Claiming `signature`
+    # requires a non-null `who` (V5) and `override` requires one plus a prohibition on
+    # overriding your own decision (V12). A mechanical emitter cannot reach this branch without
+    # naming a human and making a far larger claim than a missing duration.
+    _NO_RUN_TO_PRICE = ("signature", "override")
+    cost = record.get("cost") or {}
+    secs = cost.get("seconds")
+    if (timed_steps is not None and step in timed_steps and secs is None
+            and how not in _NO_RUN_TO_PRICE):
+        # ⛔ NAME ONLY WHAT THIS SERVER CAN GUARANTEE — the V9 lesson, which cost a
+        # consumer a whole preflight cycle by offering a `--run` flag their checker did not
+        # have. This server owns `append`, so it can promise that a numeric `cost.seconds`
+        # on the record is accepted. It owns NOTHING about how the emitter measures one, so
+        # it must not name a function, a flag, or a helper in the caller's repo.
+        # ⭐ The remedy that needs no claim about their code is THEIR OWN PRIOR RECORD: this
+        # step has already done it once, so a working example exists in the stream and the
+        # refusal points at it rather than describing a route this server cannot see.
+        out.append(
+            f"V22: step {step!r} has already reported `cost.seconds` on an earlier record, "
+            f"so it may not go back to recording without one — a step that can measure its "
+            f"own wall clock and stops is indistinguishable from one that never could. "
+            f"SUPPLY IT: set `cost.seconds` to the step's elapsed wall clock as a number, "
+            f"and `cost.seconds_prices` to a short string naming WHAT that number prices "
+            f"(what the clock was started around), then append again. This server reads "
+            f"both off the record; how the emitter measures them is the emitter's. "
+            f"⚠ IF ONLY SOME OF THIS STEP'S CODE PATHS REPORT A CLOCK, THAT IS THE BUG — "
+            f"the ratchet binds the STEP, so a checker that times its pass path and not its "
+            f"fail path locks itself out on its next failure. Convert the step whole.")
+    # ⚠ SHAPE IS CHECKED WHENEVER THE VALUE IS PRESENT, RATCHET OR NOT — it costs an
+    # unconverted step nothing and it stops the first conversion from landing a figure
+    # nobody can read. A string "12.4s", a negative, or a bool would all have passed.
+    if secs is not None:
+        if isinstance(secs, bool) or not isinstance(secs, (int, float)):
+            out.append(f"V22: cost.seconds must be a number of seconds, not "
+                       f"{type(secs).__name__} — a duration that has to be parsed is a "
+                       f"duration two readers will parse differently. SUPPLY IT as an int "
+                       f"or float; the unit is seconds and is not carried in the value.")
+        elif secs < 0:
+            out.append(f"V22: cost.seconds is {secs}, which is not a duration. A negative "
+                       f"elapsed time means the clock was read against the wrong origin — "
+                       f"the usual cause is subtracting a start captured in a later process. "
+                       f"SUPPLY a non-negative elapsed measured within one process.")
+        # ⛔ A NUMBER WITHOUT ITS OBJECT IS THIS REPOSITORY'S FOUNDING DEFECT, AND HERE IT
+        # IS CHEAP TO MAKE UNREPRESENTABLE. The same wall clock means three different things
+        # depending on where it started: measured from an emitter module's import it is a
+        # LOWER BOUND on the step (interpreter startup and everything before that import are
+        # outside it); measured around `main()` it is the step; measured across a process
+        # that ran two steps it is neither, and reads as a step duration while pricing a
+        # process. That last one is not hypothetical — the consumer's `batch.py` runs each
+        # checker as a subprocess (so a per-process origin is valid there), while
+        # `guards.py` and `move_ridealong.py` import `check_*` modules IN-PROCESS, where the
+        # same origin would silently accumulate.
+        if not (isinstance(cost.get("seconds_prices"), str)
+                and cost.get("seconds_prices").strip()):
+            out.append(
+                "V22: cost.seconds carries a number and cost.seconds_prices does not say "
+                "what it prices. The same elapsed time is a LOWER BOUND on the step when "
+                "the clock starts at an emitter import, the step itself when it starts "
+                "around the step's entry point, and neither when one process ran two steps. "
+                "SUPPLY `cost.seconds_prices` as a short non-empty string naming the origin "
+                "the clock was started from, so a reader comparing this against a budget "
+                "knows which object it describes.")
+    # ⚠ `usd` IS DELIBERATELY NOT REQUIRED AND MUST NOT BECOME SO. Of ~31 registered steps,
+    # one (`agent_gate`) invokes a model and can read a real `total_cost_usd`; the rest are
+    # mechanical checkers that cannot spend. Requiring it would make 30 emitters assert a
+    # 0.0 none of them can honestly claim — which is precisely the defect the null default
+    # was changed to remove. Shape only, and only when present.
+    usd = cost.get("usd")
+    if usd is not None and (isinstance(usd, bool) or not isinstance(usd, (int, float))
+                            or usd < 0):
+        out.append(f"V22: cost.usd must be a non-negative number or absent, not {usd!r}. "
+                   f"⚠ ABSENT AND ZERO ARE DIFFERENT CLAIMS: absent says this step did not "
+                   f"report a spend, 0.0 says it measured one and it was nothing. Only an "
+                   f"emitter that actually reads a cost may write the second.")
 
     # The key must parse unambiguously. Git permits '#' in a ref name, so a
     # pathological basis could make `step@basis#revision` read two ways. One line,
@@ -806,7 +957,7 @@ def rules(record: dict, *, config: Config, existing_ids: set,
 
 
 def validate(record: dict, *, config: Config, existing_ids=None, tips=None,
-             known_config_shas=None) -> list[str]:
+             known_config_shas=None, timed_steps=None) -> list[str]:
     """Everything, structural first. Returns [] when the record is acceptable."""
     out = structural(record)
     if any(v.startswith(("record must", "schema must", "step must", "verdict must",
@@ -816,7 +967,8 @@ def validate(record: dict, *, config: Config, existing_ids=None, tips=None,
         return out
     return out + rules(record, config=config,
                        existing_ids=existing_ids if existing_ids is not None else set(),
-                       tips=tips, known_config_shas=known_config_shas)
+                       tips=tips, known_config_shas=known_config_shas,
+                       timed_steps=timed_steps)
 
 
 # -- the subject identity must be one git could have produced -------------------
