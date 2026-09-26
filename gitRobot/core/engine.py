@@ -75,6 +75,38 @@ BULK_ADD_EXEMPT_REPO = ".claude-local"
 # remove, and it would fire in the one state where a caller is already anxious.
 PUSH_TIMEOUT = 3600
 
+# ⛔⛔ WHAT A PREFLIGHT PRICES, AND — THE PART THAT KEEPS BITING — WHAT IT DOES NOT.
+#
+# ⚠⚠ MEASURED 2026-09-26, AND IT IS THE THIRD FALSE GREEN FROM THIS ONE FUNCTION. The consumer
+# ran `preflight()` against a range, got **PASSED 21/21 exit 0**, and `can_push()` REFUSED the
+# same range on `copy_editor` (tip required 21, satisfied 20, stale 1). Both answers were
+# correct. `preflight` runs the GATE PIPELINE; it has never consulted the admission set at all —
+# zero references to `ledger_client`, `inventory` or `admission` in its 104 lines. The `21/21` is
+# GATES, not admission keys, and the two numbers looking alike is coincidence.
+#
+# ⭐ SO IT IS NOT A COMPUTATION DEFECT, IT IS AN ABSENT CHECK, and the completeness computation
+# it was suspected of was verified correct in the same measurement (`complete: false`). "Absence
+# is never success" is the rule this breaks, and the absence here is a whole question.
+#
+# ⚠ THE PRIOR TWO INSTANCES ARE ALREADY RECORDED AT THIS FUNCTION, WHICH IS THE ARGUMENT FOR A
+# FIELD RATHER THAN ANOTHER COMMENT: 2026-09-05, `would_block_push` read as the list of what
+# blocks a push -> a 27-minute preflight, green, then refused on eleven intermediate commits;
+# 2026-09-15, `passed` at a HEAD whose push failed on 76 files eighteen minutes later, from
+# missing refs computing an empty scope. Three misreadings, three causes, one shape.
+#
+# ⛔ `status.would_block_push` GOT `would_block_push_scope` AND `range_question` FOR EXACTLY THIS
+# AND `preflight` GOT NOTHING. The pattern already exists twice in this codebase (`cap_prices` on
+# `FlightRow` is the third). This is that field, and it is ONE CONSTANT so the two surfaces that
+# report a preflight cannot drift apart — a scope warning on one path and silence on the other is
+# how the 2026-09-22 freeze caveat shipped half-applied.
+PREFLIGHT_SCOPE = (
+    "PRICES THE GATE PIPELINE ONLY, AT THIS HEAD. It does NOT consult the verdictLedger "
+    "admission set, so a pass here is NOT a prediction that the push will be allowed — "
+    "measured 2026-09-26: PASSED 21/21 while can_push REFUSED the same range on a stale "
+    "admitted step. It is also TIP-SCOPED and says nothing about intermediate commits. "
+    "TO LEARN WHETHER THE PUSH WILL GO: can_push(rev_range='origin/<branch>..<branch>'), "
+    "which walks every commit against the admission set, or status() for the tip-only answer.")
+
 
 def _refusal_id(op: str, detail: str) -> str:
     return hashlib.sha256(f"{op}|{detail}".encode("utf-8")).hexdigest()[:12]
@@ -967,6 +999,9 @@ class GitRobot:
             )
             return {"op": "preflight", "run_id": run_id, "head": head,
                     "passed": gate.passed, "exit_code": gate.exit_code,
+                    # ⛔ ON EVERY PATH INCLUDING THE PASS, because the pass is the one that
+                    # gets misread. See PREFLIGHT_SCOPE.
+                    "passed_prices": PREFLIGHT_SCOPE,
                     "note": gate.note, "output": gate.output[-8000:]}
 
         if wait:
@@ -974,6 +1009,10 @@ class GitRobot:
         thread = threading.Thread(target=_run, name=f"preflight-{run_id}", daemon=True)
         thread.start()
         return {"op": "preflight", "run_id": run_id, "head": head, "state": "running",
+                # ⚠ STATED AT START TOO, not only in the post-mortem: a caller who is told what
+                # a run will price BEFORE it spends 25 minutes can go get the other answer in
+                # parallel rather than discovering the gap afterwards.
+                "passed_prices": PREFLIGHT_SCOPE,
                 # what the hook is judging, in the caller's hand before the run lands
                 "push_refs": push_refs.strip(),
                 "range": (f"{remote_sha[:12]}..{head[:12]}" if remote_sha
@@ -1006,7 +1045,11 @@ class GitRobot:
         for record in reversed(self.audit.read()):
             if record.get("run_id") == run_id and record.get("decision") in ("allowed", "failed"):
                 gates = record.get("gates")
-                out = {"state": "passed" if record["decision"] == "allowed" else "failed",
+                # ⛔ THE SURFACE THE CONSUMER ACTUALLY READ WHEN IT CONCLUDED "PASSED 21/21".
+                # A scope note on preflight() and silence here would be the half-applied guard
+                # shape the 2026-09-22 freeze caveat already cost us.
+                out = {"passed_prices": PREFLIGHT_SCOPE,
+                       "state": "passed" if record["decision"] == "allowed" else "failed",
                        "head": head, "run_id": run_id, "ts": record["ts"],
                        "gates": gates}
                 if out["state"] == "failed":

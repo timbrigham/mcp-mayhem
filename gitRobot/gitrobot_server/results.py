@@ -76,6 +76,8 @@ class ReceiptResult(Result, total=False):
     inventory: str | None
     run_id: str
     state: str
+    # ⚠ present on the preflight receipt paths too — see PreflightStatusResult.passed_prices
+    passed_prices: str
     note: str
     # ⭐ WHICH REPOSITORY A PUSH TARGETED, BY URL. `branch` says where ON the remote; this says
     # WHICH remote, and `origin` is a local alias a `set-url` re-points silently. On EVERY push
@@ -150,6 +152,14 @@ class StatusResult(Result, total=False):
 
 class PreflightStatusResult(Result, total=False):
     state: str
+    # ⛔⛔ WHAT `state: "passed"` PRICES, AND WHAT IT DOES NOT. Added 2026-09-26, the THIRD time
+    # this surface produced a false green: the consumer read PASSED 21/21 and can_push REFUSED
+    # the same range on a stale admitted step. `preflight` runs the GATE PIPELINE and has never
+    # consulted the admission set — so `passed` is not a prediction that the push is allowed, and
+    # the `21/21` is gates rather than admission keys. ⚠ Same field on the `preflight()` returns,
+    # from ONE constant (`engine.PREFLIGHT_SCOPE`), because a scope warning on one of two
+    # surfaces is the half-applied guard that shipped once already.
+    passed_prices: str
     head: str
     run_id: str
     ts: str
