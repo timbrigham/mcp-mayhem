@@ -1036,6 +1036,52 @@ def test_the_review_gates_are_scoped_to_what_they_govern(ledger):
             assert carve == set(), "editorial is deliberately uncarved — it is the control"
 
 
+def test_the_shipped_carve_register_names_both_breaks_and_why():
+    """⛔⛔ THE SHIPPED REGISTER, NOT THE FIXTURE — because `copy_editor` is not in
+    `required.v2.sample.json` (24 types; the live registry has 30), so the control above cannot
+    see it and a carve added to the real file would be pinned by nothing at all.
+
+    ⭐⭐ `copy_editor` carved 2026-09-26 on Tim's ruling, and THE TIMING IS THE LESSON. The
+    circularity was structurally identical on 2026-09-08 and nobody carved it, because at
+    `actions: ["tag"]` the deadlock was somewhere nobody was standing — and a gate that
+    deadlocks where you are not standing reads exactly like a gate that works. Widening to
+    `["push","tag"]` made the same defect fire on every prose arc.
+
+    ⚠ MEASURED THE DAY IT WAS CARVED, and this is why it fails CLOSED rather than open: 122
+    paths in scope, 0 covered, 7 ever examined, 1 record in the stream's whole history — an
+    UNDECIDED, which blocks and counts for nothing. The carve takes the count to 121, removing
+    exactly the producer.
+
+    ⛔ This asserts the carve is PRESENT, SCOPED TO ONE PATH, and ATTRIBUTED. A carve makes a
+    gate examine less, so the loose direction is the undated, unattributed, or widened one.
+    """
+    import json
+    from pathlib import Path
+    reg = json.loads((Path(__file__).resolve().parents[1] / "config" /
+                      "loopbreaks.v1.json").read_text(encoding="utf-8"))
+    breaks = reg["breaks"]
+    assert set(breaks) == {"adversary", "copy_editor"}, (
+        "the carve roster changed and this control names it on purpose — a carve added or "
+        "dropped without updating this test is a gate narrowed with nothing watching")
+
+    ce = breaks["copy_editor"]
+    # ⚠ EXACTLY ITS OWN PRODUCER, and nothing else. A carve that grew a second path would be a
+    # gate narrowed past the deadlock it was authorised to break.
+    assert ce["exclude"] == [".claude/commands/copy-editor.md"]
+    assert ce["decided_by"] == "tim", "a carve decides; an unattributed one is the loose direction"
+    assert ce["decided"] == "2026-09-26"
+    # ⭐ the price must be WRITTEN DOWN, not discovered later by whoever hits it
+    assert "PRICE" in ce["reason"] and "no longer caught" in ce["reason"], (
+        "the carve does not state what it gives up — the same price adversary's already pays")
+    # ⛔ and the retained defence must be named, because that is what makes it sound rather
+    # than merely convenient: editorial and adversary still grade this brief.
+    assert "Cross-review is RETAINED" in ce["reason"]
+
+    for name, brk in breaks.items():
+        for field in ("exclude", "reason", "decided_by", "review_by"):
+            assert brk.get(field), f"{name} carve is missing {field}"
+
+
 def test_prior_art_is_never_scoped_by_a_glob(ledger):
     """⛔ THE REFUSAL THAT SURVIVED THE DECISION. ZeroParadox proposed
     `ZeroParadox/*.lean` (218 files) and flagged in the same message that it would
