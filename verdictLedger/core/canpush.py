@@ -676,6 +676,44 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                               if r["gating"] and r["status"] == "MISSING"),
             "stale": sorted(r["step"] for r in inv["rows"]
                             if r["gating"] and r["status"] == "STALE"),
+            # ⛔⛔ WHY `complete` CAN BE TRUE BESIDE A NON-EMPTY `stale`, NAMED ON THE ROW.
+            #
+            # ⚠⚠ MEASURED 2026-09-26, AND THE MEASUREMENT IS TWO PEOPLE RATHER THAN A PROBE.
+            # This row rendered `required: 21, satisfied: 20, stale: ["copy_editor"],
+            # complete: true` — all four correct — and **two readers who had each spent the day
+            # inside this system independently concluded it was a FAIL-OPEN on the push path,
+            # within an hour of each other.** One filed it as a defect against the other's code;
+            # the other confirmed it to Tim before re-deriving. Neither was careless: nothing in
+            # the payload said which of the 21 was unsatisfied or why that was allowed.
+            #
+            # ⭐ THE BEHAVIOUR WAS RIGHT AND THE RENDERING WAS INDEFENSIBLE. Tim's 2026-09-18
+            # ruling is that a STALE row whose stale paths are untouched by the range does not
+            # refuse it — `n_blocking_stale()` in `inventory.py` — and in the case measured,
+            # `copy_editor` was stale while the range published only two `.json` files that
+            # match none of its scope globs AND sit under its `tools/*` exclusion. Zero paths in
+            # scope, by two independent routes. The forgiveness was exactly correct.
+            #
+            # ⛔ SO THIS IS THE `cap_prices` / `would_block_push_scope` / `passed_prices` PATTERN
+            # FOR THE FOURTH TIME, and the lesson each time is the same: a TRUE number whose
+            # object is unstated gets read against the wrong object. "Never report a number
+            # without naming what it prices" is this repository's founding rule, and
+            # `satisfied: 20` of `required: 21` beside `complete: true` broke it in my own output.
+            #
+            # ⚠ NOT FOLDED INTO `stale`, and not removed from it. The row stays STALE everywhere
+            # a reader looks — `n_blocking_stale`'s own comment says a row that vanished from the
+            # stale list would hide the backlog instead of grandfathering it. This says why it
+            # does not block; it does not say it is fine.
+            "stale_forgiven": [
+                {"step": r["step"],
+                 "stale_paths": (r.get("stale_paths") or [])[:20],
+                 "stale_path_count": len(r.get("stale_paths") or []),
+                 "why": ("STALE, and none of the paths it has not judged are published by this "
+                         "range — so it does not refuse THIS push and is NOT counted in "
+                         "`satisfied`. That is why `complete` can be true while `satisfied` is "
+                         "below `required`. ⚠ The step is still stale: it has not examined "
+                         "those bytes, and it will block any range that publishes them.")}
+                for r in inv["rows"]
+                if r["gating"] and r["status"] == "STALE" and r.get("stale_out_of_range")],
             "failed": sorted(r["step"] for r in inv["rows"]
                              if r["gating"] and r["status"] in ("FAIL", "UNDECIDED")),
             "legacy": sorted(r["step"] for r in inv["rows"]
@@ -870,6 +908,15 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         # the union, so a caller can see the whole remaining job at once
         "missing": sorted({s for r in rows for s in r["missing"]}),
         "stale": sorted({s for r in rows for s in r["stale"]}),
+        # ⛔⛔ THE UNION OF THE ROW-LEVEL FORGIVENESSES, because the top of the payload is where a
+        # reader looks FIRST and the two who misread this never reached the rows. A field that
+        # explains `complete: true` beside an unsatisfied count, but only inside `commits[n]`,
+        # is the half-applied guard shape: the 2026-09-22 freeze caveat rendered in the BROKEN
+        # state and was silent in the state that produced the defect.
+        # ⚠ `steps` and not the full detail — the per-path list stays on the row it belongs to,
+        # so this stays cheap on a long range.
+        "stale_forgiven": sorted({e["step"] for r in rows
+                                  for e in (r.get("stale_forgiven") or [])}),
         "failed": sorted({s for r in rows for s in r["failed"]}),
         "legacy": sorted({s for r in rows for s in r["legacy"]}),
         **({"refused": sorted({s for r in rows for s in r.get("refused") or []})}
