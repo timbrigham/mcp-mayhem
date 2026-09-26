@@ -186,6 +186,65 @@ Four of the five above were found that way and would not have been found any oth
 FLOOR on anything a parse or a filter produces (`len(x) > n`), because an assertion that never ran
 is indistinguishable from one that passed.
 
+⚠⚠ **AND A MUTATION THAT DOES NOT LAND READS EXACTLY LIKE A CONTROL THAT HELD, SO COMPILE THE
+MUTANT.** Measured 2026-09-26: `"stale_forgiven": [] or [...]` was written as a mutation and
+evaluates to the second operand — a no-op that reported SURVIVED. The repair is two lines of
+discipline: assert the text actually changed, and `py_compile` the mutant, so a kill is an
+assertion firing rather than a `SyntaxError`. ⛔ Same failure as the `_remote_has` wrong-anchor
+mutation above, committed while writing the fix for it.
+
+## ⛔⛔ THE INSTRUMENT USUALLY EXISTS. ITS AUTHOR IS THE ONE WHO DOES NOT READ IT
+
+⭐⭐ ZeroParadox's phrasing, 2026-09-26: **"it is not that we lack instruments; it is that we do
+not consult the ones we built."** SIX instances in one day, between two sessions, and in every
+case the thing that would have prevented the error had been written *by the person making it*:
+
+    KNOWN_MISMATCHES              held `('build', ('tag',), ('commit','push','tag'))` — the exact
+    (mine)                        counterexample to my claim that a registry narrowing renders an
+                                  admission entry inert. Dated and ratcheted BY ME. I measured
+                                  `required=False` and concluded about a second list my own suite
+                                  already proves disagrees.
+    check_checkers.py:64 (theirs) "there is no git event for tag creation, so nothing can fire
+                                  this on the thing it gates" — while both of us spent hours
+                                  arguing WHEN copy_editor should gate, never checking whether
+                                  its `actions: ["tag"]` fired at all. It did not.
+    policy().undeclared_producers  has printed `build`, `genesis`, `release_ready` continuously.
+    (mine)                        Those are the steps V20 refuses records from, which is why
+                                  `release_ready` has 0 records in 5,940. Nobody read the field.
+    canpush.py:634 (mine)         names the `complete` divergence in terms — `inventory()`
+                                  answering False while `can_push`'s row for the same ref answers
+                                  true, "both correct under their own scoping". I QUOTED IT as
+                                  the find and still confirmed a fail-open that did not exist.
+    two test assertions (mine)    `"can_push" in scope` and `count("PREFLIGHT_SCOPE") >= 2` both
+                                  matched incidental prose, so deleting the thing they guarded
+                                  changed nothing. Found by mutation, not by reading.
+    witness.review: 0 (theirs)    was inside the payload they pasted to me AS the evidence for a
+                                  fail-open. It says no admitted review step claims either path,
+                                  which is the disproof, in the quote.
+
+⛔ **THE SHAPE IS NOT IGNORANCE, IT IS PROXIMITY.** Every one of these was written by whoever
+later needed it, which means familiarity is what suppressed the lookup: you do not re-read the
+field you designed, you remember what you meant. **A remembered instrument is a paraphrase
+wearing a measurement's authority** — the same defect as a remembered quote, one layer up.
+
+⭐ **WHAT ACTUALLY WORKED, ALL SIX TIMES: THE OTHER SESSION.** Four errors between the two
+sessions that day and **zero self-catches.** Every one was caught by the peer reading from
+outside, and twice the evidence was already inside the repo of the person who was wrong. So this
+is the operational argument for the staggered-clear rule and for the two-independent-measurements
+rule — not that two readers are more careful, but that **the second reader is the only one who
+has to look things up.**
+
+⚠ THE PRACTICE THAT FOLLOWS, and it is cheap: before asserting a mechanism in code you own, GREP
+YOUR OWN REPO FOR IT FIRST. Not the docs — the tests, the config comments, the served fields. If
+a claim about your own system is worth relaying to a peer, it is worth thirty seconds against the
+file that would already know.
+
+⭐ AND THE STRONGEST SINGLE CHECK FOUND THAT DAY IS A PEER'S: **reimplement the spec from one
+sentence, without reading the code, and compare against the served value.** ZeroParadox did that
+to `registry_rule_digest` and reproduced both digests to the character. It tests what no code
+review can — that the SENTENCE and the IMPLEMENTATION describe the same object — which is exactly
+where every mechanism error that day actually lived.
+
 ## Time is UTC, everywhere, and the entry says so
 
 ⭐ Tim, 2026-09-09: *"we need to make it blatantly obvious what time zone we are using for our
