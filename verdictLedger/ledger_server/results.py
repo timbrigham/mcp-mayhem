@@ -92,6 +92,14 @@ class RequirementsResult(Result, total=False):
 class PolicyResult(Result, total=False):
     policy: dict[str, Any]
     config_sha: str
+    # ⭐ THE CONVERGENCE BAR, so the freeze can be read without paying for an inventory. Added
+    # 2026-09-26 for the tag-time freeze guard: `inventory()` and `can_push()` already carried
+    # it, and both walk a commit range — the walk that made a push look like it hung. A guard
+    # that only needs to know whether the freeze is current must not buy a range walk to learn
+    # it. ⚠ Carries `basis` (rule_digest / scope_digest / registry_file_sha), both digests, and
+    # `pin_exemption` when a repin is being excused; the basis field exists because three
+    # distinct objects can be frozen and a reader must never have to infer which was compared.
+    bar: dict[str, Any]
     actions: list[str]
     min_passes: int
     max_depth: int

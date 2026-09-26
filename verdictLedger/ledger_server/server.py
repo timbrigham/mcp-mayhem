@@ -574,6 +574,19 @@ def _sync_policy() -> dict:
     return {"policy": cfg.policy, "config_sha": cfg.config_sha,
             "actions": cfg.actions, "min_passes": cfg.min_passes,
             "max_depth": cfg.max_depth, "genesis": cfg.genesis,
+            # ⭐⭐ THE CONVERGENCE BAR, SERVED CHEAPLY — added 2026-09-26 so a caller can read
+            # the freeze WITHOUT pulling an inventory. It was already in `inventory()` and
+            # `can_push()`, and both walk a commit range: `_require_inventory`'s full range walk
+            # is what made a push appear to hang for minutes (profiled 2026-09-25, and I
+            # initially blamed the ledger's own inventory for it, wrongly). A guard that only
+            # needs to know whether the freeze is current must not pay for a range walk to find
+            # out, or the cheap check becomes the expensive one and gets removed later for
+            # being slow.
+            #
+            # ⚠ IT IS THE SAME OBJECT, FROM THE SAME FUNCTION — not a second computation of the
+            # freeze. `convergence_bar` is called once here over the same config; two renderings
+            # of one bar is exactly the two-copies shape this fleet keeps paying for.
+            "bar": inventory_mod.convergence_bar(cfg),
             # ⚠⚠ WHERE THE BAR WAS ACTUALLY READ FROM. Added 2026-08-25 after a
             # deployment served the registry from the ledger's own repo for three days
             # while §7, `config.py`'s docstring and §0's build table all said it came

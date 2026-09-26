@@ -2597,6 +2597,61 @@ class GitRobot:
                              reason=reason, detail=result.output,
                              extra={"output": result.output, "ok": result.ok})
 
+    def _require_current_freeze(self, name: str, reason: str) -> None:
+        """A tag may not be cut while the convergence freeze is excusing pin drift.
+
+        ⭐⭐ Tim ruled 2026-09-26 that the freeze belongs at the ends of arcs, and the guard the
+        ruling owes — the ZeroParadox session's phrasing — is that **an arc must not be able to
+        CLOSE without its freeze being re-taken.** A tag is the one arc-close event this server
+        can observe, so this is where that becomes enforced rather than asserted.
+
+        ⚠⚠ AND THE LIMIT IS NAMED IN THE REFUSAL RATHER THAN IMPLIED AWAY: this catches an arc
+        that closes WITH a release. An arc that closes without one is not covered and cannot be,
+        because nothing emits an event for it. Claiming otherwise would be a control testing a
+        proxy for the property — the shape that holds while the property fails.
+
+        ⛔⛔ THIS IS NOT TAG ADMISSION GATING AND MUST NOT QUIETLY BECOME IT. Measured
+        2026-09-26: `inventory()` is called with `"push"` and with nothing else, so gitRobot has
+        never enforced the 23-step `tag` admission set at all — and the consumer's own workflow
+        says so in terms: *"The gate cannot hook `gh release create` (no git event for tag
+        creation), so enforcement is procedural."* Turning that on is a far larger decision than
+        the freeze guard Tim authorised, so this reads ONE field and blocks on ONE condition.
+        ⚠ A consequence worth stating: `copy_editor.actions: ["tag"]` was therefore enforced by
+        nothing, which means today's widening to `["push","tag"]` did not move a gate from late
+        to early — it made the panel binding for the first time.
+
+        ⚠ AN UNREACHABLE LEDGER BLOCKS, per §"absence is never success", and that is a real new
+        dependency for `tag_create` which had none. It is the correct direction: a tag is a
+        permanent public marker that mints a DOI, and "I could not check the freeze" must not
+        render as "the freeze is current".
+        """
+        try:
+            pol = ledger_client.call("policy", {})
+        except Exception as exc:                       # noqa: BLE001 - any transport failure
+            raise self._refuse(
+                "tag_create", {"name": name},
+                f"the convergence freeze could not be read, so whether this arc's bar is "
+                f"current is unknown ({exc}).",
+                "Bring verdictLedger up and retry: `policy()` must answer, and its `bar` must "
+                "not report an active pin exemption. A tag is permanent and mints a DOI, so an "
+                "unverifiable freeze blocks rather than passes.", reason=reason)
+        bar = (pol or {}).get("bar") or {}
+        ex = bar.get("pin_exemption") or {}
+        if ex.get("active"):
+            raise self._refuse(
+                "tag_create", {"name": name},
+                "this arc's convergence bar is green only because a pin substitution is being "
+                "excused, and a tag closes the arc — so the freeze must be re-taken first.",
+                "Re-freeze BOTH values in policy.convergence from the current registry, then "
+                "cut the tag: frozen_rule_digest=%s and frozen_scope_digest=%s. ⚠ EDIT THE "
+                "REGISTRY FIRST if you also intend to change it — `reason` is a served key "
+                "inside the scope digest, so freezing and then editing leaves the checkpoint "
+                "stale on arrival. ⚠ This guard sees a tag and nothing else: an arc that closes "
+                "without a release is not covered by it."
+                % ((bar.get("rule_digest") or "?")[:12],
+                   (ex.get("scope_digest_now") or "?")[:12]),
+                reason=reason)
+
     def tag_create(self, name: str, *, reason: str,
                    message_file: Optional[str] = None) -> dict:
         """Create an annotated tag. There is no tag deletion here.
@@ -2610,6 +2665,7 @@ class GitRobot:
             raise UsageError(f"{name!r} is not a tag name")
         if not (isinstance(reason, str) and reason.strip()):
             raise UsageError("tag_create requires a non-empty reason")
+        self._require_current_freeze(name, reason)
         if message_file:
             path = Path(message_file)
             if not path.is_absolute():
