@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -328,3 +329,207 @@ def test_a_push_only_step_must_declare_a_scope():
         f"consult them, so a STALE row over bytes the push publishes can go unrefused. "
         f"INSTEAD: give each a `scope` (or `when`) in required.v2.json so the ratchet covers "
         f"it, or admit it at `commit` as well so intermediates do.")
+
+
+# ⛔⛔ A DEFERRAL WHOSE EXPIRY CONDITION IS SOMEBODY ELSE'S UNILATERAL ACTION -------------
+#
+# ⚠⚠ MEASURED 2026-09-27, AND THE DEFECT IS MINE. `copy_editor._module_why` has said since
+# 2026-09-08, in terms:
+#
+#     "TENSION, unresolved on purpose: the brief's tally rule is 2-of-3 and V3 requires
+#      unanimity for a PASS under `agreement` ... if that is wrong it is Tim's call, and
+#      `copy_editor` is admitted by nothing so nothing is gated on the answer."
+#
+# **That is a deliberate deferral with a STATED EXPIRY CONDITION, and I expired it** by adding
+# `copy_editor` to `admission.push` on 2026-09-26 without ever looking at what rested on it not
+# being admitted. The gate then bound a step whose central question was explicitly parked on the
+# premise that it bound nothing. Nothing was mis-recorded and the gate held — the cost was that
+# the question surfaced on a real panel run instead of before one.
+#
+# ⭐ THE CLASS, WHICH IS WHAT MAKES IT WORTH A TEST RATHER THAN AN APOLOGY: a deferral is safe
+# only while its condition holds, and here the condition was an ADMISSION ENTRY IN ANOTHER REPO —
+# something I can change alone, in one line, without reading their file. **A premise one party
+# can invalidate without noticing is not a premise, it is a race.**
+#
+# ⚠ IT IS A PROSE MATCH AND THEREFORE HEURISTIC, AND THE DIRECTION IS THE JUSTIFICATION. A false
+# positive is their wording tripping a bar: visible, cheap, resolved by acknowledging it here. The
+# false negative is exactly what happened on 2026-09-26 and cost a deferred question surfacing
+# mid-run. Fail toward noticing.
+NOT_ADMITTED_PREMISE = re.compile(
+    r"admitted by nothing|admitted at nothing|gates nothing|nothing is gated"
+    r"|where nothing gates|deliberately absent from", re.I)
+
+# ⚠ ACKNOWLEDGED, RATCHETED BOTH WAYS like KNOWN_MISMATCHES: a NEW match fails, and clearing an
+# acknowledged one without removing it from this set ALSO fails. A one-directional list lets debt
+# sit forever, which is the failure the mismatch ratchet above was written for.
+ACKNOWLEDGED_STALE_PREMISES = {
+    # ⛔ LIVE DEBT — the text still asserts the premise as current.
+    # Tim ruled the tension 2026-09-27: a genuine 2-of-3 split records UNDECIDED and is accepted
+    # by `signature`, and a `panel` vocabulary was commissioned separately. So the QUESTION is
+    # resolved while this key's TEXT still says nothing is gated on the answer.
+    # ⚠ Correcting it is the consumer's edit in the consumer's file. This entry records that it
+    # is owed, and it must come out when they fix it.
+    ("copy_editor", "_module_why"): "live",
+
+    # ⚠⚠ HISTORICAL PROVENANCE, NOT DEBT — these keys QUOTE an expired or false premise in order
+    # to correct it, and their own headers say so. `_scope_was_null_until_2026_09_22` says its
+    # conclusion is reversed; `prior_art._admission_is_action_scoped_2026_09_22` opens with "THIS
+    # KEY USED TO BE CALLED `_registered_is_not_admitted` AND ITS CENTRAL CLAIM WAS FALSE".
+    #
+    # ⛔ THE DISTINCTION IS THE WHOLE VALUE OF CLASSIFYING THESE. A detector over prose cannot
+    # tell a premise being ASSERTED from one being QUOTED AND RETRACTED — that is `DC-51`, a
+    # detector counting prose about the marker, and it is the predicted cost of a heuristic
+    # guard. Paying it as one labelled line each is the trade that was argued for; leaving them
+    # unlabelled would make the acknowledged set read as four items of debt when it is one.
+    ("copy_editor", "_scope_was_null_until_2026_09_22"): "historical",
+    ("prior_art", "_admission_is_action_scoped_2026_09_22"): "historical",
+}
+
+
+def _stale_premise_keys(types, admitted) -> set:
+    """Every (step, key) where an ADMITTED step's rationale still asserts it gates nothing.
+
+    ⚠ EXTRACTED so the ratchet can be tested in BOTH directions. Inline, the reverse half —
+    "an acknowledged entry stopped matching, so remove it" — was unreachable by any test, and a
+    mutation setting `resolved = set()` survived. A one-directional ratchet lets debt sit forever,
+    which is the exact failure the mismatch ratchet above this was written for.
+    """
+    found = set()
+    for step in sorted(admitted):
+        for key, value in (types.get(step) or {}).items():
+            if key.startswith("_") and isinstance(value, str)                     and NOT_ADMITTED_PREMISE.search(value):
+                found.add((step, key))
+    return found
+
+
+def _admitted_steps() -> set:
+    admission = json.loads(ADMISSION.read_text(encoding="utf-8"))["admission"]
+    return {n for names in admission.values() for n in names}
+
+
+def _premise_debt(acknowledged=None) -> tuple:
+    """(new, resolved) — the two directions of the ratchet, computed OUTSIDE any test body.
+
+    ⛔⛔ IT LIVES HERE BECAUSE PUTTING IT IN THE TEST MADE THE TEST UNTESTABLE. Mutations replacing
+    `new = found - acknowledged` with `new = set()` INSIDE the test SURVIVED — twice — because the
+    only other test exercised set arithmetic in isolation rather than the guard that uses it. **A
+    control that verifies `a - b` works is testing Python, not the guard.** With the computation
+    here, neutering it breaks every caller, and the synthetic-input tests below reach it.
+    """
+    ack = set(ACKNOWLEDGED_STALE_PREMISES if acknowledged is None else acknowledged)
+    types, _ = _compare()
+    found = _stale_premise_keys(types, _admitted_steps())
+    return found - ack, ack - found
+
+
+def test_no_admitted_step_rests_on_a_premise_that_it_gates_nothing():
+    """⛔⛔ THE GUARD FOR THE CLASS ABOVE. Tim's ruling 2026-09-27.
+
+    For every step gitRobot ADMITS, no rationale key in the registry may still assert that the
+    step gates nothing — because a decision deferred on that premise is unsafe the moment the
+    admission entry lands, and the admission entry is mine to add alone.
+
+    ⚠ SWEPT AT THE TIME OF WRITING and the result is bounded, which is worth recording: FIVE keys
+    across the registry rest on a not-admitted premise. Three are `pdf_coupling_in_push`'s and are
+    SAFE — it is admitted at nothing, verified. Two are `copy_editor`'s, whose premise expired on
+    2026-09-26. So exactly one live expiry, not a systemic rot.
+    """
+    types, _ = _compare()
+    # ⛔ FLOOR FIRST: a sweep returning nothing makes every assertion below pass for the wrong
+    # reason. Three keys matched on 2026-09-27.
+    assert _stale_premise_keys(types, _admitted_steps()), (
+        "the premise sweep found NOTHING, so this test cannot fail — either the detector broke "
+        "or every key was corrected; check which before touching the acknowledged set")
+    # ⚠⚠ ONE COPY OF THE COMPUTATION, and it lives in `_premise_debt`. The first attempt at this
+    # extraction left the sweep inline HERE as well as in the helper — two copies of exactly the
+    # defect this whole file exists to detect, introduced while refactoring to remove it.
+    new, resolved = _premise_debt()
+    assert not new, (
+        "an ADMITTED step carries a rationale key still asserting that it gates nothing, so a "
+        "decision deferred on that premise is now unsafe: %s\n"
+        "⛔ Read the key before clearing this. Either the deferred question needs deciding, or "
+        "the text is stale and the consumer owes the correction — and either way it must be "
+        "acknowledged here rather than ignored." % sorted(new))
+
+    assert not resolved, (
+        "acknowledged stale premises no longer match, so the text was corrected: remove them "
+        "from ACKNOWLEDGED_STALE_PREMISES. %s" % sorted(resolved))
+
+
+def test_the_premise_detector_would_actually_fire():
+    """⛔⛔ A DETECTOR NOBODY HAS SEEN FIRE IS A HYPOTHESIS. The test above passes today because
+    every match is acknowledged, which is indistinguishable from a pattern that matches nothing.
+
+    ⚠ This is the floor assertion: the pattern must match the ACTUAL sentence that caused the
+    2026-09-26 miss, quoted from the registry rather than invented, and must NOT match ordinary
+    rationale prose.
+    """
+    real = ("if that is wrong it is Tim's call, and `copy_editor` is admitted by nothing so "
+            "nothing is gated on the answer.")
+    assert NOT_ADMITTED_PREMISE.search(real), (
+        "the detector does not match the sentence it was written for")
+    for benign in ("this step is admitted at push and tag",
+                   "the scope was declared so the ratchet has something to count",
+                   "registered 2026-09-21 to split a step carrying two properties"):
+        assert not NOT_ADMITTED_PREMISE.search(benign), (
+            f"the detector fires on ordinary rationale: {benign!r}")
+    # ⚠ AND THE ACKNOWLEDGED SET MUST BE NON-EMPTY TODAY, because it records real debt. If it
+    # empties, either the consumer fixed both keys (remove this floor) or someone cleared the
+    # list to make the suite green.
+    assert ACKNOWLEDGED_STALE_PREMISES, (
+        "the acknowledged set is empty; it held three entries on 2026-09-27")
+    # ⭐ AND THE LIVE COUNT IS THE NUMBER THAT MATTERS — the one Tim was told was "exactly one".
+    # ⚠ It was reached with a NARROWER manual grep than this guard uses: my sweep missed
+    # `prior_art._admission_is_action_scoped_2026_09_22` entirely and the guard found it on its
+    # first run. The conclusion survived only because that key turned out to be historical.
+    live = [k for k, v in ACKNOWLEDGED_STALE_PREMISES.items() if v == "live"]
+    assert live == [("copy_editor", "_module_why")], (
+        f"the set of LIVE expired premises changed: {live}. A new one means an admitted step's "
+        f"deferred question is unsafe right now; losing this one means the consumer corrected "
+        f"the text and it should leave the acknowledged set entirely.")
+
+
+def test_the_ratchet_fires_in_BOTH_directions():
+    """⛔⛔ THE REVERSE HALF, WHICH NO TEST COULD REACH UNTIL THE SWEEP WAS EXTRACTED. A mutation
+    setting `resolved = set()` SURVIVED the first version — so "an acknowledged entry stopped
+    matching, remove it" was asserted and never exercised.
+
+    ⚠ Both directions matter for the same reason KNOWN_MISMATCHES ratchets both ways: new debt
+    must fail, AND debt that was silently paid must fail, or the acknowledged list becomes a
+    permanent exemption nobody revisits.
+    """
+    LIVE = ("copy_editor", "_module_why")
+    GHOST = ("copy_editor", "_a_key_that_does_not_exist")
+
+    # ⭐ DRIVES THE REAL HELPER WITH SYNTHETIC ACKNOWLEDGEMENTS, so neutering either direction
+    # inside `_premise_debt` fails here rather than passing on isolated arithmetic.
+    full = set(ACKNOWLEDGED_STALE_PREMISES)
+
+    # FORWARD: drop an acknowledgement and the key must surface as NEW
+    new, _ = _premise_debt(full - {LIVE})
+    assert LIVE in new, (
+        "dropping an acknowledgement did not surface the key as new — the forward direction of "
+        "the ratchet is not computed")
+
+    # REVERSE: acknowledge something that matches nothing and it must surface as RESOLVED
+    _, resolved = _premise_debt(full | {GHOST})
+    assert GHOST in resolved, (
+        "an acknowledged entry matching nothing was not surfaced for removal — the reverse "
+        "direction is not computed, so the list becomes a permanent exemption")
+
+    # ⚠ and with the real set, BOTH must be empty — which is what the main test asserts
+    assert _premise_debt() == (set(), set())
+
+
+def test_the_detector_matches_nothing_when_no_step_is_admitted():
+    """⚠ SCOPE CONTROL. The guard is about ADMITTED steps, so with an empty admitted set it must
+    find nothing — otherwise it is sweeping the whole registry and its name is wrong.
+    ⭐ This is what makes `pdf_coupling_in_push`'s three keys correctly INVISIBLE: it is admitted
+    at nothing, so its not-admitted premises are true and not debt."""
+    types, _ = _compare()
+    assert _stale_premise_keys(types, set()) == set()
+    # and the three pdf_coupling_in_push keys must NOT appear while it is unadmitted
+    assert ("pdf_coupling_in_push" not in {s for s, _ in
+                                          _stale_premise_keys(types, _admitted_steps())}), (
+        "pdf_coupling_in_push surfaced as debt while it is admitted at nothing — its "
+        "not-admitted premises are TRUE, which is the whole distinction this guard draws")
