@@ -369,6 +369,12 @@ ACKNOWLEDGED_STALE_PREMISES = {
     # resolved while this key's TEXT still says nothing is gated on the answer.
     # ⚠ Correcting it is the consumer's edit in the consumer's file. This entry records that it
     # is owed, and it must come out when they fix it.
+    # ⭐ TRACKED ON THEIR SIDE AS `COPYEDITOR-MODULEWHY-STALE` (their DEFECTS.md, filed 2026-09-27,
+    # verified at the source rather than taken on my report), in the same document family as
+    # `ADMIT-1` and `COPYEDITOR-ESCALATION-1`. ⚠⚠ THE ID IS WHY THIS LINE EXISTS: an acknowledged
+    # entry with no pointer is indistinguishable from one nobody is tracking, and an exemption
+    # list is exactly where a forgotten item sits quietly forever. A reader who finds this key
+    # still matching in a month can ask about a NAMED ROW instead of rediscovering the question.
     ("copy_editor", "_module_why"): "live",
 
     # ⚠⚠ HISTORICAL PROVENANCE, NOT DEBT — these keys QUOTE an expired or false premise in order
