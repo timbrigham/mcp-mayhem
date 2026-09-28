@@ -750,9 +750,25 @@ def build(*, config, records, action: str, files: dict,
         # awkward. Found by the ZeroParadox session, whose layer owns that half.
         #
         # ⭐ THE QUESTION THIS FIELD IS FOR is "has the PRODUCER changed, so the verdict may no
-        # longer hold" -- not "would the pipeline have done this at that commit". A record
-        # citing the CURRENT APPROVED checker is the strongest evidence available, not stale
-        # evidence. So an approved blob counts as fresh no matter which ref it is read at.
+        # longer hold" -- not "would the pipeline have done this at that commit". A record citing
+        # an APPROVED checker is the strongest evidence available, not stale evidence.
+        #
+        # ⚠⚠ THIS PARAGRAPH SAID "A record citing the CURRENT APPROVED checker … an approved blob
+        # counts as fresh no matter which ref it is read at", AND THE 2026-09-13 PER-REF PIN MADE
+        # THAT FALSE WITHOUT ANYONE UPDATING IT. `_approved_blobs` came from `registry_types_at` --
+        # the registry AS COMMITTED at the ref -- so "current" was exactly the set it did NOT
+        # consult. Corrected 2026-09-27, and the precise wording is now: **a citation approved by
+        # the registry that governed the content when it was committed, OR by the registry
+        # governing it now, counts as fresh.** Both sets are unioned below; see that comment for
+        # why the union is required rather than merely convenient.
+        #
+        # ⛔⛔ AND THIS SENTENCE COST A PEER THREE PERMANENT RECORDS. I quoted it to them as
+        # authority for citing today's approved blob, twice, without running the code it describes.
+        # The record they wrote was correctly shaped and could never have worked. **A load-bearing
+        # comment that has drifted from its code is worse than no comment: it is wrong with
+        # provenance, and it is read exactly when someone needs to be right.** The lesson is not
+        # "keep comments fresh" -- it is that a claim about behaviour must be traced in the code
+        # before it is relayed, especially by whoever wrote the comment.
         _approved_blobs = set()
         # ⭐ The PINS come from the registry committed at this ref when the caller named the
         # repository; see `registry_types_at`. Scope, family and everything else still come
@@ -765,6 +781,44 @@ def build(*, config, records, action: str, files: dict,
                 _approved_blobs = {_a}
             elif _a:
                 _approved_blobs = set(_a)
+        # ⛔⛔ AND THE LIVE REGISTRY'S APPROVALS ARE UNIONED IN, BECAUSE WITHOUT THEM THIS CHECK
+        # AND V16c ASK THE SAME QUESTION OF DIFFERENT REGISTRIES AND NO RECORD CAN SATISFY BOTH.
+        #
+        # ⚠⚠ MEASURED 2026-09-27, AND IT IS THE THIRD TIME THIS PAIR HAS BEEN UNSATISFIABLE ON
+        # THE SAME STEP. At `guards@8192e54`:
+        #
+        #     V16c, at APPEND, reads `config.required`  -> approves ONLY 7dbd4741 (today's)
+        #     this check, at READ, read `pin_types`     -> approved ONLY b6e81935 (the ref's)
+        #
+        # so citing the ref's blob was REFUSED at append, and citing today's approved blob
+        # appended and never cleared. The consumer wrote THREE correctly-shaped records against
+        # my two successive wrong diagnoses before I stopped theorising and traced the actual
+        # decision, which named the values above in one line.
+        #
+        # ⛔ NEITHER HALF WAS WRONG ALONE, WHICH IS WHY IT SURVIVED TWO FIXES. Per-ref at read is
+        # Tim's ruling of 2026-09-13 (RLY-PIN-5, option C) and it is measured better: judged
+        # against today's registry instead, 13/20 of the pushed arc and 86/93 of the last 93
+        # commits went stale, against 3/20 and 54/93 per-ref. Live at append is defensible on its
+        # own terms — a NEW verdict should not come from a build nobody currently approves. The
+        # 2026-09-12 fix above made an approved blob count as fresh and WORKED while both sides
+        # read one registry; the 09-13 per-ref ruling re-opened the hole from the other direction,
+        # and nobody checked the interaction because that ruling was argued on staleness rates.
+        #
+        # ⭐ THE UNION IS THE SMALLEST THING THAT MAKES THE PAIR SATISFIABLE: a citation approved
+        # by the registry that governed the content WHEN IT WAS COMMITTED, or by the registry
+        # governing it NOW, is approved by a registry with standing over it either way. A record
+        # citing today's build passes V16c and then clears here.
+        #
+        # ⚠ AND IT DOES NOT REOPEN RLY-PIN-5, checked rather than assumed: `guards.py@2775fcf6`
+        # after the 548b1216 unpin is approved by NEITHER registry, so the union still excludes
+        # it and a commit reverting to that blob still reads stale. The union admits only blobs
+        # some registry with standing actually approved.
+        _live_spec = (config.required.get("types") or {}).get(step) or {}
+        _live_a = _live_spec.get("approved_modules")
+        if isinstance(_live_a, str):
+            _approved_blobs |= {_live_a}
+        elif _live_a:
+            _approved_blobs |= set(_live_a)
 
         ev_stale, ev_moved, ev_unapproved = 0, [], []
         for path in sorted(ev_set):
