@@ -389,14 +389,39 @@ def _as_basis(basis) -> dict:
 @mcp.tool(title='Sign off a verdict',
           annotations=ToolAnnotations(title='Sign off a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def sign(step: str, subjects: list[dict], who: str, reason: str,
-               basis: BasisIn, tier: str = "H") -> AppendResult:
+               basis: BasisIn, tier: str = "H",
+               evidence: Optional[list[dict]] = None) -> AppendResult:
     """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt.
 
     `who` is REQUIRED and is NEVER verified. A signature is an ATTRIBUTION, not an
     authentication: it makes a decision attributable after the fact, which is the
-    whole and only claim being made."""
+    whole and only claim being made.
+
+    ⭐⭐ `evidence` IS OPTIONAL AND EXISTS BECAUSE ONE AXIS WAS OTHERWISE UNREACHABLE. Added
+    2026-09-27 on Tim's ruling. `evidence_stale` is computed from the evidence paths a record
+    CITES, and `sign` carried none — so no signature, at any revision, could ever clear it. The
+    ZeroParadox session asked that exact question before writing a permanent record, and the
+    answer was no.
+
+    ⛔ THE MECHANICAL ROUTE WAS ALSO CLOSED, which is what made this the server's defect rather
+    than a procedure to work around: a checker must BE the approved producer build while reading an
+    older commit's subjects, and their subject fence correctly drops any path differing from that
+    worktree's HEAD. Substituting the approved build excludes it; checking out old subjects
+    excludes those. An unsatisfiable conjunction of two individually-correct rules — the same shape
+    `inventory.py` records paying for on 2026-09-11/12.
+
+    ⚠ WHAT IT DOES AND DOES NOT CLAIM. A signature never asserts an execution — `passes: 1,
+    agreed: 1`, and V3 does not apply to it. `evidence` here names the PRODUCER BUILD the verdict
+    was accepted under, which is a checkable fact about a blob, not a fabricated claim about
+    having run something. ⛔ Pass the APPROVED blob: `inventory` treats an approved build as fresh
+    evidence at any ref, deliberately, so citing the blob the registry pins is the point.
+
+    ⚠ It stays OPTIONAL. Requiring it would make every ordinary accept invent one, and a
+    placeholder attribution is worse than an honest absence — the same reason `who` is not required
+    on a mechanical record."""
     return await _guard(_ledger().sign, step=step, subjects=subjects, who=who,
-                        reason=reason, basis=_as_basis(basis), tier=tier)
+                        reason=reason, basis=_as_basis(basis), tier=tier,
+                        evidence=evidence)
 
 
 @mcp.tool(title='Regrade a verdict',

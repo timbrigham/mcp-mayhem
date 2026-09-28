@@ -197,7 +197,8 @@ class Ledger:
         return {**self.append(rec), "commit": commit}
 
     def sign(self, *, step: str, subjects: list, who: str, reason: str,
-             basis: dict, tier: str = "H", run_id: Optional[str] = None) -> dict:
+             basis: dict, tier: str = "H", run_id: Optional[str] = None,
+             evidence: Optional[list] = None) -> dict:
         """ACCEPT — "you are right, we ship anyway". The FAIL stands as carried debt."""
         if not (who or "").strip():
             raise UsageError(
@@ -206,7 +207,8 @@ class Ledger:
                 "agent id: signing is a human ACCEPT of a standing FAIL as carried debt, and V12 "
                 "later checks it is not the party the finding was raised against.")
         return self._decided(step=step, subjects=subjects, basis=basis, tier=tier,
-                             how="signature", who=who, reason=reason, run_id=run_id)
+                             how="signature", who=who, reason=reason, run_id=run_id,
+                             evidence=evidence)
 
     def override(self, *, step: str, subjects: list, who: str, reason: str,
                  basis: dict, tier: str = "H", run_id: Optional[str] = None) -> dict:
@@ -347,7 +349,8 @@ class Ledger:
         rec["failing"] = list(failing)
         return self.append(rec)
 
-    def _decided(self, *, step, subjects, basis, tier, how, who, reason, run_id) -> dict:
+    def _decided(self, *, step, subjects, basis, tier, how, who, reason, run_id,
+                 evidence=None) -> dict:
         cfg = self._require_config()
         key = (step, (basis or {}).get("value"))
         tip = (self.store.tips().get(key) or {}).get("latest")
@@ -355,6 +358,33 @@ class Ledger:
         rec = schema.empty_record(
             step=step, tier=tier, verdict="PASS", reason=reason,
             basis=basis, subjects=list(subjects or []), revision=revision,
+            # ⭐⭐ `evidence` ON A HUMAN DECISION, ADDED 2026-09-27 ON TIM'S RULING, BECAUSE
+            # WITHOUT IT ONE AXIS WAS UNREACHABLE BY ANY ROUTE. `evidence_stale` is computed from
+            # the evidence paths that records CITE; `sign` carried none, so no signature at any
+            # revision could ever clear it. The ZeroParadox session asked before writing a
+            # permanent record — *"does `evidence_stale` even respond to a `signature`-type record
+            # at all"* — and the answer was no.
+            #
+            # ⛔ THEY THEN PROVED THE MECHANICAL ROUTE UNREACHABLE TOO. A checker run needs its own
+            # file to BE the approved blob while reading an old commit's subjects, and their
+            # subject fence — correctly — drops any path differing from that worktree's HEAD. So
+            # substituting the approved build excludes it, and checking out old subjects excludes
+            # those. Same wall from either side, and the fence is right: it exists to stop records
+            # claiming bytes nobody read.
+            #
+            # ⚠⚠ THAT MADE IT AN UNSATISFIABLE CONJUNCTION — each rule correct alone, the pair
+            # closing every route — which is the failure mode `inventory.py` already records
+            # paying for on 2026-09-11/12, and which this fleet treats as the SERVER's defect
+            # rather than a procedure to work around. I told them in advance it would be mine if
+            # it turned out so, and it did.
+            #
+            # ⭐ AND IT IS AN HONEST FIELD ON A SIGNATURE, WHICH WAS THE REAL QUESTION. A signature
+            # does not claim to have RUN anything — `passes: 1, agreed: 1` and V3 never applies. It
+            # claims a human accepted a verdict, and `evidence` names the producer build that
+            # verdict was accepted UNDER. That is a checkable fact about a blob, not a fabricated
+            # claim about an execution. ⛔ It stays OPTIONAL: forcing it would make every ordinary
+            # accept invent one, and a placeholder attribution is worse than an honest absence.
+            evidence=list(evidence or []),
             decided={"how": how, "passes": 1, "agreed": 1, "who": who},
             run={"id": run_id or os.environ.get("ZPLEDGER_RUN") or f"manual-{_now()}",
                  "started": _now(), "config_sha": cfg.config_sha, "env": {}},
