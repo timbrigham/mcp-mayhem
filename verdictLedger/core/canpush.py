@@ -170,7 +170,7 @@ def _changed_across(repo: str, base: str, tip: str) -> tuple:
 
 
 def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitted,
-             by_content) -> dict:
+             by_content, recs_by_content: Optional[dict] = None) -> dict:
     """⭐⭐ THE CHANGED-PATH RATCHET: bytes this push CHANGES must have been judged AT THOSE BYTES.
 
     ⛔⛔ WHY IT EXISTS. Coverage is content-keyed, so a path a step examined BEFORE goes STALE when
@@ -219,10 +219,85 @@ def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitte
             if (step, path, blob) in by_content:
                 continue
             obligations.append({"step": step, "path": path, "git_blob_id": blob})
+    # ⭐⭐ A FINDING MAY NOT BE CARRIED ACROSS A CHANGE TO ITS OWN FILE. Tim's ruling 2026-09-27.
+    #
+    # ⚠⚠ THE MEASUREMENT THAT PROMPTED IT: 953 `outstanding` entries in the stream, 948 of them
+    # `ordinary`, **893 sitting on PASSING records**, and nothing anywhere gating, thresholding or
+    # ageing them. Top contributors editorial 316, adversary 296, prior_art 197. So an ordinary
+    # finding was preserved, attributable, and permanently inert — better than silenced, because a
+    # reader can find it, but never ACTED on. After 948 of them the field is where findings go to
+    # be counted rather than resolved.
+    #
+    # ⭐ THE RULE IS NARROW ON PURPOSE AND THE NARROWNESS IS THE ARGUMENT. It does not ask anyone
+    # to clear the 893: a path nobody touched keeps its findings, exactly as the changed-path
+    # ratchet above grandfathers unexamined bytes. It binds ONE case — **you edited the file the
+    # finding is about, and the finding is still there.** At that moment the finding was in front
+    # of whoever made the edit, and carrying it forward is a decision rather than a backlog.
+    #
+    # ⛔ IDENTITY IS `(severity, note)` AND A REWORDED FINDING ESCAPES. Said out loud rather than
+    # implied to be airtight: nothing here can tell a genuinely different finding from the same one
+    # rephrased, so this catches carry-forward and not evasion. That is the same honest footing
+    # V18 takes on severity — *"Nothing here can detect a DEFLATED finding"* — and the same remedy:
+    # the claim is attributable, because the record names who recorded it under which brief.
+    #
+    # ⚠ ORDINARY ONLY, because anything worse cannot be on a PASS at all (V18), so a carried
+    # bedrock finding is already unrepresentable and needs nothing from this rule.
+    carried = []
+    base_files = _files_at(repo, base)
+    for path in changed:
+        if path not in tip_files or path in renamed or path in session_state:
+            continue
+        old_blob = base_files.get(path)
+        # ⚠⚠ THE SECOND CLAUSE IS DEFENCE IN DEPTH AND NO TEST ON THIS PLATFORM CAN REACH IT, WHICH
+        # IS RECORDED HERE RATHER THAN LEFT AS AN UNEXPLAINED MUTATION SURVIVOR. `changed` comes
+        # from `_changed_across`, which already excludes paths whose bytes did not move — that is
+        # where the grandfathering of the 893 actually happens, and a mutation deleting
+        # `old_blob == tip_files[path]` therefore changes no outcome and no test fails.
+        # ⛔ It is KEPT because `git diff --name-only` can name a path whose BLOB is unchanged — a
+        # mode-only change is the case — and this loop must never call such a path carried. That
+        # fixture cannot be built here: git on Windows runs with `core.filemode` false, so a mode
+        # change is invisible to the diff in the first place.
+        # ⭐ A surviving mutant that is understood and deliberately kept is a different thing from
+        # one nobody noticed. This comment is the difference.
+        if not old_blob or old_blob == tip_files[path]:
+            continue                       # not actually a content change for this path
+        for step in steps:
+            if not _in_scope(config, step, path):
+                continue
+            _recs = recs_by_content or {}
+            new_rec = _recs.get((step, path, tip_files[path]))
+            old_rec = _recs.get((step, path, old_blob))
+            if not (new_rec and old_rec):
+                continue                   # nothing to compare: not a carry-forward
+            def _ordinary(rec):
+                return {((o.get("severity") or "").strip().lower(),
+                         (o.get("note") or "").strip())
+                        for o in (rec.get("outstanding") or [])
+                        if isinstance(o, dict)
+                        and (o.get("severity") or "").strip().lower() == "ordinary"
+                        and (o.get("path") in (None, path) or not o.get("path"))}
+            both = _ordinary(new_rec) & _ordinary(old_rec)
+            for _sev, _note in sorted(both):
+                carried.append({"step": step, "path": path,
+                                "severity": _sev, "note": _note[:300],
+                                "old_blob": old_blob, "new_blob": tip_files[path],
+                                "why": ("this finding was recorded against an earlier build of "
+                                        "this path and is recorded again against the new bytes — "
+                                        "so it was in front of whoever changed the file. Fix it, "
+                                        "or record the new verdict without it if it no longer "
+                                        "holds. ⚠ A path nobody touched keeps its findings; this "
+                                        "binds only a finding carried ACROSS a change to its own "
+                                        "file.")})
     return {"checked": True, "steps_consulted": steps,
             "changed_paths": len([p for p in changed if p in tip_files and p not in renamed]),
             "renames_exempt": sorted(renamed),
-            "owed": obligations}
+            "owed": obligations,
+            # ⛔ ITS OWN LIST, NEVER FOLDED INTO `owed`. The remedies are opposite: `owed` says
+            # RUN THE STEP over bytes nobody judged; this says a step already ran, twice, and
+            # reported the same thing both times. Collapsing them would tell a caller to re-run a
+            # checker that will reproduce the finding — `RLY41-2`'s shape, a true blocking answer
+            # wearing a remedy for a different failure.
+            "carried_findings": carried}
 
 
 def _in_scope(config, step: str, path: str) -> bool:
@@ -608,6 +683,21 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     by_content_keys = {(r.get("step"), s.get("path"), s.get("git_blob_id"))
                        for r in records for s in (r.get("subjects") or [])
                        if s.get("git_blob_id")}
+    # ⚠ THE RECORDS THEMSELVES, for the carried-finding check, which must compare the
+    # `outstanding` of the record at the OLD blob against the one at the NEW blob. The key SET
+    # above answers "was this judged"; it cannot answer "what did the judgement say", and my first
+    # attempt called `.get()` on it — 35 tests failed with `'set' object has no attribute 'get'`,
+    # which is the honest cost of assuming a name meant a mapping.
+    # ⚠ Highest revision wins, matching `_subject_index`: a superseded finding is not carried.
+    recs_by_content: dict = {}
+    for r in records:
+        for s in (r.get("subjects") or []):
+            if not s.get("git_blob_id"):
+                continue
+            k = (r.get("step"), s.get("path"), s.get("git_blob_id"))
+            prior = recs_by_content.get(k)
+            if prior is None or r.get("revision", 0) >= prior.get("revision", 0):
+                recs_by_content[k] = r
     # ⭐⭐ BUILT ONCE FOR THE WHOLE WALK — see the long note at `inventory.build`. It is a pure
     # function of `records`, which does not change across the commits of one call, and
     # rebuilding it per commit was 52% of a measured 43-commit run.
@@ -897,12 +987,18 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     # turn one arc into hundreds of obligations -- measured at 328 for a 29-commit range.
     ratchet = _ratchet(config=config, repo=repo, base=rows[0]["commit"] + "^",
                        tip=rows[-1]["commit"], tip_files=tip_files, admitted=admitted,
-                       by_content=by_content_keys)
+                       by_content=by_content_keys,
+                       recs_by_content=recs_by_content)
     owed = ratchet.get("owed") or []
+    # ⭐⭐ A CARRIED FINDING BLOCKS, Tim's ruling 2026-09-27 — "a finding may not be carried ACROSS
+    # a change to its own file". It is a SEPARATE term in the decision rather than folded into
+    # `owed`, for the same reason the lists are separate: `owed` means run the step, this means the
+    # step ran twice and said the same thing, and a caller told to re-run would reproduce it.
+    carried = ratchet.get("carried_findings") or []
 
     return {
         "ok": True,
-        "allowed": (not blocking) and not owed,
+        "allowed": (not blocking) and not owed and not carried,
         "range": rev_range,
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
