@@ -444,6 +444,45 @@ class Config:
         """
         return _digest_enforcement(self.required)
 
+    def scope_exclude_for(self, step: str) -> list:
+        """The ONE answer to "what paths are outside this step's scope" — registry UNION carve.
+
+        ⛔⛔ IT EXISTS BECAUSE THE CARVE WAS HALF-APPLIED FOR A DAY AND I VERIFIED IT ON THE HALF
+        THAT WORKED. Measured 2026-09-27, after the ZeroParadox session reported an obligation I
+        had told them was impossible:
+
+            requirements('push')['copy_editor']['scope_exclude']   carve PRESENT
+            config.required['types']['copy_editor']['scope_exclude'] carve ABSENT
+            canpush._in_scope(copy_editor, '.claude/commands/copy-editor.md')  ->  True
+
+        `requirements()` merged the loop break into its OWN returned entry; `_in_scope` read
+        `config.required` directly, so the changed-path ratchet owed verdicts on a path Tim had
+        signed a carve for. **Two readers of "is this in scope", one of them carrying the
+        harness register and one not.**
+
+        ⚠⚠ AND THE COMMENT AT THAT MERGE SITE ALREADY WARNED ABOUT EXACTLY THIS — *"only the
+        served requirement has both"* — and records the consumer asserting three times that
+        `adversary` has no `loop_break`, "each time correctly scoped to the file it could read and
+        each time concluding about the system." I wrote that warning, then built a second scope
+        reader that bypasses the merge, then used the served surface to tell them their correct
+        report was wrong. The register is useless to any reader that does not go through it.
+
+        ⭐ SO THE FIX IS NOT "MERGE IN TWO PLACES", IT IS ONE FUNCTION BOTH CALLERS USE. A second
+        correct copy is the next divergence waiting for someone to add a third reader.
+
+        ⛔ AND IT IS DELIBERATELY *NOT* MERGED INTO `self.required` AT LOAD TIME, which would have
+        been the smaller diff: that dict must stay the registry AS WRITTEN, because
+        `registry_scope_digest` and the convergence freeze hash it and compare against the
+        consumer's own file. Merging a harness-side carve into it would make the freeze price a
+        value that exists in no revision of their repo.
+        """
+        spec = (self.required.get("types") or {}).get(step) or {}
+        base = set(spec.get("scope_exclude") or [])
+        brk = (self.loopbreaks.get("breaks") or {}).get(step) or {}
+        carve = {p for p in (brk.get("exclude") or [])
+                 if isinstance(p, str) and p.strip()}
+        return sorted(base | carve)
+
     @property
     def pin_fields(self) -> tuple:
         """`PIN_FIELDS`, reachable from a caller holding only a Config.
@@ -1112,8 +1151,10 @@ class Config:
             _paths = [p for p in (_brk.get("exclude") or []) if isinstance(p, str) and p.strip()]
             if not _paths:
                 continue
-            _entry["scope_exclude"] = sorted(
-                set(_entry.get("scope_exclude") or []) | set(_paths))
+            # ⚠ THROUGH THE ONE RESOLVER. This used to compute the union inline, and that inline
+            # copy was the whole defect: `canpush._in_scope` computed scope from the RAW registry
+            # and never saw a carve. See `scope_exclude_for`.
+            _entry["scope_exclude"] = self.scope_exclude_for(_name)
             _entry["loop_break"] = {"exclude": sorted(set(_paths)),
                                     "reason": _brk.get("reason"),
                                     "decided": _brk.get("decided"),

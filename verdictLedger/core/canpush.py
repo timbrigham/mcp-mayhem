@@ -239,7 +239,21 @@ def _in_scope(config, step: str, path: str) -> bool:
         return False                       # no declared surface -- see _judging_steps
     if not any(fnmatch.fnmatch(path, g) for g in globs):
         return False
-    return not any(fnmatch.fnmatch(path, g) for g in spec.get("scope_exclude") or [])
+    # ⛔⛔ THROUGH `config.scope_exclude_for`, NOT `spec["scope_exclude"]`, AND THAT ONE WORD WAS A
+    # REAL DEFECT FOR A DAY. `spec` is the RAW REGISTRY, and the harness loop-break register lives
+    # in THIS repo — `config/loopbreaks.v1.json` — merged only inside `config.requirements()`. So
+    # this function, the changed-path ratchet's only scope test, never saw a carve Tim had signed.
+    #
+    # ⚠⚠ MEASURED 2026-09-27: `copy_editor`'s carve for its own brief was PRESENT in
+    # `requirements('push')` and ABSENT here, so the ratchet owed a verdict on the one path a
+    # signed loop break exists to remove. I verified the carve on the served surface, concluded it
+    # worked, and told the consumer their correct report was wrong — they had run the panel and
+    # cleared a real obligation.
+    #
+    # ⭐ The register is worth nothing to a reader that does not go through the resolver, which is
+    # why there is now exactly one.
+    return not any(fnmatch.fnmatch(path, g)
+                   for g in config.scope_exclude_for(step))
 
 
 def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict:
@@ -297,7 +311,17 @@ def _witness(*, config, repo: str, base: str, tip_files: dict, admitted) -> dict
                 continue
             when = spec.get("when")
             globs = spec.get("scope") or ([when] if when else [])
-            drop = spec.get("scope_exclude") or []
+            # ⛔⛔ THE SECOND RAW-REGISTRY SCOPE READER, FOUND BY SWEEPING FOR THE CLASS RATHER THAN
+            # FIXING THE INSTANCE. `types` here is `config.required["types"]` — the registry as
+            # written — so like `_in_scope` before it, this never saw a harness loop-break carve.
+            # ⚠ The consequence is milder than the ratchet's and still wrong: `_witness` would
+            # report a step as COVERING a path Tim carved out of its scope, which is a false
+            # positive in the one field built to answer "did any admitted family actually look at
+            # these bytes". A carve makes a step look at LESS; a witness claiming otherwise
+            # overstates coverage.
+            # ⭐ Three further readers were checked in the same sweep and are SAFE: they iterate
+            # `config.requirements(action)`, which merges the carve already.
+            drop = config.scope_exclude_for(step)
             if globs and not any(fnmatch.fnmatch(path, g) for g in globs):
                 continue
             if any(fnmatch.fnmatch(path, g) for g in drop):
