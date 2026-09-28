@@ -106,6 +106,28 @@ class ReadResult(Result, total=False):
     worktree: str | None
     exit_code: int
     output: str
+    # ⛔⛔ ON A CONTENT OP (`show`, `cat-file`) `output` IS THE EXACT BYTES AND `stderr` IS SPLIT
+    # OFF. Added 2026-09-27 after a data-integrity bug: `read` returned `GitResult.output`, a
+    # DISPLAY accessor that joins stderr and calls `.strip()`, so a caller reconstructing a file
+    # got a different blob. Measured: a 167,794-byte blob `7dbd4741` came back as 167,793 bytes
+    # hashing `370c225c` — one stripped trailing newline. In a system keyed on
+    # (step, path, git_blob_id), a read that cannot reproduce a blob is the founding defect.
+    # ⚠ The consumer hit this substituting an approved checker build and reported it as an
+    # artifact of THEIR OWN pipeline; their hash matched the measurement exactly.
+    # ⭐ TO RECOVER THE BYTES: `output.encode("utf-8", "surrogateescape")`. That is not optional
+    # ceremony — the decode uses surrogateescape so arbitrary non-UTF-8 content round-trips, and a
+    # plain `.encode()` will raise on it.
+    # ⚠ `byte_faithful` is present and True ONLY on a content op. Its absence means `output` is a
+    # transcript: stderr joined, whitespace stripped, newlines translated. Verified on CRLF and
+    # binary fixtures, because a `byte_faithful` flag on a path that still translated CRLF to LF
+    # would be exactly the false claim this field exists to prevent.
+    # ⚠⚠ AND WRITING THAT SENTENCE BROKE THIS FILE: the escaped CRLF in the original draft went
+    # through a shell heredoc into Python and arrived as a LITERAL newline, splitting the comment
+    # and raising SyntaxError on import. A newline-translation bug, in the comment about
+    # newline-translation bugs, caused by the same class of tooling. Write code with the edit tools,
+    # not through a heredoc, when the content itself contains escapes.
+    stderr: str
+    byte_faithful: bool
 
 
 class FlightRow(TypedDict, total=False):

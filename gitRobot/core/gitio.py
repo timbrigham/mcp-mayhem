@@ -85,18 +85,40 @@ class Git:
     # -- invocation -----------------------------------------------------------
 
     def run(self, args: Sequence[str], *, timeout: Optional[int] = None,
-            check: bool = False) -> GitResult:
+            check: bool = False, byte_faithful: bool = False) -> GitResult:
+        """Run git. ``byte_faithful=True`` preserves the EXACT bytes git emitted.
+
+        ⛔⛔ THE DEFAULT PATH IS LOSSY BY DESIGN AND THAT IS FINE UNTIL THE OUTPUT *IS* CONTENT.
+        `text=True` applies universal-newline translation, so `\\r\\n` arrives as `\\n`, and
+        `errors="replace"` substitutes U+FFFD for anything not valid UTF-8. Both are right for a
+        transcript a human reads; both destroy a file.
+
+        ⚠⚠ MEASURED 2026-09-27 on a 20-byte CRLF blob: `cf9b2a85` on disk came back as 18 bytes
+        hashing to `e5c5c558`. **So a `byte_faithful: True` field on the default path would have
+        been a FALSE CLAIM, and I nearly shipped one** — caught only by testing the assertion
+        against a CRLF fixture before committing it, rather than against the LF file that had
+        exposed the original bug.
+
+        ⭐ `surrogateescape` IS THE LOAD-BEARING CHOICE, not `replace`. It round-trips arbitrary
+        bytes through `str` losslessly, so `.encode("utf-8", "surrogateescape")` recovers exactly
+        what git wrote — including a PDF or any non-UTF-8 blob. `replace` would silently substitute
+        and make the corruption unrecoverable rather than merely present.
+        """
         argv = ["git", *_BASE_ARGS, *args]
+        # ⚠⚠ BYTES MODE, THEN DECODE BY HAND — `subprocess.run` HAS NO `newline` PARAMETER, and my
+        # first attempt passed one and raised `TypeError` on the first call. There is no way to keep
+        # `text=True` and disable universal-newline translation, so the only faithful route is to
+        # capture bytes and decode explicitly.
+        _binary = byte_faithful
         try:
             proc = subprocess.run(
                 argv,
                 cwd=str(self.repo),
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 shell=False,                      # never; see the module docstring
                 timeout=timeout or self.timeout,
+                **({} if _binary else
+                   {"text": True, "encoding": "utf-8", "errors": "replace"}),
             )
         except FileNotFoundError as exc:
             raise RepoError("git executable not found on PATH") from exc
@@ -104,8 +126,18 @@ class Git:
             raise RepoError(
                 f"git {' '.join(args)} timed out after {timeout or self.timeout}s"
             ) from exc
+        # ⭐ `surrogateescape` IS WHAT MAKES THE DECODE REVERSIBLE. `.encode("utf-8",
+        # "surrogateescape")` recovers exactly the bytes git wrote, including a PDF or any
+        # non-UTF-8 blob. `errors="replace"` — the default path — substitutes U+FFFD and makes the
+        # loss unrecoverable rather than merely present, which is right for a transcript and fatal
+        # for content.
+        if _binary:
+            _out = (proc.stdout or b"").decode("utf-8", "surrogateescape")
+            _err = (proc.stderr or b"").decode("utf-8", "surrogateescape")
+        else:
+            _out, _err = proc.stdout or "", proc.stderr or ""
         result = GitResult(argv=argv, exit_code=proc.returncode,
-                           stdout=proc.stdout or "", stderr=proc.stderr or "")
+                           stdout=_out, stderr=_err)
         if check and not result.ok:
             raise RepoError(f"git {' '.join(args)} failed ({result.exit_code}): "
                             f"{result.output}")

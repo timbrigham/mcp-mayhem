@@ -417,7 +417,40 @@ class GitRobot:
         # paths are — a read aimed at an arbitrary directory would describe a tree gitRobot does
         # not guard, which is what `forbidden_token` above refuses in flag form.
         target = self._target(repo_mode, worktree)
-        result = target.run([op, *args])
+        # ⚠ THE FLAG IS SET HERE, NOT INFERRED IN `run`. `gitio.Git` has no idea what a caller
+        # means to do with the output; the op list that returns content lives with the op list.
+        result = target.run([op, *args], byte_faithful=op in tiers.CONTENT_OPS)
+        # ⛔⛔ A CONTENT OP RETURNS BYTES, NOT A TRANSCRIPT. `result.output` is a DISPLAY accessor —
+        # its own docstring says "stdout and stderr joined" and it calls `.strip()` — so using it
+        # for `show`/`cat-file` corrupted file content three ways at once: leading and trailing
+        # whitespace stripped, stderr concatenated INTO the content, and `text=True` translating
+        # CRLF to LF.
+        #
+        # ⚠⚠ MEASURED 2026-09-27 ON A REAL FILE, and this is a data-integrity bug rather than a
+        # formatting nit: the blob is 167,794 bytes / `7dbd4741`, and this returned 167,793 /
+        # `370c225c`. ONE BYTE — the trailing newline — so the reconstructed blob id differed. **In
+        # a system whose entire identity model is (step, path, git_blob_id), a read that cannot
+        # reproduce a blob is the founding defect with a tool wrapped around it.**
+        #
+        # ⭐ AND IT COST A PEER A TEST RUN AND AN APOLOGY THEY DID NOT OWE. The ZeroParadox session
+        # substituted an approved checker build into a worktree via this op, computed `370c225c`,
+        # and reported it as *"some transcoding artifact in how I copied the bytes"* on their side.
+        # Their hash matched my measurement to the character. They flagged it anyway, against their
+        # own interest in the argument they were making — which is the only reason it was found.
+        #
+        # ⚠ `output` IS NOT WRONG; IT IS A DISPLAY ACCESSOR ON A CONTENT PATH. Stripping and
+        # joining are correct for a gate transcript, where a hook's verdict may land on either
+        # stream — and `output` is used by every mutating receipt in this file. So the fix is
+        # per-OP, not a change to `output`.
+        #
+        # ⛔ `stderr` GETS ITS OWN FIELD RATHER THAN BEING DROPPED. Discarding it would trade a
+        # corruption bug for a blindness bug: a `show` that half-failed would return truncated
+        # content with nothing to say so.
+        if op in tiers.CONTENT_OPS:
+            return {"op": op, "args": args, "worktree": worktree,
+                    "exit_code": result.exit_code,
+                    "output": result.stdout, "stderr": result.stderr,
+                    "byte_faithful": True, "ok": result.ok}
         return {"op": op, "args": args, "worktree": worktree,
                 "exit_code": result.exit_code,
                 "output": result.output, "ok": result.ok}

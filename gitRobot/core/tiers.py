@@ -26,6 +26,32 @@ from typing import Optional, Sequence
 # subcommand -> the argument forms that stay read-only. None = the whole
 # subcommand is read-only whatever its flags. A tuple = only these first
 # arguments are allowed (e.g. `branch --list` reads, `branch -D` deletes).
+# ⛔⛔ THE READ OPS WHOSE OUTPUT *IS* FILE CONTENT, AND THEY MUST NOT BE STRIPPED OR JOINED.
+#
+# ⚠⚠ MEASURED 2026-09-27, AND IT WAS A DATA-INTEGRITY BUG IN A CONTENT-ADDRESSED SYSTEM.
+# `read()` returned `GitResult.output`, whose docstring is *"stdout and stderr joined — hooks
+# write their verdict to both"* and which does `self.stdout.strip()`. So a caller reconstructing
+# a file from `read(op='show', args=['HEAD:path'])` got:
+#
+#     git blob                        167794 bytes   7dbd4741a92477c3
+#     what read(op='show') returned   167793 bytes   370c225c633e580d    <- one byte short
+#
+# The trailing newline was stripped, so the reconstructed blob id differed. The ZeroParadox
+# session hit this substituting an approved checker build into a worktree, got `370c225c`, and
+# **reported it as a transcoding artifact in their own pipeline.** It was mine, and their hash
+# matched my measurement to the character. A peer apologised for my bug.
+#
+# ⛔ THREE LOSSES ON ONE PATH, and the strip was only the visible one:
+#     .strip()      drops leading AND trailing whitespace
+#     stderr joined anything git writes to stderr is concatenated INTO the "file content"
+#     text=True     translates CRLF to LF (latent here: guards.py is LF, so it did not show)
+#
+# ⭐ `output` IS NOT WRONG — IT IS A DISPLAY ACCESSOR USED ON A CONTENT PATH. Stripping and
+# joining are right for a gate transcript, where a hook's verdict may land on either stream.
+# They are wrong for bytes. So the fix is per-OP rather than a change to `output`, which every
+# mutating receipt also uses.
+CONTENT_OPS: frozenset = frozenset({"show", "cat-file"})
+
 READ_OPS: dict[str, Optional[tuple[str, ...]]] = {
     "status": None,
     "log": None,
