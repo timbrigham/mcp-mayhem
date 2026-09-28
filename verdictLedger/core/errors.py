@@ -37,7 +37,7 @@ class LedgerError(Exception):
 
 
 class ValidationFailure(LedgerError):
-    """A record broke one or more of V1–V22. NEVER retried.
+    """A record broke one or more of V1–V23. NEVER retried.
 
     Carries every violation, not just the first — a caller fixing one rule at a
     time across three round trips is a caller that gives up and works around it.

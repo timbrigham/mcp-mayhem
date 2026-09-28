@@ -116,7 +116,40 @@ RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 # `evidence` names it, so editing the brief moves a blob the record names, the key goes
 # STALE and the gate re-runs. A delegated verdict cannot outlive the instructions it
 # was made under. Same machinery as V16, pointed at review instead of checkers.
-DECIDED_HOW = ("mechanical", "agreement", "signature", "override", "delegated")
+#   panel        N readers ran INDEPENDENTLY and a stated THRESHOLD agreed. Added 2026-09-27 on
+#                Tim's ruling, and the vocabulary gap it fills had been open and NAMED since
+#                2026-09-08: `copy_editor._module_why` recorded *"TENSION, unresolved on purpose:
+#                the brief's tally rule is 2-of-3 and V3 requires unanimity for a PASS under
+#                `agreement`"*, deferred on the explicit condition that `copy_editor` was
+#                "admitted by nothing so nothing is gated on the answer". Admitting it at push
+#                expired that condition, and the first real panel run hit the gap immediately.
+#
+# ⛔⛔ IT IS A NEW VALUE RATHER THAN A RELAXATION OF V3, AND THAT IS THE WHOLE POINT. Relaxing V3
+# to price a threshold would retroactively change what 291 stored `agreement` records MEAN — they
+# assert unanimity today, and afterwards no reader could tell which kind they were looking at.
+# That is the two-meanings-one-value defect the exit-code section forbids. `agreement` is
+# untouched and still means unanimous.
+#
+# ⚠ AND THE SCHEMA ALREADY ARGUED THIS IS THE FREE CHANGE, which is why it was available: "A NEW
+# enum value has no existing traffic to brick — every rule here could only ever refuse a record
+# that does not exist yet." Same argument that admitted `delegated` on 2026-08-25, for the same
+# reason: a real review shape with no honest way to record it.
+#
+# ⭐⭐ THE THRESHOLD LIVES ON THE RECORD *AND* HAS A POLICY FLOOR, and both halves are load-bearing.
+# The record states what APPLIED, so a later policy edit cannot silently re-interpret a stored
+# verdict — the freeze lesson. Policy states the MINIMUM (`policy.panel.min_threshold`, default 2)
+# so a record cannot claim `threshold: 1`, which would be a single agent wearing a panel badge:
+# precisely what V3 exists to stop.
+#
+# ⚠⚠ WHAT MAKES A VOTE SAFE HERE IS NOT THIS VALUE — IT IS V18, AND IT ALREADY WORKED.
+# `SEVERITY_ON_A_PASS` is `("ordinary",)`, so a dissenting reader who grades BEDROCK or BLOCKING
+# makes a passing record UNREPRESENTABLE however the tally fell. **The threshold only ever decides
+# ORDINARY matters; a serious dissent is not outvoted, it refuses the PASS.** So this value is
+# safe exactly as long as findings UNION across readers and only the VERDICT is voted — which the
+# consumer's brief states in terms and which THIS SERVER CANNOT ENFORCE, because it sees only what
+# the record carries and not how many readers found what. An emitter obligation, said out loud
+# rather than implied to be checked.
+DECIDED_HOW = ("mechanical", "agreement", "signature", "override", "delegated", "panel")
 
 # The primary key. Everything else in the record is payload determined by it.
 KEY_FIELDS = ("step", "basis.value", "revision")

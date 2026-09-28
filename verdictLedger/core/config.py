@@ -335,6 +335,30 @@ class Config:
     def min_passes(self) -> int:
         return int(self.policy["agreement"]["min_passes"])
 
+    @property
+    def panel_min_threshold(self) -> int:
+        """The smallest threshold a `panel` record may claim. Default 2.
+
+        ⭐ DEFAULTED RATHER THAN REQUIRED, DELIBERATELY, AND THE DIRECTION IS THE ARGUMENT. An
+        absent `policy.panel` block must not make the floor 1 — that would let a single agent
+        record a "panel" and is exactly what V3 was written to stop. So the default is the SAFE
+        value and raising it is the deliberate act, which is the same choice `_strip_rationale`
+        makes with a denylist: an unconfigured case trips rather than passes.
+
+        ⚠ AND IT IS A FLOOR, NOT THE VALUE. The threshold that APPLIED is on the record, so a
+        later edit here cannot re-interpret a stored verdict; this only refuses a record claiming
+        less than the fleet permits. Two objects, two homes — the freeze lesson applied before it
+        cost anything.
+        """
+        raw = (self.policy.get("panel") or {}).get("min_threshold")
+        try:
+            floor = int(raw)
+        except (TypeError, ValueError):
+            return 2
+        # ⛔ A CONFIGURED 1 IS REFUSED AS FIRMLY AS AN ABSENT BLOCK. Policy may tighten this and
+        # may not open the hole the value exists to close.
+        return floor if floor >= 2 else 2
+
     def paths(self) -> dict:
         """The resolved locations of both config files, and how they were chosen.
 

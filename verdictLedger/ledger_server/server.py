@@ -235,7 +235,7 @@ def _as_record(record) -> dict:
 @mcp.tool(title='Append a verdict',
           annotations=ToolAnnotations(title='Append a verdict', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def append(record: RecordIn) -> AppendResult:
-    """Append one verdict. Validated against V1-V22; REFUSES anything short.
+    """Append one verdict. Validated against V1-V23; REFUSES anything short.
 
     ⚠ THIS DOCSTRING IS THE WRITING GUIDE. `client/record.py` carries the same advice
     for callers that import it, and an agent calling this tool directly never sees
@@ -254,8 +254,27 @@ async def append(record: RecordIn) -> AppendResult:
       delegated   ONE agent round under a named brief. REQUIRES `who` (the gate) and,
                   on a PASS, `evidence` naming the BRIEF. tier must be "A". This is
                   the route for a review gate (V17).
-      agreement   a real panel: V3 wants `agreed == passes >= policy.min_passes`.
+      agreement   a UNANIMOUS round: V3 wants `agreed == passes >= policy.min_passes`.
                   ONE record carries the whole round; do NOT write one per pass.
+                  ⚠ THIS LINE SAID "a real panel" UNTIL 2026-09-27 AND THAT WORDING SENT A
+                  READER THE WRONG WAY — it is the shape for a round that agreed
+                  UNANIMOUSLY, and a 2-of-3 panel is refused here. Use `panel`.
+      panel       N readers ran INDEPENDENTLY and a stated THRESHOLD agreed. REQUIRES
+                  `decided.threshold` (the threshold that APPLIED, on the record so a
+                  later policy edit cannot re-interpret a stored verdict), `who` (which
+                  panel), `passes >= threshold`, `agreed <= passes`, and on a PASS both
+                  `agreed >= threshold` and `evidence` naming the BRIEF (V23).
+                  ⭐ A SPLIT BELOW THRESHOLD IS NOT A DEAD END: record UNDECIDED with
+                  `failing` naming the disputed subset, which blocks, and a human may
+                  then accept it with `sign(who=…)`. Do NOT re-run until uniform — that
+                  re-rolls until the dissenter disappears.
+                  ⛔ AND THE DISSENT IS PROTECTED BY V18, NOT BY THE TALLY: only
+                  `ordinary` may appear in `outstanding` on a PASS, so a reader grading
+                  BEDROCK or BLOCKING makes a passing record UNREPRESENTABLE however the
+                  vote fell. The threshold only ever decides ordinary matters.
+                  ⚠ That holds only if findings UNION across readers and only the
+                  VERDICT is voted. This server cannot check that — it sees what the
+                  record carries, never how many readers found what.
       signature   a HUMAN accepted a verdict the round did not produce. `who` is a
                   person (V5). Never an agent's name — `delegated` is for that.
       override    a REGRADE: "the gate erred". V12 forbids overriding your own prior
@@ -482,7 +501,7 @@ async def genesis(commit: str, note: Optional[str] = None) -> GenesisResult:
 @mcp.tool(title='Preview validation',
           annotations=ToolAnnotations(title='Preview validation', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def validate(record: RecordIn) -> ValidateResult:
-    """Schema plus V1-V22. Pure, no write — use it to check a record BEFORE
+    """Schema plus V1-V23. Pure, no write — use it to check a record BEFORE
     appending. Returns {ok, errors[]} with EVERY
     violation, not just the first — one rule per round trip is how a caller gives
     up and works around the thing."""

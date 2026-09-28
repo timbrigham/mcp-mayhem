@@ -1,4 +1,4 @@
-"""V1–V22. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
+"""V1–V23. Each rule makes a defect this project has already paid for UNREPRESENTABLE.
 
 ⚠ Every violation is returned, never just the first. A caller fixing one rule per
 round trip is a caller who stops using the thing.
@@ -76,7 +76,7 @@ def structural(record: dict) -> list[str]:
     # rule engine and asserts every probe goes green — stayed RED. A probe that survives the
     # rules being switched off is testing a proxy, not the rule. V19 is policy about what a
     # blocking verdict must CARRY, not about whether the record can be READ, so it lives in
-    # `rules()` with V1-V22.
+    # `rules()` with V1-V23.
     if "failing" in record:
         failing = record.get("failing")
         if not isinstance(failing, list) or not all(
@@ -170,7 +170,7 @@ def structural(record: dict) -> list[str]:
 def rules(record: dict, *, config: Config, existing_ids: set,
           tips: Optional[dict] = None, known_config_shas: Optional[set] = None,
           timed_steps: Optional[set] = None) -> list[str]:
-    """V1–V22. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record.
+    """V1–V23. ``tips`` maps ``(step, basis_value)`` -> the highest-revision record.
 
     ``timed_steps`` is the set of steps that have ever reported ``cost.seconds`` — V22's
     ratchet memory, from ``store.steps_timing()``. ⚠ ``None`` means the index was NOT
@@ -517,6 +517,75 @@ def rules(record: dict, *, config: Config, existing_ids: set,
                 "That is what makes the verdict expire when the brief changes, and it "
                 "is the whole of the accountability: not who ran it, but under which "
                 "instructions, over which bytes.")
+
+    # ⭐⭐ V23 — A VOTED PANEL, WHICH V3 MADE UNREPRESENTABLE. Tim's ruling 2026-09-27.
+    #
+    # ⚠⚠ THE GAP WAS NAMED AND DEFERRED SINCE 2026-09-08 and expired without anyone noticing:
+    # `copy_editor._module_why` recorded the tension between a 2-of-3 brief and V3's unanimity
+    # "unresolved on purpose … `copy_editor` is admitted by nothing so nothing is gated on the
+    # answer." Admitting it at push voided that premise, and the first real panel run split 2-of-3
+    # with no honest way to record it: V3 refuses a non-unanimous `agreement` PASS, and the only
+    # route left was re-running until uniform — which the consumer's own registry calls
+    # "blocking on a coin flip", since byte-identical input is measured to return different
+    # verdicts, and which re-rolls until the DISSENTER disappears.
+    #
+    # ⛔ WHAT MAKES A VOTE SAFE IS V18, NOT THIS RULE, and that is why this one is short.
+    # `SEVERITY_ON_A_PASS` is `("ordinary",)`, so a reader grading BEDROCK or BLOCKING makes a
+    # passing record UNREPRESENTABLE however the tally fell. The threshold only ever decides
+    # ORDINARY matters. ⚠ Safe only while findings UNION across readers and only the VERDICT is
+    # voted — an EMITTER obligation this server cannot check, because it sees what the record
+    # carries and not how many readers found what.
+    if how == "panel":
+        passes, agreed = decided.get("passes"), decided.get("agreed")
+        thr = decided.get("threshold")
+        floor = config.panel_min_threshold
+        if not (decided.get("who") or "").strip():
+            out.append(
+                "V23: how 'panel' requires `who` — which panel decided. Same argument as "
+                "`delegated`: the accountability is not a process identity, it is WHICH gate ran "
+                "under WHICH brief, and a tally with nobody attached is a number without a "
+                "claimant. SUPPLY decided.who=<the panel, e.g. 'copy_editor panel (3 readers)'>.")
+        if not all(isinstance(v, int) and not isinstance(v, bool)
+                   for v in (passes, agreed, thr)):
+            out.append(
+                "V23: how 'panel' requires integer decided.passes, decided.agreed and "
+                "decided.threshold. ⚠ `threshold` is the threshold that APPLIED and belongs on "
+                "the record, not only in policy: policy can be edited later, and a stored verdict "
+                "must keep saying which rule it met.")
+        else:
+            if thr < floor:
+                out.append(
+                    f"V23: decided.threshold is {thr}, below the floor of {floor} "
+                    f"(policy.panel.min_threshold, default 2). A threshold of 1 is a SINGLE AGENT "
+                    f"WEARING A PANEL BADGE, which is exactly what V3 refuses for `agreement` — "
+                    f"and a panel whose divergence signal cannot exist is not a panel. SUPPLY a "
+                    f"threshold of at least {floor}, or raise the floor deliberately in policy.")
+            if passes < thr:
+                out.append(
+                    f"V23: decided.passes is {passes} and decided.threshold is {thr} — fewer "
+                    f"readers RAN than the verdict claims agreed. SUPPLY passes >= threshold; if "
+                    f"only {passes} reader(s) ran, the honest threshold is at most {passes}.")
+            if agreed > passes:
+                out.append(
+                    f"V23: decided.agreed is {agreed} of decided.passes {passes} — more readers "
+                    f"agreed than ran. SUPPLY agreed <= passes.")
+            if verdict == "PASS" and agreed < thr:
+                out.append(
+                    f"V23: a PASS claims the panel's threshold was met, and {agreed} of {passes} "
+                    f"agreed against a threshold of {thr}. ⭐ THIS IS NOT A DEAD END: a split "
+                    f"below threshold is honestly recorded as UNDECIDED, which blocks and carries "
+                    f"`failing` naming the disputed subset — and a human may then accept it with "
+                    f"sign(who=…). SUPPLY verdict='UNDECIDED' for a split, or agreed >= {thr}.")
+        # ⭐ SAME REQUIREMENT AS V17's DELEGATED PASS, FOR THE SAME REASON RATHER THAN BY ANALOGY.
+        # A panel's accountability is the brief its readers ran under, so naming the brief's blob
+        # is what makes the verdict EXPIRE when the brief is edited — the key goes stale and the
+        # panel re-runs. A verdict that outlives its instructions is the thing this buys.
+        if verdict == "PASS" and not (record.get("evidence") or []):
+            out.append(
+                "V23: a panel PASS must carry `evidence` naming the brief its readers ran under "
+                "— [{path, git_blob_id}] for e.g. `.claude/commands/<gate>.md`. That is what "
+                "makes the verdict expire when the brief changes, and it is the whole of the "
+                "accountability: not who ran it, but under which instructions, over which bytes.")
 
     # V18 — ⭐⭐ A PASS MAY CARRY FINDINGS, AND ONLY ORDINARY ONES.
     # Tim ruled 2026-08-26 that STOP-ORDINARY is a PASS condition: reviewed, ordinary
