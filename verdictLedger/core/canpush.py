@@ -55,6 +55,19 @@ def _git(repo: str, *args: str) -> str:
     return proc.stdout
 
 
+ALLOWED_SCOPE = (
+    "THE LEDGER'S ADMISSION BAR OVER THIS RANGE, AND NOTHING ELSE. `allowed: true` means "
+    "every admitted step is satisfied for every commit here — it is NOT a prediction that "
+    "`git push` will succeed. ⛔ A SECOND ENFORCEMENT LAYER IS OUT OF VIEW: the pre-push "
+    "hook's routing legs enforce per-file `/rely` signatures over changed routed files "
+    "with no admission key, and `witness.blind_to` names it and its live instance. "
+    "Measured 2026-09-28: ALLOWED here, then refused there. "
+    "⚠ AND `blocking_count` IS MEANINGLESS WHERE `admission_state` IS UNSET OR EMPTY — "
+    "nothing declared what must gate that commit, which is not a coverage failure. Pass "
+    "`commit_admission` (gitRobot admission(action='commit')) to judge intermediates, or "
+    "the count prices a question nobody asked.")
+
+
 def _files_at(repo: str, ref: str) -> dict:
     """path -> git blob id for a commit. The whole comparison is this lookup.
 
@@ -881,8 +894,15 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     # ⚠ An EMPTY range is not a satisfied one. Pushing nothing is legitimate, but it
     # must be named rather than rendered as "all keys green".
     if not rows:
+        # ⚠ THE SCOPE STATEMENT RENDERS HERE TOO, on the OTHER path that can answer `allowed:
+        # true`. An empty range cannot be refused by the pre-push hook — there is nothing to
+        # route — so the caveat is not load-bearing for this case. It is present anyway, because a
+        # field that appears on one `allowed: true` and not another teaches a reader it is
+        # optional, and the 2026-09-22 freeze caveat shipped exactly that way: rendered in the
+        # broken state, silent in the state that produced the defect.
         return {"ok": True, "allowed": True, "range": rev_range, "commits": [],
                 "empty_range": True, "admitted": admitted,
+                "allowed_prices": ALLOWED_SCOPE,
                 "why": "the range publishes no commits; nothing was gated because "
                        "nothing is being promoted"}
 
@@ -999,6 +1019,34 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
     return {
         "ok": True,
         "allowed": (not blocking) and not owed and not carried,
+        # ⛔⛔ WHAT `allowed` PRICES, AND — THE PART THAT COST A PUSH — WHAT IT DOES NOT.
+        #
+        # ⚠⚠ MEASURED 2026-09-28. `can_push` answered ALLOWED, blocking_count 0, and the push then
+        # FAILED at the pre-push hook: `batch.py`'s routing legs refused because
+        # `tools/verify/required.v2.json` had been edited after the last `/rely` round, so its
+        # current bytes carried no signature. **`witness.blind_to` names that layer, that
+        # mechanism, and that exact file as "the live instance"** — the disclosure was already
+        # correct and specific, and it was not attached to the field anyone reads.
+        #
+        # ⛔⛔ AND I BUILT THIS GAP THE DAY BEFORE. `preflight.passed` gained `passed_prices` on
+        # 2026-09-27, which says *"NOT a prediction that the push will be allowed … TO LEARN
+        # WHETHER THE PUSH WILL GO: can_push(rev_range=…)"*. So the chain was: preflight says ask
+        # can_push; can_push says ALLOWED with no caveat; a layer can_push documents being blind to
+        # refuses. **I pointed a reader at a surface that did not carry the warning I had just
+        # added to the one they came from** — the same fix applied at one level and not its sibling,
+        # which is `SH-3`, sixth instance in this file, and this one was mine to have prevented.
+        #
+        # ⚠ IT IS NOT A DANGEROUS FAIL-OPEN AND SHOULD NOT BE READ AS ONE. The hook held and
+        # nothing shipped wrongly; this is a false green in a PREDICTIVE surface, which costs a
+        # wasted push cycle and a reader's trust rather than correctness.
+        #
+        # ⭐ AND THE SECOND SENTENCE CLOSES THE FIFTH INSTANCE IN THE SAME BREATH: the "admission
+        # UNSET is NOT a coverage failure" warning lived only in the RENDERED text, so a caller
+        # reading `blocking_count` programmatically got a number with nothing saying it is
+        # meaningless when nothing declared what gates a commit. That one caught ME, reconciling a
+        # figure with the consumer, and I nearly reported a disagreement caused by my own omitted
+        # `commit_admission`.
+        "allowed_prices": ALLOWED_SCOPE,
         "range": rev_range,
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
