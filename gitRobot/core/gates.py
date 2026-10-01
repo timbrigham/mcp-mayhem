@@ -36,6 +36,28 @@ PHASES = ("pre-commit", "pre-push")
 # LLM calls. Generous, but bounded: a hung gate must not hang the server.
 PHASE_TIMEOUT = {"pre-commit": 300, "pre-push": 1800}
 
+
+def hook_provenance_env(op: str, run_id: str) -> dict:
+    """Tell the consumer's hook WHICH gitRobot run launched it — PROVENANCE, NEVER A MATCH KEY.
+
+    Added 2026-09-30 for the consumer ticket `tooling-prepush-pipeline-rerun-necessity` (Tim's
+    option (b): the hook may skip ADVISORY legs when a passing preflight exists for the
+    IDENTICAL push_refs). Measured that day: preflight `127306366b2b` passed in ~17m42s, then
+    push `3a9f8a99cec8` re-ran the same pipeline over the same HEAD and range, paid agent_gate
+    calls included.
+
+    ⛔⛔ THE SKIP DECISION DOES NOT LIVE HERE AND MUST NOT. The legs, which of them are advisory,
+    and the match against git's own stdin refs are all the consumer hook's — gates.py's
+    docstring forbids a second pipeline, and a gitRobot that said "you may skip" would be the
+    caller-supplied scope claim PREFLIGHT-VACUOUS-PASS already showed fails open. These
+    variables exist so the hook can PRINT which run it matched ("skipped, and why"); an env var
+    anyone can set is never evidence of a match. ⚠ Absent variables mean "not launched by
+    gitRobot" — a human `git push` — and the hook must treat that as no provenance, not as a
+    mismatch to report as an error.
+    """
+    return {"GITROBOT_OP": op, "GITROBOT_RUN_ID": run_id}
+
+
 _MAX_OUTPUT = 8000     # gate output echoed back to the caller, capped (receipt, not warehouse)
 # ⚠⚠ A FAILING PIPELINE PUTS ITS REASON AT THE END, SO KEEPING THE HEAD DISCARDS THE ONE
 # PART ANYBODY NEEDS. This was `self.output[:_MAX_OUTPUT]` — the first 8000 characters — and
@@ -144,7 +166,8 @@ class Gates:
         remote_ref = f"refs/heads/{branch}"
         return f"{remote_ref} {head} {remote_ref} {remote_head or self.ZERO}\n"
 
-    def run(self, phase: str, *, stdin: Optional[str] = None) -> GateResult:
+    def run(self, phase: str, *, stdin: Optional[str] = None,
+            env_extra: Optional[dict] = None) -> GateResult:
         if phase not in PHASES:
             raise ValueError(f"unknown gate phase {phase!r}; expected one of {PHASES}")
         if not self.available():
@@ -164,6 +187,8 @@ class Gates:
                 # whatever the server was started with; an empty string is a clean EOF.
                 input=stdin if stdin is not None else "",
                 timeout=PHASE_TIMEOUT.get(phase, 600),
+                # additive over the server's own environment; see hook_provenance_env
+                env=({**os.environ, **env_extra} if env_extra else None),
             )
         except subprocess.TimeoutExpired:
             return GateResult(phase=phase, ran=True, exit_code=124, output="",

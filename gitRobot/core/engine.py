@@ -1087,7 +1087,8 @@ class GitRobot:
         )
 
         def _run() -> dict:
-            gate = self.gates.run("pre-push", stdin=push_refs)
+            gate = self.gates.run("pre-push", stdin=push_refs,
+                                  env_extra=gates_mod.hook_provenance_env("preflight", run_id))
             admission = self._admission_at_tip(head)
             self.audit.append(
                 actor=self.actor, op="preflight", args={},
@@ -1478,7 +1479,8 @@ class GitRobot:
             # control is added and the next person to add one will not revisit this number.
             # ⚠ THE NUMBER LIVES AT MODULE SCOPE so `status.in_flight` can quote the cap that
             # actually bounds this call rather than a copy of it — see `PUSH_TIMEOUT`.
-            result = target.run(["push", "origin", branch], timeout=PUSH_TIMEOUT)
+            result = target.run(["push", "origin", branch], timeout=PUSH_TIMEOUT,
+                                env_extra=gates_mod.hook_provenance_env("push", run_id))
             # ⛔⛔ A NON-ZERO `git push` DOES NOT ESTABLISH THAT NOTHING WAS PUBLISHED, AND THIS
             # RECORDED `failed` FOR A PUSH THAT HAD PUBLISHED. Measured 2026-09-18 on ZeroParadox
             # run 22fb604fe894: the pipeline passed, the remote APPLIED the ref, and then

@@ -18,7 +18,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from core.errors import RepoError
 
@@ -85,7 +85,8 @@ class Git:
     # -- invocation -----------------------------------------------------------
 
     def run(self, args: Sequence[str], *, timeout: Optional[int] = None,
-            check: bool = False, byte_faithful: bool = False) -> GitResult:
+            check: bool = False, byte_faithful: bool = False,
+            env_extra: Optional[Mapping[str, str]] = None) -> GitResult:
         """Run git. ``byte_faithful=True`` preserves the EXACT bytes git emitted.
 
         ⛔⛔ THE DEFAULT PATH IS LOSSY BY DESIGN AND THAT IS FINE UNTIL THE OUTPUT *IS* CONTENT.
@@ -117,6 +118,9 @@ class Git:
                 capture_output=True,
                 shell=False,                      # never; see the module docstring
                 timeout=timeout or self.timeout,
+                # ⚠ ADDITIVE, never a replacement: `None` inherits the server's environment
+                # exactly as before. Only `push` passes anything — see gates.hook_provenance_env.
+                env=({**os.environ, **env_extra} if env_extra else None),
                 **({} if _binary else
                    {"text": True, "encoding": "utf-8", "errors": "replace"}),
             )
