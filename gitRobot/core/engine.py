@@ -241,6 +241,9 @@ class GitRobot:
         # one merge at a time — see merge(); `_merge_running` is what merge_status() reports
         self._merge_lock = threading.Lock()
         self._merge_running: Optional[dict] = None
+        # live commits by run_id — concurrent by design; the lock guards the dict, not commits
+        self._commits_lock = threading.Lock()
+        self._commits_running: dict = {}
         # Long-form refusals, keyed by id, for `explain`. In-process only: the
         # durable copy is the audit record, which `explain` falls back to.
         self._refusals: dict[str, dict] = {}
@@ -509,13 +512,16 @@ class GitRobot:
     # orphaned preflight simply re-runs). Naming the live state directly means a new state
     # added to either delegate defaults to NOT stuck, which is the safe direction: this field's
     # expensive failure is the false alarm, not the missed one.
-    _FLIGHT_LIVE = {"preflight": ("running",), "push": ("running",), "merge": ("running",)}
+    _FLIGHT_LIVE = {"preflight": ("running",), "push": ("running",), "merge": ("running",),
+                    "commit": ("running",)}
     _CAP_PRICES = {
         "preflight": "the pre-push GATE PHASE, which is the whole of a preflight",
         "push": ("the entire `git push` subprocess — hook AND network — which is why it is not "
                  "the 1800s gate-phase budget"),
         "merge": ("`git merge --no-commit` (600s) + the pre-commit gate + `git commit` (600s), "
                   "the three bounded steps a merge runs in sequence"),
+        "commit": ("the pre-commit gate + `git commit` (600s, which runs the installed hook "
+                   "again) — the OLDEST running commit; others are in `runs`"),
     }
 
     @staticmethod
@@ -608,6 +614,10 @@ class GitRobot:
             "merge": self._flight_row(
                 "merge", self.merge_status(),
                 cap=600 + gates_mod.PHASE_TIMEOUT["pre-commit"] + 600),
+            # ⭐ 2026-10-03, for consistency with merge: commit wrote no row until its end
+            "commit": self._flight_row(
+                "commit", self.commit_status(),
+                cap=gates_mod.PHASE_TIMEOUT["pre-commit"] + 600),
         }
 
     def status(self) -> dict:
@@ -938,6 +948,31 @@ class GitRobot:
                 reason=reason, target=target,
             )
 
+        # ⭐ A COMMIT THAT IS RUNNING SAYS SO — Tim, 2026-10-03, "I like consistency" (merge got
+        # this in 060c77f). Before it, a commit wrote its ONLY row at the end, so a gitRobot
+        # restart's in-flight check could not see one: measured that day, the audit read idle
+        # while a consumer `hooks.py pre-commit` ran as a gitRobot child. ⚠ NO LOCK, unlike merge:
+        # concurrent commits in different worktrees are legitimate and routine. Every row this
+        # call writes from here on carries `run_id` EXPLICITLY, so pairing never relies on order.
+        args = {"message_file": str(path), "repo": repo_mode, "worktree": worktree}
+        run_id = _refusal_id("commit", f"{path}|{target.head()}|{len(self.audit.read())}")
+        self.audit.append(
+            actor=self.actor, op="commit", args=args, decision="started",
+            repo=str(getattr(target, "repo", "") or ""), head=target.head(),
+            branch=target.branch(), tree=target.tree_state(), reason=reason, run_id=run_id,
+            detail="commit started; a terminal commit row follows unless the process dies")
+        with self._commits_lock:
+            self._commits_running[run_id] = {"started_at": _now_iso(),
+                                             "repo": str(getattr(target, "repo", "") or "")}
+        try:
+            return self._commit_body(path, target, args, reason, run_id, repo_mode, run_gate)
+        finally:
+            with self._commits_lock:
+                self._commits_running.pop(run_id, None)
+
+    def _commit_body(self, path: Path, target, args: dict, reason, run_id: str,
+                     repo_mode: str, run_gate: bool) -> dict:
+        worktree = args.get("worktree")
         gate_records = []
         if run_gate and repo_mode == "main":
             # ⚠⚠ THE GATE MUST RUN IN THE TREE BEING COMMITTED. `self.gates` is bound to the
@@ -960,7 +995,7 @@ class GitRobot:
                     decision="refused", repo=str(getattr(target, "repo", "") or ""),
                     head=target.head(), branch=target.branch(),
                     tree=target.tree_state(), gates=gate_records, reason=reason,
-                    detail="pre-commit gate did not pass",
+                    detail="pre-commit gate did not pass", run_id=run_id,
                 )
                 raise RefusalError(
                     f"the pre-commit gate did not pass, so nothing was committed.\n\n"
@@ -973,11 +1008,44 @@ class GitRobot:
         result = target.run(["commit", "--file", str(path)], timeout=600)
         decision = "allowed" if result.ok else "failed"
         return self._receipt(
-            "commit", {"message_file": str(path), "repo": repo_mode,
-                           "worktree": worktree}, decision,
+            "commit", args, decision,
             gates=gate_records, reason=reason, detail=result.output,
-            extra={"output": result.output, "ok": result.ok}, target=target,
+            extra={"output": result.output, "ok": result.ok, "run_id": run_id},
+            target=target, run_id=run_id,
         )
+
+    def commit_status(self) -> dict:
+        """running / concluded / died / none — the commit half of `in_flight`.
+
+        ⚠ Commits may run CONCURRENTLY, so `running` reports the OLDEST live one (the one a
+        `stuck` cap applies to) plus `running_count` and every run. `died` = the latest commit
+        `started` row has no row carrying its run_id and no live call — the server died or the
+        call raised mid-commit."""
+        with self._commits_lock:
+            live = dict(self._commits_running)
+        if live:
+            oldest = min(live.items(), key=lambda kv: kv[1]["started_at"])
+            return {"state": "running", "run_id": oldest[0],
+                    "started_at": oldest[1]["started_at"], "running_count": len(live),
+                    "runs": [{"run_id": k, **v} for k, v in sorted(live.items())]}
+        rows = self.audit.read()
+        started = next((r for r in reversed(rows)
+                        if r.get("op") == "commit" and r.get("decision") == "started"), None)
+        if started is None:
+            last = self.audit.last_where(op="commit")
+            return {"state": "concluded" if last else "none",
+                    "decision": (last or {}).get("decision"), "ts": (last or {}).get("ts")}
+        rid = started.get("run_id")
+        done = next((r for r in reversed(rows) if r.get("op") == "commit"
+                     and r.get("run_id") == rid and r.get("decision") != "started"), None)
+        if done:
+            return {"state": "concluded", "run_id": rid, "decision": done.get("decision"),
+                    "ts": done.get("ts")}
+        return {"state": "died", "run_id": rid, "started_at": started.get("ts"),
+                "repo": started.get("repo"),
+                "note": "a commit started and never wrote a terminal row — the server died or the "
+                        "call raised mid-commit. Check that tree's HEAD and index before retrying: "
+                        "`git commit` may or may not have landed."}
 
     # -- push, and the response window ----------------------------------------
 
