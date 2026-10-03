@@ -1097,7 +1097,8 @@ class GitRobot:
 
         def _run() -> dict:
             gate = self.gates.run("pre-push", stdin=push_refs,
-                                  env_extra=gates_mod.hook_provenance_env("preflight", run_id))
+                                  env_extra={**gates_mod.hook_provenance_env("preflight", run_id),
+                                             **self._admission_env("push")})
             admission = self._admission_at_tip(head)
             self.audit.append(
                 actor=self.actor, op="preflight", args={},
@@ -1489,7 +1490,8 @@ class GitRobot:
             # ⚠ THE NUMBER LIVES AT MODULE SCOPE so `status.in_flight` can quote the cap that
             # actually bounds this call rather than a copy of it — see `PUSH_TIMEOUT`.
             result = target.run(["push", "origin", branch], timeout=PUSH_TIMEOUT,
-                                env_extra=gates_mod.hook_provenance_env("push", run_id))
+                                env_extra={**gates_mod.hook_provenance_env("push", run_id),
+                                           **self._admission_env("push")})
             # ⛔⛔ A NON-ZERO `git push` DOES NOT ESTABLISH THAT NOTHING WAS PUBLISHED, AND THIS
             # RECORDED `failed` FOR A PUSH THAT HAD PUBLISHED. Measured 2026-09-18 on ZeroParadox
             # run 22fb604fe894: the pipeline passed, the remote APPLIED the ref, and then
@@ -2579,6 +2581,15 @@ class GitRobot:
                                     "carried_forward": carried,
                                     "reconciled": reconciled,
                                     "imports_unjudged": imports})
+
+    def _admission_env(self, action: str) -> dict:
+        """GITROBOT_ADMISSION for the hook. ⛔ An unreadable set is UNKNOWN, never `[]` — the
+        hook must not be told "nothing is admitted" when gitRobot could not look."""
+        try:
+            admitted = ledger_client.admission_for(action)
+        except Exception as exc:                      # noqa: BLE001 — never fail the push leg
+            return gates_mod.admission_env(action, None, why=str(exc))
+        return gates_mod.admission_env(action, admitted)
 
     def _imports_unjudged(self, pre: Optional[str], post: Optional[str]) -> dict:
         """What this merge brought in that no admitted step has judged — DISCLOSURE, never a gate.

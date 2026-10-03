@@ -10,9 +10,11 @@ anything would pass a presence check while naming the wrong run, which is the wh
 codebase exists to remove.
 """
 
+import json
 import os
 
 from core import gates as gates_mod
+from core import ledger as ledger_client
 
 
 def _hook_recording_env(repo):
@@ -25,6 +27,8 @@ def _hook_recording_env(repo):
         b"    os.environ.get('GITROBOT_OP', '<absent>') + ' ' +\n"
         b"    os.environ.get('GITROBOT_RUN_ID', '<absent>') + ' ' +\n"
         b"    os.environ.get('ZZ_SERVER_ENV_PROBE', '<absent>'), encoding='utf-8')\n"
+        b"pathlib.Path('admission_seen.txt').write_text(\n"
+        b"    os.environ.get('GITROBOT_ADMISSION', '<absent>'), encoding='utf-8')\n"
         b"sys.exit(0)\n")
     return repo / "env_seen.txt"
 
@@ -89,9 +93,57 @@ def test_push_hands_git_its_own_run_id(robot, repo, tmp_path, fake_gate, monkeyp
         return real(args, **kw)
 
     monkeypatch.setattr(robot.git, "run", spy)
+    monkeypatch.setattr(ledger_client, "admission_for", lambda action: ["editorial", "copy_editor"])
     out = robot.push("illustrated", reason="provenance reaches git push", wait=True)
     assert len(seen) == 1, f"expected exactly one `git push`, saw {len(seen)}"
-    assert seen[0] == {"GITROBOT_OP": "push", "GITROBOT_RUN_ID": out["run_id"]}
+    assert seen[0] == {"GITROBOT_OP": "push", "GITROBOT_RUN_ID": out["run_id"],
+                       "GITROBOT_ADMISSION": json.dumps(
+                           {"action": "push", "admitted": ["copy_editor", "editorial"],
+                            "state": "SET"}, sort_keys=True)}
+
+
+# -- GITROBOT_ADMISSION (2026-10-03): the set the hook used to hand-list ---------------------
+
+def _admission_seen(repo):
+    return json.loads((repo / "admission_seen.txt").read_text(encoding="utf-8"))
+
+
+def test_preflight_hands_the_hook_the_admitted_set(robot, repo, monkeypatch):
+    """⭐ The defect it closes: the hook hard-coded editorial+adversary and never reported
+    copy_editor, which push admits. The value must be the set gitRobot READ, not a list."""
+    from core import ledger as ledger_client
+    monkeypatch.setattr(ledger_client, "admission_for",
+                        lambda action: ["editorial", "copy_editor", "adversary"]
+                        if action == "push" else ["WRONG-ACTION"])
+    _hook_recording_env(repo)
+    robot.preflight(wait=True)
+    assert _admission_seen(repo) == {"state": "SET", "action": "push",
+                                     "admitted": ["adversary", "copy_editor", "editorial"]}
+
+
+def test_an_unreadable_admission_set_is_unknown_never_empty(robot, repo, monkeypatch):
+    """⛔ ABSENCE IS NEVER SUCCESS. "Could not read" must not reach the hook as `[]`."""
+    from core import ledger as ledger_client
+    from core.errors import ConfigError
+
+    def boom(action):
+        raise ConfigError("admission set not found at <test>")
+
+    monkeypatch.setattr(ledger_client, "admission_for", boom)
+    _hook_recording_env(repo)
+    out = robot.preflight(wait=True)
+    assert out["passed"] is True, "an unreadable set must not fail the gate it only reports to"
+    seen = _admission_seen(repo)
+    assert seen["state"] == "UNKNOWN" and "admitted" not in seen
+    assert "not found" in seen["why"]
+
+
+def test_an_empty_admission_set_says_empty(robot, repo, monkeypatch):
+    from core import ledger as ledger_client
+    monkeypatch.setattr(ledger_client, "admission_for", lambda action: [])
+    _hook_recording_env(repo)
+    robot.preflight(wait=True)
+    assert _admission_seen(repo) == {"state": "EMPTY", "action": "push", "admitted": []}
 
 
 def test_the_helper_names_both_variables_and_leaves_os_environ_alone(monkeypatch):

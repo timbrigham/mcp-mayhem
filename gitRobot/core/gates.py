@@ -58,6 +58,33 @@ def hook_provenance_env(op: str, run_id: str) -> dict:
     return {"GITROBOT_OP": op, "GITROBOT_RUN_ID": run_id}
 
 
+def admission_env(action: str, admitted: Optional[list], why: str = "") -> dict:
+    """The admitted step set for `action`, for the hook to READ — so it stops hand-listing it.
+
+    ⭐ ZeroParadox 2026-10-03 (Tim chose this route in his own turn, confirmed here): their hook
+    hard-coded `REVIEW_STEPS = ("editorial", "adversary")` and so never reported `copy_editor`,
+    which push admits. The ledger still gated correctly; the hook UNDER-REPORTED. It cannot
+    reach the set itself — the ledger does not hold admission, and the registry disagrees with
+    it (`rely` has no `actions` key, so the registry treats it as push-required; admission
+    excludes it).
+
+    ALWAYS JSON, ALWAYS WITH A STATE, so the three facts never share an encoding:
+        SET      {"state":"SET","action":..,"admitted":[...]}   the set, sorted
+        EMPTY    {"state":"EMPTY","action":..,"admitted":[]}    read, and nothing admitted
+        UNKNOWN  {"state":"UNKNOWN","action":..,"why":..}       could not be read — NEVER []
+    ⚠ A human `git push` sets NOTHING; the hook must read an absent variable as UNKNOWN too.
+    ⚠ Same trust footing as GITROBOT_RUN_ID: it reports what gitRobot read, it is not evidence.
+    A hook that BLOCKS on it would be trusting an env var anyone can set — report with it only.
+    """
+    import json
+    if admitted is None:
+        doc = {"state": "UNKNOWN", "action": action, "why": why or "admission set unreadable"}
+    else:
+        doc = {"state": "SET" if admitted else "EMPTY", "action": action,
+               "admitted": sorted(admitted)}
+    return {"GITROBOT_ADMISSION": json.dumps(doc, sort_keys=True)}
+
+
 _MAX_OUTPUT = 8000     # gate output echoed back to the caller, capped (receipt, not warehouse)
 # ⚠⚠ A FAILING PIPELINE PUTS ITS REASON AT THE END, SO KEEPING THE HEAD DISCARDS THE ONE
 # PART ANYBODY NEEDS. This was `self.output[:_MAX_OUTPUT]` — the first 8000 characters — and
