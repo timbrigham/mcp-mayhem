@@ -230,6 +230,32 @@ def nested_local(repo, tmp_path):
     return local
 
 
+import tempfile
+
+# Where pytest puts tmp_path trees on this machine: <tempdir>/pytest-of-<user>/...
+_PYTEST_TMP_ROOTS = (Path(tempfile.gettempdir()).resolve(),)
+
+
+def _is_test_leak(directory: Path, test_roots) -> bool:
+    """True when a new directory in the shared scratch was left by a TEST, not the live server.
+
+    A git worktree's `.git` is a FILE: `gitdir: <main repo>/.git/worktrees/<name>`. A test's
+    worktree belongs to a fixture repo under pytest's temp tree; a live one belongs to the real
+    consumer repository. ⚠ Unknown counts as a leak: no `.git`, unreadable, or not a gitdir line."""
+    try:
+        line = (directory / ".git").read_text(encoding="utf-8").strip()
+    except OSError:
+        return True
+    if not line.startswith("gitdir:"):
+        return True
+    gitdir = Path(line.split(":", 1)[1].strip())
+    try:
+        gitdir = gitdir.resolve()
+    except OSError:
+        return True
+    return any(root in gitdir.parents and "pytest-of-" in str(gitdir) for root in test_roots)
+
+
 @pytest.fixture(autouse=True)
 def _no_leak_into_the_shared_scratch():
     """⛔⛔ NO TEST MAY LEAVE A WORKTREE IN THE SHARED PRODUCTION SCRATCH AREA.
@@ -260,7 +286,13 @@ def _no_leak_into_the_shared_scratch():
 
     before = _snapshot()
     yield
-    leaked = sorted(_snapshot() - before)
+    # ⛔ THE SHARED SCRATCH IS ALSO WRITTEN BY THE LIVE SERVER. Measured 2026-10-03: two full-suite
+    # runs ERRORED in this teardown on an unrelated test, and each overlapped a real consumer
+    # `worktree.add` (17:16:09Z, 20:13:16Z) — the guard counted ZeroParadox's live worktree as a
+    # leak from this suite. Only a directory whose `.git` points into PYTEST's temp tree is ours;
+    # one with no readable `.git` still counts (fail toward noticing).
+    leaked = sorted(n for n in _snapshot() - before
+                    if _is_test_leak(Path(DEFAULT_SCRATCH) / n, _PYTEST_TMP_ROOTS))
     assert not leaked, (
         f"this test left {len(leaked)} directory(ies) in the SHARED scratch "
         f"{DEFAULT_SCRATCH}: {leaked[:5]}. Pass scratch=tmp_path/'scratch' to GitRobot(...) — "
