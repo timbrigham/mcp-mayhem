@@ -140,6 +140,10 @@ def _shared_dep_repo(tmp_path):
     lake = repo / ".lake" / "packages" / "mathlib"
     lake.mkdir(parents=True)
     (lake / "Mathlib.lean").write_text("-- pinned dependency\n", encoding="utf-8")
+    # the project's OWN build output — copied per worktree since 2026-10-02, never shared
+    build = repo / ".lake" / "build" / "lib" / "ZeroParadox"
+    build.mkdir(parents=True)
+    (build / "Core.olean").write_bytes(b"MAIN-OLEAN")
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, text=True)
     subprocess.run(["git", "commit", "-q", "-m", "one"], cwd=repo, capture_output=True, text=True)
     return repo
@@ -171,7 +175,9 @@ def test_a_fresh_worktree_gets_the_shared_lake(tmp_path):
     out = robot.worktree("add", ref="HEAD")
     wt = Path(out["path"])
 
-    assert ".lake" in out["linked"], "worktree add did not provision the shared dependency"
+    assert out["linked"] == [".lake/packages"], out
+    assert ".lake/build" in out["copied"], out
+    assert out["not_provisioned"] == [], out
     assert (wt / ".lake" / "packages" / "mathlib" / "Mathlib.lean").exists(), \
         "the pinned dependency is not reachable from the worktree"
 
@@ -221,14 +227,156 @@ def test_a_real_directory_named_lake_is_never_deleted(tmp_path):
                      scratch=tmp_path / "scratch")
     wt = Path(robot.worktree("add", ref="HEAD")["path"])
 
-    (wt / ".lake").rmdir()                       # drop our junction
+    robot._unlink_shared_deps(wt)                # drop our junction(s)
+    shutil.rmtree(wt / ".lake")                  # and the per-worktree copy
     real = wt / ".lake"
     real.mkdir()
     (real / "handmade.txt").write_text("not ours", encoding="utf-8")
+    (real / "packages").mkdir()                  # a REAL dir at the nested link's name, too
+    (real / "packages" / "handmade.txt").write_text("not ours either", encoding="utf-8")
 
     removed = robot._unlink_shared_deps(wt)
     assert removed == [], "a real directory was treated as our junction"
     assert (real / "handmade.txt").exists()
+    assert (real / "packages" / "handmade.txt").exists()
+
+
+# -- ⭐⭐ 2026-10-02: share `packages`, COPY `build` ---------------------------------
+
+def _robot(tmp_path):
+    from core.engine import GitRobot
+    repo = _shared_dep_repo(tmp_path)
+    robot = GitRobot(repo=str(repo), data_path=str(tmp_path / "ops.jsonl"), actor="t",
+                     scratch=tmp_path / "scratch")
+    return repo, robot
+
+
+def _is_reparse(p):
+    import stat
+    try:
+        return bool(getattr(p.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    except OSError:
+        return False
+
+
+def test_a_worktree_build_never_writes_into_the_main_build(tmp_path):
+    """⛔⛔ THE PROPERTY THIS CHANGE EXISTS FOR. Measured by ZeroParadox 2026-10-02: with `.lake`
+    junctioned whole, `<wt>\\.lake\\build` WAS the main checkout's build — 18 worktrees, one
+    output directory, concurrent builds forced into single file. A write in a worktree's build
+    must land in THAT worktree only."""
+    repo, robot = _robot(tmp_path)
+    wt = Path(robot.worktree("add", ref="HEAD")["path"])
+
+    assert not _is_reparse(wt / ".lake"), ".lake is still a junction — the build is shared"
+    assert _is_reparse(wt / ".lake" / "packages"), "packages must stay SHARED (7.76 GB)"
+    assert not _is_reparse(wt / ".lake" / "build"), "build must be a per-worktree copy"
+    wt_olean = wt / ".lake" / "build" / "lib" / "ZeroParadox" / "Core.olean"
+    assert wt_olean.read_bytes() == b"MAIN-OLEAN", "the copy must not be empty: ZeroParadox.* " \
+                                                   "would not import"
+
+    wt_olean.write_bytes(b"WORKTREE-OLEAN")
+    (wt / ".lake" / "build" / "lib" / "ZeroParadox" / "OnlyHere.olean").write_bytes(b"x")
+
+    main = repo / ".lake" / "build" / "lib" / "ZeroParadox"
+    assert (main / "Core.olean").read_bytes() == b"MAIN-OLEAN", \
+        "a worktree build overwrote the MAIN checkout's olean"
+    assert not (main / "OnlyHere.olean").exists(), \
+        "a worktree-only module's olean landed in the MAIN checkout's build"
+
+
+def test_teardown_of_the_new_layout_keeps_mathlib_and_the_main_build(tmp_path):
+    repo, robot = _robot(tmp_path)
+    wt = Path(robot.worktree("add", ref="HEAD")["path"])
+
+    out = robot.worktree("remove", name=str(wt))
+
+    assert out["decision"] == "allowed", out
+    assert out["unlinked"] == [".lake/packages"], out
+    assert not wt.exists()
+    assert (repo / ".lake" / "packages" / "mathlib" / "Mathlib.lean").exists(), \
+        "teardown reached through the nested junction and destroyed the pinned dependency"
+    assert (repo / ".lake" / "build" / "lib" / "ZeroParadox" / "Core.olean").exists()
+
+
+def test_teardown_of_a_pre_change_worktree_still_unlinks_the_whole_lake(tmp_path):
+    """⚠⚠ 18 LIVE WORKTREES ON 2026-10-02 HOLD THE OLD LAYOUT. Teardown and the reaper meet them
+    for weeks; the outer junction must still be recognised and removed as a link."""
+    repo, robot = _robot(tmp_path)
+    wt = Path(robot.worktree("add", ref="HEAD")["path"])
+    robot._unlink_shared_deps(wt)
+    shutil.rmtree(wt / ".lake")
+    _junction(wt / ".lake", repo / ".lake")      # rebuild the OLD shape by hand
+
+    out = robot.worktree("remove", name=str(wt))
+
+    assert out["decision"] == "allowed", out
+    assert out["unlinked"] == [".lake"], out
+    assert (repo / ".lake" / "packages" / "mathlib" / "Mathlib.lean").exists()
+    assert (repo / ".lake" / "build" / "lib" / "ZeroParadox" / "Core.olean").exists()
+
+
+def test_a_foreign_link_inside_lake_is_refused_not_followed(tmp_path):
+    """The nested layout opens a new place for a hand-made link. It is not ours, so remove must
+    refuse and NAME it rather than hand it to git, which would delete its target."""
+    from core.errors import RefusalError
+    repo, robot = _robot(tmp_path)
+    precious = tmp_path / "PRECIOUS"
+    precious.mkdir()
+    (precious / "keep.txt").write_bytes(b"keep")
+    wt = Path(robot.worktree("add", ref="HEAD")["path"])
+    _junction(wt / ".lake" / "vendor", precious)
+
+    with pytest.raises(RefusalError) as exc:
+        robot.worktree("remove", name=str(wt))
+    assert "vendor" in str(exc.value)
+    assert (precious / "keep.txt").exists()
+    assert (repo / ".lake" / "packages" / "mathlib" / "Mathlib.lean").exists()
+
+
+def test_a_link_in_the_main_lake_is_reported_never_copied_through(tmp_path):
+    """⚠ An unplanned reparse point in the MAIN `.lake` must not be followed by copytree."""
+    repo, robot = _robot(tmp_path)
+    elsewhere = tmp_path / "ELSEWHERE"
+    elsewhere.mkdir()
+    (elsewhere / "big.bin").write_bytes(b"would be copied if followed")
+    _junction(repo / ".lake" / "cache", elsewhere)
+
+    out = robot.worktree("add", ref="HEAD")
+    wt = Path(out["path"])
+
+    assert any(s.startswith(".lake/cache:") for s in out["not_provisioned"]), out
+    assert not (wt / ".lake" / "cache").exists()
+
+
+def test_an_unknown_lake_entry_is_copied_not_shared(tmp_path):
+    """⭐ DENYLIST OF SHARING. A `.lake` entry added later must be ISOLATED by default; sharing
+    is opt-in by name in `_LAKE_SHARED`."""
+    repo, robot = _robot(tmp_path)
+    (repo / ".lake" / "config").mkdir()
+    (repo / ".lake" / "config" / "x.json").write_bytes(b"{}")
+
+    out = robot.worktree("add", ref="HEAD")
+    wt = Path(out["path"])
+
+    assert ".lake/config" in out["copied"], out
+    assert not _is_reparse(wt / ".lake" / "config")
+
+
+def test_the_reaper_over_the_new_layout_keeps_mathlib(tmp_path, monkeypatch):
+    """The reaper removes through `worktree(remove)` and inherits its guards — pinned, because a
+    reaper meeting a layout it does not expect is the risk the consumer named."""
+    repo, robot = _robot(tmp_path)
+    wt = Path(robot.worktree("add", ref="HEAD")["path"])
+    monkeypatch.setattr(robot, "_reaper_policy",
+                        lambda: {"clean_after_hours": 1, "dirty_after_hours": 1})
+    monkeypatch.setattr(robot, "_worktree_age_hours", lambda p: 1000.0)
+
+    out = robot._reap_worktrees()
+
+    assert [r["path"] for r in out["removed"]] == [str(wt)], out
+    assert not wt.exists()
+    assert (repo / ".lake" / "packages" / "mathlib" / "Mathlib.lean").exists()
+    assert (repo / ".lake" / "build" / "lib" / "ZeroParadox" / "Core.olean").exists()
 
 
 def test_worktree_add_says_where_to_run_the_checkers(tmp_path):

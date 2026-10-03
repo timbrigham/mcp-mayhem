@@ -1697,7 +1697,24 @@ class GitRobot:
     #
     # ⚠ A JUNCTION, NOT A COPY: `.lake` is far too large to duplicate per worktree (a `du` over
     # it did not finish in two minutes). Tim confirms a link to the folder was tested and works.
-    _SHARED_DEPS = (".lake",)
+    #
+    # ⛔⛔ BUT THE WHOLE-FOLDER JUNCTION SHARED THE BUILD OUTPUT TOO, AND NOTHING HERE SAID SO.
+    # Measured by ZeroParadox 2026-10-02: every worktree's `.lake` was a junction to the main
+    # `.lake`, so `<wt>\.lake\build` WAS the main checkout's `build` — 18 live worktrees, one
+    # output directory, N concurrent `lake build`s writing the same oleans. The consumer had been
+    # serialising every Lean build across all worktrees to survive it. The size argument above
+    # was true of `packages` (126,768 files / 7.76 GB, ZP cleanup C14, 2026-08-20) and false of
+    # `build` (~1,800 files / ~0.38 GB, ~1.3 s to copy). One junction priced two folders.
+    #
+    # ⭐ SO `.lake` IS NOW A REAL DIRECTORY, PROVISIONED PER ENTRY. Only the entries named in
+    # `_LAKE_SHARED` are junctioned (read-only by construction: pinned by lake-manifest.json; C14
+    # measured four concurrent `lake env lean` runs making zero writes there). EVERYTHING ELSE is
+    # COPIED — a DENYLIST of sharing, never an allowlist of copying, so a `.lake` entry added
+    # later is isolated by default rather than silently shared. Fail toward the slower, safer
+    # layout; a surprise copy is visible in the receipt, a surprise share is not.
+    # ⚠ A copy is not empty on purpose: a fresh `build/` imports Mathlib but not ZeroParadox.*.
+    _LAKE = ".lake"
+    _LAKE_SHARED = ("packages",)
 
     # ⭐⭐ THE ARC HANDSHAKE. Tim, 2026-09-02: **a worktree is the project root and the instance
     # acting inside it IS the arc.** So the review-round counter is per-arc BY CONSTRUCTION rather
@@ -1813,41 +1830,83 @@ class GitRobot:
             return -1
         return value
 
-    def _link_shared_deps(self, worktree: Path) -> list:
-        """Junction the shared, gitignored build deps into a fresh worktree. Best effort."""
-        made = []
-        for name in self._SHARED_DEPS:
-            src = self.repo / name
-            dst = Path(worktree) / name
-            if not src.is_dir() or dst.exists():
+    @staticmethod
+    def _is_reparse(p: Path) -> bool:
+        """Junction or symlink. ⚠ NOT `os.path.islink`, which is FALSE for a junction."""
+        try:
+            attrs = getattr(p.lstat(), "st_file_attributes", 0)
+        except OSError:
+            return False
+        return bool(attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+    def _link_shared_deps(self, worktree: Path) -> dict:
+        """Provision `.lake` in a fresh worktree: junction `_LAKE_SHARED`, copy the rest.
+
+        Best effort, and REPORTED rather than silent: `linked` and `copied` name what landed,
+        `not_provisioned` names what did not and why — an entry missing from both lists is a
+        worktree that will fail to build, and the receipt is where the caller learns that."""
+        out = {"linked": [], "copied": [], "not_provisioned": []}
+        src_lake = self.repo / self._LAKE
+        dst_lake = Path(worktree) / self._LAKE
+        if not src_lake.is_dir() or dst_lake.exists() or self._is_reparse(dst_lake):
+            return out
+        dst_lake.mkdir()
+        for src in sorted(src_lake.iterdir()):
+            rel = f"{self._LAKE}/{src.name}"
+            dst = dst_lake / src.name
+            if src.name in self._LAKE_SHARED:
+                # ⚠ `mklink /J` needs no elevation, unlike a directory SYMLINK on Windows. A
+                # tool that only works for an administrator is one people work around.
+                proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)],
+                                      capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace")
+                (out["linked"].append(rel) if proc.returncode == 0 else
+                 out["not_provisioned"].append(f"{rel}: mklink rc={proc.returncode}"))
                 continue
-            # ⚠ `mklink /J` needs no elevation, unlike a directory SYMLINK on Windows. A tool
-            # that only works for an administrator is one people work around.
-            proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)],
-                                  capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace")
-            if proc.returncode == 0:
-                made.append(name)
-        return made
+            # ⚠⚠ NEVER COPY THROUGH A LINK. A reparse point inside the main `.lake` that is not
+            # in `_LAKE_SHARED` is something nobody here planned for; copying it would follow
+            # it into whatever it targets (possibly gigabytes, possibly another tree). Report it.
+            if self._is_reparse(src):
+                out["not_provisioned"].append(f"{rel}: is a link in the main checkout; not copied")
+                continue
+            try:
+                if src.is_dir():
+                    shutil.copytree(src, dst, symlinks=True)
+                else:
+                    shutil.copy2(src, dst)
+                out["copied"].append(rel)
+            except OSError as exc:
+                # ⚠ A TORN COPY (main mid-build) is not a correctness hazard — Lake's traces
+                # rebuild a mismatched olean — but a FAILED copy leaves the worktree unable to
+                # import ZeroParadox.*, and that must be visible.
+                out["not_provisioned"].append(f"{rel}: copy failed: {exc}")
+        return out
 
     def _unlink_shared_deps(self, worktree: Path) -> list:
         """Remove OUR junctions before git sees the tree. ⚠⚠ THE ORDER IS THE WHOLE SAFETY
         ARGUMENT: measured 2026-08-30, `git worktree remove --force` FOLLOWS a junction and
         deletes what it points at while returning 0. Left in place, removing a worktree would
         destroy the pinned Mathlib. `Path.rmdir()` on a junction removes the LINK only, never
-        the target — the same non-recursive delete that was done by hand, four times, verified."""
+        the target — the same non-recursive delete that was done by hand, four times, verified.
+
+        ⚠⚠ TWO LAYOUTS, BOTH LIVE. Worktrees made before 2026-10-02 hold `.lake` ITSELF as a
+        junction (18 of them that day); newer ones hold a real `.lake` with `packages` as the
+        junction inside it. INSIDE-OUT: the nested junction first, then the outer one. Each step
+        removes only a reparse point; a real directory is never ours to delete, at either level."""
         removed = []
-        for name in self._SHARED_DEPS:
-            dst = Path(worktree) / name
+        lake = Path(worktree) / self._LAKE
+        for name in self._LAKE_SHARED:
+            inner = lake / name
+            if not self._is_reparse(lake) and self._is_reparse(inner):
+                try:
+                    inner.rmdir()
+                    removed.append(f"{self._LAKE}/{name}")
+                except OSError:
+                    pass          # left in place: the reparse-point guard in remove refuses
+        if self._is_reparse(lake):
             try:
-                attrs = getattr(dst.lstat(), "st_file_attributes", 0)
-            except OSError:
-                continue
-            if not (attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
-                continue          # a real directory here is NOT ours to delete
-            try:
-                dst.rmdir()
-                removed.append(name)
+                lake.rmdir()
+                removed.append(self._LAKE)
             except OSError:
                 pass
         return removed
@@ -3239,14 +3298,15 @@ class GitRobot:
             result = self.git.run(["worktree", "add", "--detach", str(path), ref],
                                   timeout=300)
             decision = "allowed" if result.ok else "failed"
-            linked = self._link_shared_deps(path) if result.ok else []
+            provisioned = (self._link_shared_deps(path) if result.ok else
+                           {"linked": [], "copied": [], "not_provisioned": []})
             # ⭐ THE ARC OPENS HERE. Creating the worktree IS entering the arc, so the handshake
             # is sealed at the same moment — one place, the only place that makes worktrees.
             arc = self._seal_arc_state(path) if result.ok else {"sealed": False}
             return self._receipt("worktree.add", {"ref": ref, "path": str(path)}, decision,
                                  detail=result.output,
                                  extra={"path": str(path), "output": result.output,
-                                        "ok": result.ok, "linked": linked,
+                                        "ok": result.ok, **provisioned,
                                         "arc_state": arc,
                                         # ⭐⭐ RETURNED AT THE MOMENT OF USE, and it points at
                                         # `validate` rather than warning about the worktree.
@@ -3434,7 +3494,8 @@ class GitRobot:
             return self._receipt("worktree.remove", {"name": str(path), "unlinked": unlinked},
                                  decision,
                                  detail=result.output,
-                                 extra={"output": result.output, "ok": result.ok})
+                                 extra={"output": result.output, "ok": result.ok,
+                                        "unlinked": unlinked})
         raise UsageError(
             f"unknown worktree action {action!r}; expected add, list, remove or prune")
 

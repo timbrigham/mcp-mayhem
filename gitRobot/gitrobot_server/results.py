@@ -68,7 +68,14 @@ class ReceiptResult(Result, total=False):
     args: list[str]
     worktree: str | None
     path: str
+    # worktree add: `.lake` entries JUNCTIONED (shared, read-only) vs COPIED (per worktree),
+    # and any that could not be provisioned, each with its reason. Split 2026-10-02 — a whole
+    # `.lake` junction used to share the build output between every worktree.
     linked: list[str]
+    copied: list[str]
+    not_provisioned: list[str]
+    # worktree remove: OUR junctions removed, non-recursively, before git saw the tree
+    unlinked: list[str]
     arc_state: dict[str, Any]
     recording_here_is_real: str
     subjects: list[dict[str, Any]]
