@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -128,6 +129,13 @@ class GateResult:
     exit_code: Optional[int]
     output: str
     note: str = ""
+    # ⭐ WALL-CLOCK SECONDS THIS GATE RAN, added 2026-10-03. Until then no gate record carried a
+    # duration, so "the hook is slow" vs "the CALL is slow" could not be told apart from this
+    # side: a commit runs pre-commit TWICE (this gate, then git's own hook inside `git commit`),
+    # and three consumer commits that day made a 300s client give up while every gate record
+    # but one read a clean exit 0. None when the gate never launched — not 0, which would claim
+    # an instant pass.
+    seconds: Optional[float] = None
 
     @property
     def passed(self) -> bool:
@@ -162,6 +170,10 @@ class GateResult:
         """The shape stored in the audit log."""
         return {"phase": self.phase, "ran": self.ran, "exit_code": self.exit_code,
                 "passed": self.passed, "outcome": self.outcome, "note": self.note,
+                "seconds": self.seconds,
+                # what `seconds` prices, beside the number — never the whole call
+                "seconds_prices": ("this gate phase only. A commit/merge runs the hook AGAIN "
+                                   "inside `git commit`, which is not counted here."),
                 "output": _clip(self.output)}
 
 
@@ -209,6 +221,9 @@ class Gates:
                               note=f"gate pipeline not found at {HOOKS_ENTRY} — "
                                    f"cannot vouch for this tree")
         argv = [self.python, str(HOOKS_ENTRY), phase]
+        # monotonic, not wall-clock: a clock adjustment mid-gate must not produce a negative
+        # or inflated duration in a record someone will budget from
+        t0 = time.monotonic()
         try:
             proc = subprocess.run(
                 argv, cwd=str(self.repo), capture_output=True, text=True,
@@ -224,6 +239,8 @@ class Gates:
         except subprocess.TimeoutExpired:
             return GateResult(phase=phase, ran=True, exit_code=124, output="",
                               note=f"gate timed out after "
-                                   f"{PHASE_TIMEOUT.get(phase, 600)}s")
+                                   f"{PHASE_TIMEOUT.get(phase, 600)}s",
+                              seconds=round(time.monotonic() - t0, 1))
         output = "\n".join(p for p in (proc.stdout or "", proc.stderr or "") if p.strip())
-        return GateResult(phase=phase, ran=True, exit_code=proc.returncode, output=output)
+        return GateResult(phase=phase, ran=True, exit_code=proc.returncode, output=output,
+                          seconds=round(time.monotonic() - t0, 1))

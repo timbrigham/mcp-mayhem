@@ -361,7 +361,10 @@ class GitRobot:
                "repo": record["repo"],
                "branch": record["branch"], "tree": record["tree"]}
         if gates:
-            out["gates"] = [{k: g[k] for k in ("phase", "ran", "passed", "exit_code")}
+            # `seconds`/`seconds_prices` added 2026-10-03; `.get` so a pre-2026-10-03 record
+            # shape (no duration) renders None rather than raising
+            out["gates"] = [{k: g.get(k) for k in ("phase", "ran", "passed", "exit_code",
+                                                   "seconds", "seconds_prices")}
                             for g in gates]
         out.update(extra or {})
         # Bounded HERE, not at the fourteen call sites that fill `extra` with a raw
