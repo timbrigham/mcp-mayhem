@@ -43,7 +43,7 @@ from typing import Any, Optional, Sequence
 
 from core import ledger as ledger_client
 from core import tiers
-from core.audit import AuditLog
+from core.audit import AuditLog, _now_iso
 from core.errors import GitRobotError, RefusalError, RepoError, UsageError
 from core import gates as gates_mod
 from core.gates import Gates, _clip as _clip_output
@@ -237,6 +237,9 @@ class GitRobot:
         self.gates = Gates(self.repo)
         self.actor = actor
         self.scratch = Path(scratch) if scratch else DEFAULT_SCRATCH
+        # one merge at a time — see merge(); `_merge_running` is what merge_status() reports
+        self._merge_lock = threading.Lock()
+        self._merge_running: Optional[dict] = None
         # Long-form refusals, keyed by id, for `explain`. In-process only: the
         # durable copy is the audit record, which `explain` falls back to.
         self._refusals: dict[str, dict] = {}
@@ -294,7 +297,8 @@ class GitRobot:
         )
 
     def _refuse(self, op: str, args: Any, what: str, alternative: str, *,
-                reason: Optional[str] = None, target: Optional[Git] = None) -> RefusalError:
+                reason: Optional[str] = None, target: Optional[Git] = None,
+                own_run: bool = True) -> RefusalError:
         """Record the refusal, then return the error for the caller to raise.
 
         Refusals are audited exactly like allowed operations. A guard that only
@@ -310,6 +314,7 @@ class GitRobot:
             repo=str(getattr(git, "repo", "") or ""),
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
             reason=reason, detail=f"[{rid}] {what}", alternative=alternative,
+            run_id=self._own_run_id(op) if own_run else None,
         )
         return RefusalError(f"{what}\n\nINSTEAD: {alternative}",
                             alternative=alternative, refusal_id=rid)
@@ -342,6 +347,8 @@ class GitRobot:
         # exactly what a caller reads a receipt for.
         if isinstance(detail, str):
             detail = _clip_output(detail)
+        if run_id is None:
+            run_id = self._own_run_id(op)
         record = self.audit.append(
             actor=self.actor, op=op, args=args, decision=decision, run_id=run_id,
             # ⚠ From the TARGET, exactly as head/branch/tree already are — see `audit.append`
@@ -498,7 +505,14 @@ class GitRobot:
     # orphaned preflight simply re-runs). Naming the live state directly means a new state
     # added to either delegate defaults to NOT stuck, which is the safe direction: this field's
     # expensive failure is the false alarm, not the missed one.
-    _FLIGHT_LIVE = {"preflight": ("running",), "push": ("running",)}
+    _FLIGHT_LIVE = {"preflight": ("running",), "push": ("running",), "merge": ("running",)}
+    _CAP_PRICES = {
+        "preflight": "the pre-push GATE PHASE, which is the whole of a preflight",
+        "push": ("the entire `git push` subprocess — hook AND network — which is why it is not "
+                 "the 1800s gate-phase budget"),
+        "merge": ("`git merge --no-commit` (600s) + the pre-commit gate + `git commit` (600s), "
+                  "the three bounded steps a merge runs in sequence"),
+    }
 
     @staticmethod
     def _elapsed_seconds(iso_ts: Optional[str]) -> Optional[int]:
@@ -557,10 +571,7 @@ class GitRobot:
             # ⭐ NEVER A BARE NUMBER — the cap is quoted beside WHAT IT BOUNDS, because the two
             # caps here differ by a factor of two and the obvious guess picks the wrong one.
             "cap_seconds": cap,
-            "cap_prices": ("the pre-push GATE PHASE, which is the whole of a preflight"
-                           if kind == "preflight" else
-                           "the entire `git push` subprocess — hook AND network — which is why "
-                           "it is not the 1800s gate-phase budget"),
+            "cap_prices": self._CAP_PRICES[kind],
             "detail_via": f"{kind}_status()",
         }
         if stuck:
@@ -588,6 +599,11 @@ class GitRobot:
                 # ceiling is that phase's budget, read from the same table the runner indexes.
                 cap=gates_mod.PHASE_TIMEOUT["pre-push"]),
             "push": self._flight_row("push", self.push_status(), cap=PUSH_TIMEOUT),
+            # ⭐ ADDED 2026-10-03 after a restart killed a merge nobody could see running. A
+            # `died` merge is reported here too, in `state` — read it before restarting.
+            "merge": self._flight_row(
+                "merge", self.merge_status(),
+                cap=600 + gates_mod.PHASE_TIMEOUT["pre-commit"] + 600),
         }
 
     def status(self) -> dict:
@@ -2294,6 +2310,148 @@ class GitRobot:
         if not (isinstance(reason, str) and reason.strip()):
             raise UsageError("merge requires a non-empty reason")
         args = {"branch": branch}
+        # ⛔⛔ ONE MERGE AT A TIME, AND A MERGE THAT IS RUNNING SAYS SO. Measured 2026-10-03
+        # 12:37:56Z: a gitRobot restart killed a consumer merge MID-GATE. It had run
+        # `merge --no-commit`, so MERGE_HEAD existed; merge wrote no audit row until its END, so
+        # the dead call left NO trace; `in_flight` did not track merge, so the restart had nothing
+        # to check. The retry 3 s later met git's "MERGE_HEAD exists", fell into the CONFLICT
+        # branch, aborted the dead call's state BY ACCIDENT and reported "did not apply cleanly"
+        # — a true outcome with the wrong cause, handing the caller a content-conflict remedy.
+        # And with no lock, a second CONCURRENT merge would have aborted a LIVE one the same way.
+        if not self._merge_lock.acquire(blocking=False):
+            raise self._refuse(
+                "merge", args, "another merge() is running in this server right now.",
+                "Wait for it: status()'s in_flight.merge shows it while it runs. "
+                "A second merge would meet its MERGE_HEAD and, before this guard, abort it.",
+                # ⛔ NEVER the running merge's run_id, even from its own thread (a re-entrant
+                # call): this row is about the REFUSED call, and carrying run 1's id would make
+                # it run 1's terminal row — so a run 1 that then died would read `concluded`.
+                reason=reason, own_run=False)
+        try:
+            recovered = self._recover_interrupted_merge(args, reason)
+            run_id = _refusal_id("merge", f"{branch}|{self.git.head()}|{len(self.audit.read())}")
+            self.audit.append(
+                actor=self.actor, op="merge", args=args, decision="started",
+                repo=str(getattr(self.git, "repo", "") or ""),
+                head=self.git.head(), branch=self.git.branch(), tree=self.git.tree_state(),
+                reason=reason, run_id=run_id,
+                detail=f"merge of {branch!r} started; a terminal merge row follows unless the "
+                       f"process dies")
+            self._merge_running = {"run_id": run_id, "started_at": _now_iso(),
+                                   "thread": threading.get_ident()}
+            out = self._merge_body(branch, args, reason)
+            if recovered:
+                out["recovered_interrupted_merge"] = recovered
+            return out
+        finally:
+            self._merge_running = None
+            self._merge_lock.release()
+
+    def _own_run_id(self, op: str) -> Optional[str]:
+        """The running merge's run_id — ONLY for a row written by the thread that owns it.
+
+        ⛔ PAIRED BY RUN_ID, NEVER BY ORDER. The first cut called "any merge row after a started
+        row" its terminal row, and two real rows break that: the BUSY refusal a concurrent call
+        writes, and the refusal `_recover_interrupted_merge` writes over a dead run. Either would
+        have made a dead merge read `concluded`. And the owner check matters as much: the busy
+        refusal is written WHILE `_merge_running` is set, from another thread.
+
+        ⚠ AN UNDERSTOOD SURVIVOR, KEPT ON PURPOSE (measured 2026-10-03). Deleting the thread
+        check alone fails no test: the only merge row any OTHER thread writes today is the busy
+        refusal, which already passes `own_run=False`. Deleting BOTH is killed by the cross-
+        thread test. It stays because the next row someone adds from another thread will not
+        remember `own_run`, and this is what keeps that row from closing a run it never saw."""
+        live = getattr(self, "_merge_running", None)
+        if op == "merge" and live and live.get("thread") == threading.get_ident():
+            return live["run_id"]
+        return None
+
+    def _merge_dangling_started(self) -> Optional[dict]:
+        """The LAST merge `started` row, if no other row carries its run_id; else None."""
+        rows = self.audit.read()
+        started = next((r for r in reversed(rows)
+                        if r.get("op") == "merge" and r.get("decision") == "started"), None)
+        if started is None or not started.get("run_id"):
+            return None
+        rid = started["run_id"]
+        concluded = any(r.get("run_id") == rid and r.get("decision") != "started"
+                        for r in rows if r.get("op") == "merge")
+        return None if concluded else started
+
+    def merge_status(self) -> dict:
+        """running / concluded / died / none — the merge half of `in_flight`.
+
+        ⭐ `died` is the state that was missing on 2026-10-03: a `started` row with no terminal row
+        and no live call. Its MERGE_HEAD, if still present, is the dead call's, not a conflict."""
+        live = getattr(self, "_merge_running", None)
+        if live:
+            return {"state": "running", "run_id": live["run_id"],
+                    "started_at": live["started_at"]}
+        started = self._merge_dangling_started()
+        if started is None:
+            last = self.audit.last_where(op="merge")
+            return {"state": "concluded" if last else "none",
+                    "decision": (last or {}).get("decision"), "ts": (last or {}).get("ts")}
+        return {"state": "died", "run_id": started.get("run_id"),
+                "started_at": started.get("ts"), "pid": started.get("pid"),
+                "merge_head_present": self.git.run(
+                    ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok,
+                "note": "a merge started and never wrote a terminal row — the server died or the "
+                        "call raised mid-merge. The next merge() recovers it when that is "
+                        "provably lossless, and refuses naming it when it is not."}
+
+    def _recover_interrupted_merge(self, args: dict, reason: str) -> Optional[dict]:
+        """Handle a MERGE_HEAD that exists BEFORE this call — never as a content conflict.
+
+        ⭐ LOSSLESS ONLY. `git merge --abort` cannot always reconstruct uncommitted changes that
+        predated the merge (git's own documentation says so). So it is run ONLY when the dead
+        call's `started` row recorded a tree with nothing staged and nothing unstaged — then
+        there were no pre-merge changes to lose, and aborting restores exactly the started HEAD.
+        Anything else REFUSES: a MERGE_HEAD with no gitRobot `started` row is not ours (a human
+        merge), and one over recorded uncommitted work is not provably lossless."""
+        if not self.git.run(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok:
+            return None
+        dangling = self._merge_dangling_started()
+        tree = (dangling or {}).get("tree") or {}
+        clean_at_start = (dangling is not None
+                          and tree.get("staged") == 0 and tree.get("unstaged") == 0)
+        if not clean_at_start:
+            why = ("no gitRobot merge left it — it is not this server's to undo"
+                   if dangling is None else
+                   f"the interrupted merge (run {dangling.get('run_id')}, started "
+                   f"{dangling.get('ts')}) began over uncommitted work ({tree}), and "
+                   f"`merge --abort` cannot always reconstruct that")
+            raise self._refuse(
+                "merge", args,
+                f"a merge is ALREADY IN PROGRESS in the main checkout (MERGE_HEAD exists) and "
+                f"it is NOT a content conflict from this call: {why}.",
+                "A human resolves this one: inspect `git status` in the main checkout, save any "
+                "uncommitted work you want to keep, then `git merge --abort` (or finish that merge "
+                "by hand). Then call merge() again. Retrying without that will refuse the same way.",
+                reason=reason)
+        aborted = self.git.run(["merge", "--abort"], timeout=300)
+        head_now = self.git.head()
+        info = {"run_id": dangling.get("run_id"), "started_at": dangling.get("ts"),
+                "started_head": dangling.get("head"), "head_after_abort": head_now,
+                "aborted": aborted.ok}
+        self.audit.append(
+            actor=self.actor, op="merge", args=args,
+            decision="allowed" if aborted.ok else "failed",
+            repo=str(getattr(self.git, "repo", "") or ""), head=head_now,
+            branch=self.git.branch(), tree=self.git.tree_state(), reason=reason,
+            run_id=dangling.get("run_id"),
+            detail=("RECOVERED an interrupted merge: the dead call's MERGE_HEAD was aborted over a "
+                    "tree its started row recorded clean, so nothing could be lost: %s" % (info,)))
+        if not aborted.ok or head_now != dangling.get("head"):
+            raise self._refuse(
+                "merge", args,
+                f"an interrupted merge was found and `git merge --abort` did not restore the "
+                f"HEAD it started from ({info}).",
+                "A human inspects the main checkout before anything else merges.",
+                reason=reason)
+        return info
+
+    def _merge_body(self, branch: str, args: dict, reason: str) -> dict:
         # ⛔⛔ MERGE NO LONGER REFUSES A DIRTY TREE, AND GIT IS WHY IT DOES NOT NEED TO.
         # Measured 2026-09-10 in a scratch repo, because reasoning from the analogue is the
         # defect this file keeps finding:
@@ -2540,6 +2698,7 @@ class GitRobot:
                 repo=str(getattr(self.git, "repo", "") or ""),
                 head=self.git.head(), branch=self.git.branch(),
                 tree=self.git.tree_state(), gates=gate_records, reason=reason,
+                run_id=self._own_run_id("merge"),
                 # ⚠ `detail`, not an `extra=` kwarg: `_receipt` takes `extra`, `audit.append`
                 # does NOT. The first draft invented one by analogy with the sibling call --
                 # the read-the-analogue defect again, inside a fix for a mis-stated remedy.
