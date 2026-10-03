@@ -48,7 +48,7 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from ledger_server.inputs import Basis as BasisIn, Record as RecordIn  # noqa: E402
 from ledger_server.results import (  # noqa: E402
-    AppendResult, CanPushResult, CoverageGapResult, CoverageResult, CrossrefResult,
+    AppendResult, CanPushResult, OwedResult, CoverageGapResult, CoverageResult, CrossrefResult,
     FindResult, GenesisResult, GetResult, HealPlanResult, InventoryResult,
     PolicyResult, ProgressResult, RenderResult, RequirementsResult, SignalsResult,
     StatusResult, ValidateResult, VerifyIntegrityResult, VocabularyResult)
@@ -982,6 +982,25 @@ def _sync_can_push(rev_range, admission, commit_admission, action, limit) -> dic
     result["config_sha"] = led._require_config().config_sha
     result["line"] = canpush_mod.render(result)
     return result
+
+
+@mcp.tool(title='Unjudged bytes between two commits',
+          annotations=ToolAnnotations(title='Unjudged bytes between two commits', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def owed(base: str, tip: str, admission: Optional[list[str]] = None) -> OwedResult:
+    """Changed bytes between `base` and `tip` that no ADMITTED step has judged at the tip.
+
+    ⭐ BUILT FOR gitRobot `merge()` (2026-10-03): a merge imports bytes, and if nobody judged
+    them the importing session owes the round — so the receipt prices that AT MERGE TIME.
+    Same `_ratchet` as `can_push`, with ONE difference that is the whole reason this exists:
+    the caller NAMES the base. can_push's base is the parent of the oldest commit in its range,
+    which for a merge is the fork point — so it would also bill this side's own changes as
+    imported. A true count about the wrong object.
+
+    ⚠ `admission=None` returns `owed_count: null`, never 0: nobody said what judges.
+    ⚠ NOT a push answer. Stale, failed and refused verdicts are not consulted here."""
+    return await _guard(lambda: canpush_mod.owed_between(
+        records=_ledger().store.records(), config=_ledger()._require_config(), repo=REPO,
+        base=base, tip=tip, admission=admission))
 
 
 @mcp.tool(title='Cross-reference the stream',

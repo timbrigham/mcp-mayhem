@@ -95,6 +95,9 @@ def _never_a_live_ledger(monkeypatch):
 
     monkeypatch.setattr(ledger_client, "inventory", refuse)
     monkeypatch.setattr(ledger_client, "can_push", refuse)
+    # ⚠ AND `owed`, since merge() started asking it 2026-10-03. Every merge test would otherwise
+    # price its fixture against the REAL ZeroParadox ledger on :8011.
+    monkeypatch.setattr(ledger_client, "owed", refuse)
 
 
 def _range_answer(rev_range, *, allowed, commits=1, blocking=0, admission_state="SET",

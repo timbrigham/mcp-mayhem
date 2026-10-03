@@ -250,6 +250,24 @@ class CoverageResult(Result, total=False):
     note: str | None
 
 
+class OwedResult(Result, total=False):
+    # ⚠ Read off `owed_between`'s returns, both branches. `owed_count` is None (not 0) when
+    # the ratchet did not run — `checked: False` with a `why`.
+    base: str
+    tip: str
+    owed_prices: str
+    checked: bool
+    why: str
+    steps_consulted: list[str]
+    changed_paths: int
+    renames_exempt: list[str]
+    owed: list[dict[str, Any]]
+    carried_findings: list[dict[str, Any]]
+    owed_count: int | None
+    owed_paths: list[str]
+    owed_by_step: dict[str, int]
+
+
 class CanPushResult(Result, total=False):
     allowed: bool
     range: str

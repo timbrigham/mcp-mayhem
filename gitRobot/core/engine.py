@@ -75,6 +75,15 @@ BULK_ADD_EXEMPT_REPO = ".claude-local"
 # remove, and it would fire in the one state where a caller is already anxious.
 PUSH_TIMEOUT = 3600
 
+# ⭐ WHAT merge()'s `imports_unjudged` PRICES, quoted beside the number every time (2026-10-03).
+IMPORTS_UNJUDGED_SCOPE = (
+    "(admitted push step, path) pairs whose bytes this merge CHANGED relative to the pre-merge "
+    "HEAD and which carry NO verdict at the merged blob — the review rounds this merge imports. "
+    "Base is the PRE-MERGE HEAD, not the fork point, so this side's own earlier changes are not "
+    "billed here. DISCLOSURE ONLY: the merge has already happened. NOT a push answer — stale, "
+    "failed and refused verdicts are can_push's business. owed_count is None when it could not "
+    "be priced, never 0.")
+
 # ⛔⛔ WHAT A PREFLIGHT PRICES, AND — THE PART THAT KEEPS BITING — WHAT IT DOES NOT.
 #
 # ⚠⚠ MEASURED 2026-09-26, AND IT IS THE THIRD FALSE GREEN FROM THIS ONE FUNCTION. The consumer
@@ -2308,6 +2317,8 @@ class GitRobot:
         # but blocking them... that's bad design."
         carried = self._carried_forward(self.git)
         reconciled = []
+        # the BASE of "what did this merge import" — read before git moves anything
+        pre_merge = self.git.head()
 
         merged = self.git.run(["merge", "--no-ff", "--no-commit", branch], timeout=600)
 
@@ -2487,7 +2498,10 @@ class GitRobot:
                                  extra={"output": merged.output, "ok": True,
                                         "merged": False,
                                         "carried_forward": carried,
-                                        "reconciled": reconciled})
+                                        "reconciled": reconciled,
+                                        "imports_unjudged": {
+                                            "state": "NOTHING_MERGED", "owed_count": 0,
+                                            "prices": IMPORTS_UNJUDGED_SCOPE}})
 
         gate = self.gates.run("pre-commit")
         gate_records = [gate.record()]
@@ -2554,12 +2568,51 @@ class GitRobot:
             )
 
         result = self.git.run(["commit", "--no-edit"], timeout=600)
+        imports = (self._imports_unjudged(pre_merge, self.git.head()) if result.ok else
+                   {"state": "NOT_CHECKED", "owed_count": None,
+                    "why": "the merge commit failed, so there is no merge to price",
+                    "prices": IMPORTS_UNJUDGED_SCOPE})
         return self._receipt("merge", args, "allowed" if result.ok else "failed",
                              gates=gate_records, reason=reason, detail=result.output,
                              extra={"output": merged.output + result.output,
                                     "ok": result.ok, "merged": True,
                                     "carried_forward": carried,
-                                    "reconciled": reconciled})
+                                    "reconciled": reconciled,
+                                    "imports_unjudged": imports})
+
+    def _imports_unjudged(self, pre: Optional[str], post: Optional[str]) -> dict:
+        """What this merge brought in that no admitted step has judged — DISCLOSURE, never a gate.
+
+        ⭐ ZeroParadox 2026-10-03, policy ratified by Tim: imported bytes that are UNCHANGED owe
+        nothing (verdicts travel with blobs); genuinely UNJUDGED imported bytes are owed by the
+        importing session, and the bill must show HERE rather than at push. Measured 2026-09-24:
+        a session-start merge turned a two-file fix into a fourteen-signature bill nobody saw
+        coming. The merge has already committed by now, so nothing here may refuse it.
+
+        ⛔ UNKNOWN IS NEVER 0. An unreachable ledger, an unreadable admission set or an
+        unresolvable HEAD each render `state: UNKNOWN, owed_count: None` — "could not tell" and
+        "nothing owed" are different facts, and only one of them is safe to act on."""
+        if not pre or not post:
+            return {"state": "UNKNOWN", "owed_count": None,
+                    "why": "HEAD could not be resolved before or after the merge",
+                    "prices": IMPORTS_UNJUDGED_SCOPE}
+        try:
+            ans = ledger_client.owed(pre, post)
+        except Exception as exc:                      # noqa: BLE001 — disclosure must not throw
+            return {"state": "UNKNOWN", "owed_count": None, "base": pre, "tip": post,
+                    "why": f"the ledger could not price the import: {exc}",
+                    "prices": IMPORTS_UNJUDGED_SCOPE}
+        if ans.get("owed_count") is None:
+            return {"state": "UNKNOWN", "owed_count": None, "base": pre, "tip": post,
+                    "why": ans.get("why") or "the ledger did not price the import",
+                    "prices": IMPORTS_UNJUDGED_SCOPE}
+        owed = ans.get("owed") or []
+        return {"state": "KNOWN", "base": pre, "tip": post,
+                "owed_count": ans["owed_count"],
+                "paths": len(ans.get("owed_paths") or []),
+                "by_step": ans.get("owed_by_step") or {},
+                "owed": owed[:50], "owed_truncated": len(owed) > 50,
+                "prices": IMPORTS_UNJUDGED_SCOPE}
 
     def rebase(self, onto: str, *, reason: str) -> dict:
         """Rebase HEAD onto another ref. Refused while dirty, AND refused when it

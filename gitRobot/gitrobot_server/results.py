@@ -76,6 +76,10 @@ class ReceiptResult(Result, total=False):
     not_provisioned: list[str]
     # worktree remove: OUR junctions removed, non-recursively, before git saw the tree
     unlinked: list[str]
+    # merge: the review rounds this merge imported, against the PRE-MERGE HEAD (2026-10-03).
+    # state KNOWN / UNKNOWN / NOT_CHECKED / NOTHING_MERGED; owed_count None unless KNOWN or
+    # NOTHING_MERGED. Disclosure, never a gate.
+    imports_unjudged: dict[str, Any]
     arc_state: dict[str, Any]
     recording_here_is_real: str
     subjects: list[dict[str, Any]]

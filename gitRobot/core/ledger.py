@@ -186,6 +186,16 @@ def can_push(rev_range: str, admission: Optional[list] = None,
                              "commit_admission": admission_for("commit")})
 
 
+def owed(base: str, tip: str, admission: Optional[list] = None) -> dict:
+    """Bytes `base..tip` changed that no admitted step judged at the tip — the ledger's ratchet
+    with the base NAMED. merge() asks it with base = the pre-merge HEAD, so the answer is what
+    the merge IMPORTED, not what this side also changed since the fork. Same no-second-
+    implementation rule as `can_push`: gitRobot names the commits and reports the answer."""
+    if admission is None:
+        admission = admission_for("push")
+    return call("owed", {"base": base, "tip": tip, "admission": admission})
+
+
 def inventory(ref: str, action: str, admission: Optional[list] = None) -> dict:
     """Ask the ledger to evaluate `ref` against the admission set for `action`.
 

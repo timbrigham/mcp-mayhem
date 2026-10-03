@@ -313,6 +313,79 @@ def _ratchet(*, config, repo: str, base: str, tip: str, tip_files: dict, admitte
             "carried_findings": carried}
 
 
+def _content_indexes(records: list) -> tuple:
+    """((step, path, blob) keys actually judged, the record at each key).
+
+    Lifted out of `check` 2026-10-03 so `owed_between` asks the SAME question against the
+    same index rather than a copy of it."""
+    # (step, path, blob) actually judged -- the ratchet asks about CHANGED paths against this.
+    by_content_keys = {(r.get("step"), s.get("path"), s.get("git_blob_id"))
+                       for r in records for s in (r.get("subjects") or [])
+                       if s.get("git_blob_id")}
+    # ⚠ THE RECORDS THEMSELVES, for the carried-finding check, which must compare the
+    # `outstanding` of the record at the OLD blob against the one at the NEW blob. The key SET
+    # above answers "was this judged"; it cannot answer "what did the judgement say", and my first
+    # attempt called `.get()` on it — 35 tests failed with `'set' object has no attribute 'get'`,
+    # which is the honest cost of assuming a name meant a mapping.
+    # ⚠ Highest revision wins, matching `_subject_index`: a superseded finding is not carried.
+    recs_by_content: dict = {}
+    for r in records:
+        for s in (r.get("subjects") or []):
+            if not s.get("git_blob_id"):
+                continue
+            k = (r.get("step"), s.get("path"), s.get("git_blob_id"))
+            prior = recs_by_content.get(k)
+            if prior is None or r.get("revision", 0) >= prior.get("revision", 0):
+                recs_by_content[k] = r
+    return by_content_keys, recs_by_content
+
+
+OWED_SCOPE = (
+    "THE CHANGED-PATH RATCHET between TWO NAMED COMMITS: every (admitted step, path) whose bytes "
+    "differ from `base` to `tip`, is in that step's scope, and carries NO record at the tip's "
+    "blob. It is the same `_ratchet` can_push runs — but can_push's base is the parent of the "
+    "OLDEST commit in its range, which for a merge is the branch's fork point, so it also counts "
+    "this side's own changes. Here the caller names the base, so a merge can ask exactly what "
+    "IT imported. NOT a push answer: it ignores stale, failed, refused and every per-commit bar.")
+
+
+def owed_between(*, records: list, config, repo: str, base: str, tip: str,
+                 admission: Optional[list]) -> dict:
+    """What `base..tip` changed that no admitted step has judged at the tip's bytes.
+
+    ⭐ Asked for by ZeroParadox 2026-10-03 (Tim ratified the policy in his own turn): unjudged
+    bytes imported by a merge are owed by the importing session, and the cost must surface AT
+    MERGE TIME. Measured 2026-09-24: a session-start merge of origin/main turned a two-file
+    defect fix into a fourteen-signature bill nobody saw until push.
+
+    ⚠ `admission=None` IS NOT "NOTHING OWED". The ratchet returns `checked: False` and this
+    returns `owed_count: None` — "I could not tell" and "nothing is owed" are different facts.
+    """
+    try:
+        base_sha = _git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").strip()
+        tip_sha = _git(repo, "rev-parse", "--verify", f"{tip}^{{commit}}").strip()
+    except ValueError as exc:
+        return {"checked": False, "why": f"could not resolve base/tip: {exc}",
+                "owed_count": None, "owed_prices": OWED_SCOPE}
+    keys, recs = _content_indexes(records)
+    admitted = sorted(admission) if admission is not None else None
+    r = _ratchet(config=config, repo=repo, base=base_sha, tip=tip_sha,
+                 tip_files=_files_at(repo, tip_sha), admitted=admitted,
+                 by_content=keys, recs_by_content=recs)
+    out = {"base": base_sha, "tip": tip_sha, "owed_prices": OWED_SCOPE, **r}
+    if not r.get("checked"):
+        out["owed_count"] = None
+        return out
+    owed = r.get("owed") or []
+    by_step: dict = {}
+    for o in owed:
+        by_step[o["step"]] = by_step.get(o["step"], 0) + 1
+    out.update({"owed_count": len(owed),
+                "owed_paths": sorted({o["path"] for o in owed}),
+                "owed_by_step": dict(sorted(by_step.items()))})
+    return out
+
+
 def _in_scope(config, step: str, path: str) -> bool:
     spec = (config.required.get("types") or {}).get(step) or {}
     # ⚠ SESSION STATE IS IN NO STEP'S SCOPE. Held HERE rather than only in `_ratchet`, which
@@ -692,25 +765,7 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
                 "commits": []}
 
     admitted = sorted(admission) if admission is not None else None
-    # (step, path, blob) actually judged -- the ratchet asks about CHANGED paths against this.
-    by_content_keys = {(r.get("step"), s.get("path"), s.get("git_blob_id"))
-                       for r in records for s in (r.get("subjects") or [])
-                       if s.get("git_blob_id")}
-    # ⚠ THE RECORDS THEMSELVES, for the carried-finding check, which must compare the
-    # `outstanding` of the record at the OLD blob against the one at the NEW blob. The key SET
-    # above answers "was this judged"; it cannot answer "what did the judgement say", and my first
-    # attempt called `.get()` on it — 35 tests failed with `'set' object has no attribute 'get'`,
-    # which is the honest cost of assuming a name meant a mapping.
-    # ⚠ Highest revision wins, matching `_subject_index`: a superseded finding is not carried.
-    recs_by_content: dict = {}
-    for r in records:
-        for s in (r.get("subjects") or []):
-            if not s.get("git_blob_id"):
-                continue
-            k = (r.get("step"), s.get("path"), s.get("git_blob_id"))
-            prior = recs_by_content.get(k)
-            if prior is None or r.get("revision", 0) >= prior.get("revision", 0):
-                recs_by_content[k] = r
+    by_content_keys, recs_by_content = _content_indexes(records)
     # ⭐⭐ BUILT ONCE FOR THE WHOLE WALK — see the long note at `inventory.build`. It is a pure
     # function of `records`, which does not change across the commits of one call, and
     # rebuilding it per commit was 52% of a measured 43-commit run.
