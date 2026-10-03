@@ -248,6 +248,16 @@ class PushStatusResult(Result, total=False):
     output: str | None
 
 
+class AttestResult(Result, total=False):
+    """attest() — read off `GitRobot.attest`'s single return (2026-10-03). `why` is None on a yes."""
+    op: str
+    attested: bool
+    run_id: str
+    tree: str
+    why: str | None
+    attested_prices: str
+
+
 class AdmissionResult(Result, total=False):
     """The admission set alone. ~665 bytes against requirements()' 11,904.
 

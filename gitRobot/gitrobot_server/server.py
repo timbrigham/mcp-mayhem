@@ -48,7 +48,7 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from gitrobot_server.results import (  # noqa: E402
     ExplainResult, HistoryResult, PreflightStatusResult, PushStatusResult,
-    AdmissionResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult,
+    AdmissionResult, AttestResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult,
     VocabularyResult)
 
 from core.engine import GitRobot
@@ -618,6 +618,21 @@ async def branch_delete(name: str, reason: str) -> ReceiptResult:
     those commits would survive only in the reflog, which expires. Merge or tag them first.
     There is no force-delete here and no parameter that reaches one."""
     return await _guard(_robot().branch_delete, name, reason=reason)
+
+
+@mcp.tool(title='Attest a passed commit gate',
+          annotations=ToolAnnotations(title='Attest a passed commit gate', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
+async def attest(run_id: str, tree: str) -> AttestResult:
+    """For the consumer's pre-commit HOOK, during a gitRobot commit/merge: did gitRobot's own gate
+    already pass for exactly this staged tree in this run? (Tim, 2026-10-03.)
+
+    run_id = $GITROBOT_RUN_ID (set by gitRobot on the `git commit` it launches); tree = the hook's
+    own `git write-tree`. `attested: true` ONLY when the run's gate passed, its git commit is in
+    flight now, the tree matches what the gate passed on AND the current index, and tools/verify
+    is byte-identical on disk. SINGLE-USE. Anything else is `attested: false` with `why` — and the
+    hook must then run in full. Unreachable or erroring must also mean: run in full.
+    ⚠ Not read-only: a yes CONSUMES the attestation, and every answer is audited."""
+    return await _guard(_robot().attest, run_id, tree)
 
 
 @mcp.tool(title='Open or read a pull request',

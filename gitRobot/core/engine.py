@@ -244,6 +244,10 @@ class GitRobot:
         # live commits by run_id — concurrent by design; the lock guards the dict, not commits
         self._commits_lock = threading.Lock()
         self._commits_running: dict = {}
+        # in-memory pass attestations, armed after a gate passes and disarmed when the git
+        # commit that follows returns — see attest(). NEVER persisted: no file to forge.
+        self._attest_lock = threading.Lock()
+        self._attestations: dict = {}
         # Long-form refusals, keyed by id, for `explain`. In-process only: the
         # durable copy is the audit record, which `explain` falls back to.
         self._refusals: dict[str, dict] = {}
@@ -1005,7 +1009,13 @@ class GitRobot:
                                 "and neither do you.",
                 )
 
-        result = target.run(["commit", "--file", str(path)], timeout=600)
+        if gate_records and gate_records[0].get("passed"):
+            self._arm_attestation(run_id, target)
+        try:
+            result = target.run(["commit", "--file", str(path)], timeout=600,
+                                env_extra=gates_mod.hook_provenance_env("commit", run_id))
+        finally:
+            self._disarm_attestation(run_id)
         decision = "allowed" if result.ok else "failed"
         return self._receipt(
             "commit", args, decision,
@@ -1013,6 +1023,90 @@ class GitRobot:
             extra={"output": result.output, "ok": result.ok, "run_id": run_id},
             target=target, run_id=run_id,
         )
+
+    # -- the pass attestation (Tim, 2026-10-03: "gitRobot vouches, in memory") ----------------
+
+    _VERIFY_DIR = "tools/verify"
+
+    def _verify_digest(self, target) -> Optional[str]:
+        """sha256 over the WORKING-TREE bytes of every tracked file under tools/verify.
+
+        ⚠ WORKING TREE, NOT INDEX, on purpose: both pipeline runs EXECUTE tools/verify from disk,
+        so "the same checks ran" is a claim about disk bytes. The staged TREE id covers what is
+        being committed; this covers what did the checking. None (never attest) if unreadable."""
+        listing = target.run(["ls-files", "-z", "--", self._VERIFY_DIR])
+        if not listing.ok:
+            return None
+        paths = sorted(p for p in listing.stdout.split("\0") if p)
+        if not paths:
+            return None
+        h = hashlib.sha256()
+        for rel in paths:
+            try:
+                data = (Path(target.repo) / rel).read_bytes()
+            except OSError:
+                return None
+            h.update(rel.encode("utf-8") + b"\0" + hashlib.sha256(data).digest())
+        return h.hexdigest()
+
+    def _arm_attestation(self, run_id: str, target) -> None:
+        tree = target.run(["write-tree"]).stdout.strip()
+        digest = self._verify_digest(target)
+        if not (tree and digest):
+            return                      # nothing to vouch for: the hook runs in full
+        with self._attest_lock:
+            self._attestations[run_id] = {"target": target, "tree": tree, "verify": digest,
+                                          "used": False, "armed_at": _now_iso()}
+
+    def _disarm_attestation(self, run_id: str) -> None:
+        with self._attest_lock:
+            self._attestations.pop(run_id, None)
+
+    def attest(self, run_id: str, tree: str) -> dict:
+        """Did gitRobot's own pre-commit gate pass for EXACTLY this staged tree, in run `run_id`?
+
+        ⭐ Tim, 2026-10-03: a commit ran the ~5-minute pipeline twice — gitRobot's gate, then the
+        installed hook inside `git commit` (never --no-verify). The hook may skip its second run
+        ONLY on a `yes` from here. The trust anchor is THIS PROCESS's memory, not a file.
+
+        YES only when ALL hold: the run is armed (its gate passed and its `git commit` is in
+        flight right now); the caller's tree == the tree the gate passed on == the target's
+        write-tree NOW; tools/verify's working-tree bytes are unchanged since the gate; and the
+        attestation is unused. SINGLE-USE. Every answer, yes or no, is AUDITED with its why —
+        a yes skips blocking checks, so it must never be silent."""
+        why, ok, target = None, False, None
+        with self._attest_lock:
+            a = self._attestations.get(run_id)
+            if a is None:
+                why = "no armed attestation for this run (unknown run, gate did not pass, or the commit already returned)"
+            elif a["used"]:
+                why = "this attestation was already used — single-use"
+            elif tree != a["tree"]:
+                why = "the caller's tree differs from the tree the gate passed on"
+            else:
+                target = a["target"]
+                a["used"] = True        # consume BEFORE the slower re-checks; never reuse
+        if target is not None:
+            now_tree = target.run(["write-tree"]).stdout.strip()
+            if now_tree != tree:
+                why = "the staged tree changed since the gate ran"
+            elif self._verify_digest(target) != a["verify"]:
+                why = "tools/verify changed on disk since the gate ran"
+            else:
+                ok = True
+        self.audit.append(
+            actor=self.actor, op="attest", args={"run_id": run_id, "tree": tree},
+            decision="allowed" if ok else "refused",
+            repo=str(getattr(target or self.git, "repo", "") or ""),
+            head=(target or self.git).head(), branch=(target or self.git).branch(),
+            tree=(target or self.git).tree_state(), run_id=run_id,
+            detail=("YES: gate passed for this exact tree and tools/verify; the hook may skip its "
+                    "second run" if ok else f"NO: {why}"))
+        return {"ok": True, "op": "attest", "attested": ok, "run_id": run_id, "tree": tree,
+                "why": None if ok else why,
+                "attested_prices": ("gitRobot's OWN pre-commit gate passed in this run, for this "
+                                    "exact staged tree, with tools/verify byte-identical on disk. "
+                                    "Single-use. NOT a verdict, NOT a ledger record.")}
 
     def commit_status(self) -> dict:
         """running / concluded / died / none — the commit half of `in_flight`.
@@ -2800,7 +2894,17 @@ class GitRobot:
                        % (len(reconciled), branch) if reconciled else "")),
             )
 
-        result = self.git.run(["commit", "--no-edit"], timeout=600)
+        merge_run = (self._merge_running or {}).get("run_id")
+        if merge_run:
+            self._arm_attestation(merge_run, self.git)
+        try:
+            result = self.git.run(
+                ["commit", "--no-edit"], timeout=600,
+                env_extra=(gates_mod.hook_provenance_env("merge", merge_run) if merge_run
+                           else None))
+        finally:
+            if merge_run:
+                self._disarm_attestation(merge_run)
         imports = (self._imports_unjudged(pre_merge, self.git.head()) if result.ok else
                    {"state": "NOT_CHECKED", "owed_count": None,
                     "why": "the merge commit failed, so there is no merge to price",
