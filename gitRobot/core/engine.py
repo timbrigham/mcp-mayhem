@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from fnmatch import fnmatch
 import os
@@ -44,7 +45,7 @@ from typing import Any, Optional, Sequence
 from core import ledger as ledger_client
 from core import tiers
 from core.audit import AuditLog, _now_iso
-from core.errors import GitRobotError, RefusalError, RepoError, UsageError
+from core.errors import ConfigError, GitRobotError, RefusalError, RepoError, UsageError
 from core import gates as gates_mod
 from core.gates import Gates, _clip as _clip_output
 from core.gitio import Git
@@ -3090,6 +3091,187 @@ class GitRobot:
                 % ((bar.get("rule_digest") or "?")[:12],
                    (ex.get("scope_digest_now") or "?")[:12]),
                 reason=reason)
+
+    # =========================================================================
+    # Pull requests — OPEN, read STATUS, refresh the BODY of one we opened. Nothing else.
+    # =========================================================================
+
+    _PR_CONFIG = Path(__file__).resolve().parents[1] / "config" / "pull_requests.v1.json"
+    # argv PREFIX for the GitHub CLI; a test points it at a fake. Never a shell string.
+    gh_argv: list = ["gh"]
+
+    def _pr_policy(self) -> list:
+        """The allowed (head, base) pairs. ⛔ ABSENT OR UNREADABLE REFUSES — an agent opening
+        pull requests as the owner's account is an outward-facing act, and "no list" must never
+        read as "any pair"."""
+        try:
+            doc = json.loads(self._PR_CONFIG.read_text(encoding="utf-8-sig"))
+            pairs = [(p["head"], p["base"]) for p in doc["allowed"]]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ConfigError(f"pull-request policy unreadable at {self._PR_CONFIG}: {exc}. "
+                              f"Refusing rather than treating a missing list as permission.")
+        if not pairs:
+            raise ConfigError(f"pull-request policy at {self._PR_CONFIG} allows no pairs.")
+        return pairs
+
+    def _gh_repo(self) -> str:
+        """owner/name from THIS repository's origin — passed to gh as --repo, so gh never
+        guesses (a fork's upstream, a stale default) which repository it is acting on."""
+        url = self.git.run(["remote", "get-url", "origin"]).stdout.strip()
+        m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
+        if not m:
+            raise RepoError(f"origin is not a GitHub repository ({url!r}); pull_request needs one")
+        return f"{m.group(1)}/{m.group(2)}"
+
+    def _gh(self, args: list, timeout: int = 120) -> subprocess.CompletedProcess:
+        env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+        try:
+            return subprocess.run([*self.gh_argv, *args], cwd=str(self.repo), capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", env=env,
+                                  timeout=timeout, shell=False)
+        except FileNotFoundError as exc:
+            raise RepoError("the GitHub CLI (`gh`) is not installed or not on PATH") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RepoError(f"gh {' '.join(args[:2])} timed out after {timeout}s") from exc
+
+    def _own_prs(self, repo: str) -> set:
+        """PR numbers THIS server opened in `repo`, from its own audit — the only PRs whose
+        body it may rewrite."""
+        own = set()
+        for r in self.audit.read():
+            if r.get("op") == "pull_request.open" and r.get("decision") == "allowed":
+                a = r.get("args") or {}
+                if a.get("repo") == repo and isinstance(a.get("number"), int):
+                    own.add(a["number"])
+        return own
+
+    def _read_body_file(self, body_file: Optional[str]) -> Path:
+        if not body_file:
+            raise UsageError("body_file is required: the PR description comes from a FILE, "
+                             "like a commit message, never from an inline string")
+        path = Path(body_file)
+        if not path.is_absolute():
+            path = self.repo / path
+        if not path.is_file():
+            raise UsageError(f"body file not found: {path}")
+        text = path.read_text(encoding="utf-8-sig")
+        if not text.strip():
+            raise UsageError(f"body file is empty: {path}")
+        if len(text) > 60000:
+            raise UsageError(f"body file is {len(text)} chars; GitHub caps a PR body at 65536")
+        return path
+
+    def pull_request(self, action: str, *, reason: str, head: Optional[str] = None,
+                     base: Optional[str] = None, title: Optional[str] = None,
+                     body_file: Optional[str] = None, number: Optional[int] = None) -> dict:
+        """OPEN a pull request, read one's STATUS, or refresh the BODY of one this server opened.
+
+        ⭐ Tim, 2026-10-03, asked in the consumer's session and confirmed in this one: agents had
+        no route to open a PR — the consumer's hook denies `gh`, and their GitHub MCP is
+        read-only — so promoting `illustrated` to `main` meant Tim pasting a draft by hand.
+
+        ⛔ DELIBERATELY NARROW, because this acts on GitHub AS THE OWNER'S ACCOUNT:
+          · no merge, approve, close, or edit of anyone else's PR — merging into main stays Tim's
+          · (head, base) must be in config/pull_requests.v1.json; absent config REFUSES
+          · `open` refuses unless the remote branch is EXACTLY the local head (nothing unpushed),
+            and returns an existing open PR for the same pair instead of opening a second
+          · `update_body` only for a PR this server's own audit says it opened
+        """
+        if not (isinstance(reason, str) and reason.strip()):
+            raise UsageError("pull_request requires a non-empty reason")
+        if action not in ("open", "status", "update_body"):
+            raise UsageError(f"unknown pull_request action {action!r}; expected open, status "
+                             f"or update_body. There is no merge, approve or close by design.")
+        repo = self._gh_repo()
+
+        if action == "status":
+            if not isinstance(number, int):
+                raise UsageError("pull_request(action='status') requires number=<PR number>")
+            res = self._gh(["pr", "view", str(number), "--repo", repo, "--json",
+                            "number,url,state,isDraft,title,headRefName,baseRefName,headRefOid,"
+                            "mergeable,mergeStateStatus,statusCheckRollup"])
+            if res.returncode != 0:
+                raise RepoError(f"gh pr view {number} failed: {(res.stderr or res.stdout)[-800:]}")
+            pr = json.loads(res.stdout)
+            local = self.git.run(["rev-parse", "--verify", "--quiet",
+                                  pr.get("headRefName") or ""]).stdout.strip()
+            pr["local_head"] = local or None
+            pr["head_matches_local"] = (bool(local) and local == pr.get("headRefOid"))
+            return {"ok": True, "op": "pull_request.status", "decision": "allowed",
+                    "pull_request": pr}
+
+        if action == "update_body":
+            if not isinstance(number, int):
+                raise UsageError("pull_request(action='update_body') requires number=<PR number>")
+            path = self._read_body_file(body_file)
+            args = {"action": action, "repo": repo, "number": number}
+            if number not in self._own_prs(repo):
+                raise self._refuse(
+                    "pull_request.update_body", args,
+                    f"PR #{number} in {repo} was not opened by this gitRobot, so its description "
+                    f"is not this server's to rewrite.",
+                    "Only PRs opened through pull_request(action='open') can be updated here. For "
+                    "any other PR, the person who owns it edits the description.",
+                    reason=reason)
+            res = self._gh(["pr", "edit", str(number), "--repo", repo, "--body-file", str(path)])
+            return self._receipt("pull_request.update_body", args,
+                                 "allowed" if res.returncode == 0 else "failed", reason=reason,
+                                 detail=(res.stdout + res.stderr),
+                                 extra={"ok": res.returncode == 0,
+                                        "output": res.stdout + res.stderr,
+                                        "pull_request": {"number": number, "repo": repo}})
+
+        # -- open --------------------------------------------------------------
+        if not (head and base and title and title.strip()):
+            raise UsageError("pull_request(action='open') requires head, base and title")
+        args = {"action": action, "repo": repo, "head": head, "base": base}
+        if (head, base) not in self._pr_policy():
+            raise self._refuse(
+                "pull_request.open", args,
+                f"{head} -> {base} is not an allowed pull-request pair in {self._PR_CONFIG.name}.",
+                f"Allowed pairs: {self._pr_policy()}. Adding one is a policy edit to that file, "
+                f"which is the owner's call — it acts on GitHub as their account.",
+                reason=reason)
+        path = self._read_body_file(body_file)
+        local = self.git.run(["rev-parse", "--verify", "--quiet", head]).stdout.strip()
+        remote = self.git.run(["ls-remote", "origin", f"refs/heads/{head}"],
+                              timeout=120).stdout.split()
+        remote_sha = remote[0] if remote else ""
+        if not local or local != remote_sha:
+            raise self._refuse(
+                "pull_request.open", args,
+                f"origin's {head} is {remote_sha[:12] or 'ABSENT'} but local {head} is "
+                f"{local[:12] or 'ABSENT'}, so a PR opened now would not show what you have.",
+                f"push('{head}') first (it runs the gate), then open the PR. Measured with "
+                f"ls-remote, i.e. the remote itself, not the local tracking ref.",
+                reason=reason)
+        existing = self._gh(["pr", "list", "--repo", repo, "--head", head, "--base", base,
+                             "--state", "open", "--json", "number,url,title"])
+        if existing.returncode != 0:
+            raise RepoError(f"gh pr list failed: {(existing.stderr or existing.stdout)[-800:]}")
+        found = json.loads(existing.stdout or "[]")
+        if found:
+            pr = found[0]
+            # `skipped` — the published value for "there was nothing to do" — not a new
+            # `exists`: two names for one event is the mirror of one name for two
+            return self._receipt("pull_request.open", {**args, "number": pr["number"]}, "skipped",
+                                 reason=reason,
+                                 detail=f"an open PR already exists for {head} -> {base}: {pr['url']}",
+                                 extra={"ok": True, "pull_request": {**pr, "repo": repo,
+                                                                     "opened_now": False}})
+        res = self._gh(["pr", "create", "--repo", repo, "--head", head, "--base", base,
+                        "--title", title, "--body-file", str(path)])
+        url = next((ln.strip() for ln in (res.stdout or "").splitlines()
+                    if re.match(r"https://github\.com/.+/pull/\d+", ln.strip())), None)
+        num = int(url.rsplit("/", 1)[1]) if url else None
+        ok = res.returncode == 0 and num is not None
+        return self._receipt("pull_request.open", {**args, "number": num},
+                             "allowed" if ok else "failed", reason=reason,
+                             detail=(res.stdout + res.stderr),
+                             extra={"ok": ok, "output": res.stdout + res.stderr,
+                                    "pull_request": {"number": num, "url": url, "repo": repo,
+                                                     "head": head, "base": base,
+                                                     "head_sha": local, "opened_now": ok}})
 
     def tag_create(self, name: str, *, reason: str,
                    message_file: Optional[str] = None) -> dict:

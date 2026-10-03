@@ -1,0 +1,7 @@
+{
+  "schema": "gitrobot.pull_requests.v1",
+  "_why": "The (head, base) pairs gitRobot may OPEN a pull request for, acting on GitHub as the repository owner's account. Tim, 2026-10-03: open + status + update_body (own PRs only); no merge, approve or close. Absent or unreadable REFUSES - a missing list is never permission. Adding a pair is a policy edit, and it is the owner's call.",
+  "allowed": [
+    {"head": "illustrated", "base": "main"}
+  ]
+}

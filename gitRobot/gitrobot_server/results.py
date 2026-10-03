@@ -80,6 +80,9 @@ class ReceiptResult(Result, total=False):
     # state KNOWN / UNKNOWN / NOT_CHECKED / NOTHING_MERGED; owed_count None unless KNOWN or
     # NOTHING_MERGED. Disclosure, never a gate.
     imports_unjudged: dict[str, Any]
+    # pull_request: the PR acted on — open/exists: {number, url, repo, head, base, head_sha,
+    # opened_now}; status: gh's view plus local_head / head_matches_local (2026-10-03)
+    pull_request: dict[str, Any]
     arc_state: dict[str, Any]
     recording_here_is_real: str
     subjects: list[dict[str, Any]]

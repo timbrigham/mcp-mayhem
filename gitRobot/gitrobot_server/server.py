@@ -620,6 +620,28 @@ async def branch_delete(name: str, reason: str) -> ReceiptResult:
     return await _guard(_robot().branch_delete, name, reason=reason)
 
 
+@mcp.tool(title='Open or read a pull request',
+          annotations=ToolAnnotations(title='Open or read a pull request', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+async def pull_request(action: str, reason: str, head: Optional[str] = None,
+                       base: Optional[str] = None, title: Optional[str] = None,
+                       body_file: Optional[str] = None,
+                       number: Optional[int] = None) -> ReceiptResult:
+    """OPEN a GitHub pull request, read one's STATUS, or refresh the BODY of one gitRobot opened.
+
+    action='open'        head, base, title, body_file (a FILE, like a commit message). Refused
+                         unless (head, base) is in gitRobot's config/pull_requests.v1.json AND the
+                         remote branch is exactly the local head (push first). An open PR for the
+                         same pair is RETURNED, never duplicated. Receipt: pull_request.{number,url}.
+    action='status'      number. Read-only: state, mergeability, checks, and whether the PR head
+                         matches your local branch.
+    action='update_body' number, body_file. Only for a PR this server's audit says it opened.
+
+    ⛔ There is NO merge, approve, close or edit-of-others: merging into main is the owner's act.
+    ⚠ openWorldHint: this acts on GitHub as the repository owner's account, through `gh`."""
+    return await _guard(_robot().pull_request, action, reason=reason, head=head, base=base,
+                        title=title, body_file=body_file, number=number)
+
+
 @mcp.tool(title='Create a tag',
           annotations=ToolAnnotations(title='Create a tag', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def tag_create(name: str, reason: str, message_file: Optional[str] = None) -> ReceiptResult:
