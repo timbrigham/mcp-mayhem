@@ -363,19 +363,12 @@ NOT_ADMITTED_PREMISE = re.compile(
 # acknowledged one without removing it from this set ALSO fails. A one-directional list lets debt
 # sit forever, which is the failure the mismatch ratchet above was written for.
 ACKNOWLEDGED_STALE_PREMISES = {
-    # ⛔ LIVE DEBT — the text still asserts the premise as current.
-    # Tim ruled the tension 2026-09-27: a genuine 2-of-3 split records UNDECIDED and is accepted
-    # by `signature`, and a `panel` vocabulary was commissioned separately. So the QUESTION is
-    # resolved while this key's TEXT still says nothing is gated on the answer.
-    # ⚠ Correcting it is the consumer's edit in the consumer's file. This entry records that it
-    # is owed, and it must come out when they fix it.
-    # ⭐ TRACKED ON THEIR SIDE AS `COPYEDITOR-MODULEWHY-STALE` (their DEFECTS.md, filed 2026-09-27,
-    # verified at the source rather than taken on my report), in the same document family as
-    # `ADMIT-1` and `COPYEDITOR-ESCALATION-1`. ⚠⚠ THE ID IS WHY THIS LINE EXISTS: an acknowledged
-    # entry with no pointer is indistinguishable from one nobody is tracking, and an exemption
-    # list is exactly where a forgotten item sits quietly forever. A reader who finds this key
-    # still matching in a month can ask about a NAMED ROW instead of rediscovering the question.
-    ("copy_editor", "_module_why"): "live",
+    # ⭐ PAID 2026-10-03 — `("copy_editor", "_module_why")` was the one LIVE entry here (their
+    # `COPYEDITOR-MODULEWHY-STALE`, filed 2026-09-27). ZeroParadox's 75125a8 rewrote its tail from
+    # "`copy_editor` is admitted by nothing so nothing is gated on the answer" to "`copy_editor` is
+    # admitted at push, so a push IS gated on the answer", citing Tim's 2026-10-03 `--how panel`
+    # ruling. The reverse half of this ratchet fired on the next suite run — which is the whole
+    # reason it is two-directional — and the entry left. No live debt remains.
 
     # ⚠⚠ HISTORICAL PROVENANCE, NOT DEBT — these keys QUOTE an expired or false premise in order
     # to correct it, and their own headers say so. `_scope_was_null_until_2026_09_22` says its
@@ -489,10 +482,12 @@ def test_the_premise_detector_would_actually_fire():
     # `prior_art._admission_is_action_scoped_2026_09_22` entirely and the guard found it on its
     # first run. The conclusion survived only because that key turned out to be historical.
     live = [k for k, v in ACKNOWLEDGED_STALE_PREMISES.items() if v == "live"]
-    assert live == [("copy_editor", "_module_why")], (
-        f"the set of LIVE expired premises changed: {live}. A new one means an admitted step's "
-        f"deferred question is unsafe right now; losing this one means the consumer corrected "
-        f"the text and it should leave the acknowledged set entirely.")
+    # ⭐ ZERO since 2026-10-03, when the consumer corrected `copy_editor._module_why` (75125a8).
+    # A NEW live entry means an admitted step's deferred question is unsafe right now — that is
+    # a decision to surface, never an entry to add quietly to make this green.
+    assert live == [], (
+        f"a LIVE expired premise was acknowledged: {live}. Since 2026-10-03 there are none; a new "
+        f"one means an admitted step's deferred question is unsafe right now.")
 
 
 def test_the_ratchet_fires_in_BOTH_directions():
@@ -504,12 +499,19 @@ def test_the_ratchet_fires_in_BOTH_directions():
     must fail, AND debt that was silently paid must fail, or the acknowledged list becomes a
     permanent exemption nobody revisits.
     """
-    LIVE = ("copy_editor", "_module_why")
     GHOST = ("copy_editor", "_a_key_that_does_not_exist")
 
     # ⭐ DRIVES THE REAL HELPER WITH SYNTHETIC ACKNOWLEDGEMENTS, so neutering either direction
     # inside `_premise_debt` fails here rather than passing on isolated arithmetic.
     full = set(ACKNOWLEDGED_STALE_PREMISES)
+    # ⚠ THE FORWARD PROBE MUST BE A KEY THAT STILL MATCHES. It was hard-coded to
+    # `copy_editor._module_why`; when the consumer fixed that text (2026-10-03) the probe would
+    # have tested against a key the sweep no longer finds. Chosen from what matches NOW, with a
+    # floor, so the control cannot quietly drive nothing.
+    types, _ = _compare()
+    still_matching = sorted(full & _stale_premise_keys(types, _admitted_steps()))
+    assert still_matching, "no acknowledged key still matches — the forward probe has no subject"
+    LIVE = still_matching[0]
 
     # FORWARD: drop an acknowledgement and the key must surface as NEW
     new, _ = _premise_debt(full - {LIVE})
