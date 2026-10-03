@@ -306,6 +306,26 @@ point at.
 INDEX blobs does not describe HEAD, and a push evaluates HEAD — so recording while the index and
 HEAD disagree produces rows that read STALE, correctly, and refuse.
 
+⛔ **AND THE LEDGER'S OWN BAR IS THE MAIN CHECKOUT'S WORKING TREE — A KNOWN PROPERTY, NOT YET A
+DECISION.** Measured 2026-10-03: `ZPLEDGER_CONFIG` names the consumer's `tools/verify`, `_resolve`
+opens `required.v2.json` / `policy.v1.json` there as PATHS ON DISK, and `server._ledger()` builds a
+fresh `Ledger` on EVERY call. So the registry that gates every caller is the main checkout's
+WORKING-TREE file, re-read per call — not HEAD, not the index, and not any worktree's copy.
+
+    consequence 1   a worktree commit cannot carry its own repin through its own gate — V16c
+                    reads main's file. Measured: batch.py staged at 15c6b0a5 in a worktree,
+                    refused against main's ['3ac4334f']. Tim's route for that case: a ROLLOUT
+                    PAIR committed in main (both blobs, stated expiry), then the worktree commit
+                    REPLACES the pair, then merge.
+    consequence 2   an UNCOMMITTED edit to that file in the main checkout changes the bar for
+                    every caller IMMEDIATELY — including a push already in flight — with no
+                    commit and no review.
+
+⚠ Tim, 2026-10-03: **note it, decide later.** Reading from main's HEAD would make only committed
+rules gate; reading from the judged commit would let a commit approve its own tool. Both change
+what every gate reads, so neither is a patch. Until decided: treat any edit to the consumer's
+registry as LIVE THE MOMENT IT IS SAVED, and never make one while a push or preflight is running.
+
 ## A CLAIM IS NOT A MEASUREMENT UNTIL IT NAMES ITS OBJECT, INSTRUMENT, SCOPE AND PROVENANCE
 
 ⭐⭐ Tim, 2026-09-10: *"shouldn't you be able to standardize this? I mean quite frankly that's
