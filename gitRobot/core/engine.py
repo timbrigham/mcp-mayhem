@@ -2583,7 +2583,7 @@ class GitRobot:
                                     "imports_unjudged": imports})
 
     def _admission_env(self, action: str) -> dict:
-        """GITROBOT_ADMISSION for the hook. ⛔ An unreadable set is UNKNOWN, never `[]` — the
+        """GITROBOT_ADMITTED for the hook. ⛔ An unreadable set is UNKNOWN, never `[]` — the
         hook must not be told "nothing is admitted" when gitRobot could not look."""
         try:
             admitted = ledger_client.admission_for(action)

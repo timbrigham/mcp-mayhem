@@ -28,7 +28,7 @@ def _hook_recording_env(repo):
         b"    os.environ.get('GITROBOT_RUN_ID', '<absent>') + ' ' +\n"
         b"    os.environ.get('ZZ_SERVER_ENV_PROBE', '<absent>'), encoding='utf-8')\n"
         b"pathlib.Path('admission_seen.txt').write_text(\n"
-        b"    os.environ.get('GITROBOT_ADMISSION', '<absent>'), encoding='utf-8')\n"
+        b"    os.environ.get('GITROBOT_ADMITTED', '<absent>'), encoding='utf-8')\n"
         b"sys.exit(0)\n")
     return repo / "env_seen.txt"
 
@@ -97,12 +97,12 @@ def test_push_hands_git_its_own_run_id(robot, repo, tmp_path, fake_gate, monkeyp
     out = robot.push("illustrated", reason="provenance reaches git push", wait=True)
     assert len(seen) == 1, f"expected exactly one `git push`, saw {len(seen)}"
     assert seen[0] == {"GITROBOT_OP": "push", "GITROBOT_RUN_ID": out["run_id"],
-                       "GITROBOT_ADMISSION": json.dumps(
+                       "GITROBOT_ADMITTED": json.dumps(
                            {"action": "push", "admitted": ["copy_editor", "editorial"],
                             "state": "SET"}, sort_keys=True)}
 
 
-# -- GITROBOT_ADMISSION (2026-10-03): the set the hook used to hand-list ---------------------
+# -- GITROBOT_ADMITTED (2026-10-03): the set the hook used to hand-list ---------------------
 
 def _admission_seen(repo):
     return json.loads((repo / "admission_seen.txt").read_text(encoding="utf-8"))
@@ -144,6 +144,29 @@ def test_an_empty_admission_set_says_empty(robot, repo, monkeypatch):
     _hook_recording_env(repo)
     robot.preflight(wait=True)
     assert _admission_seen(repo) == {"state": "EMPTY", "action": "push", "admitted": []}
+
+
+def test_no_variable_handed_to_the_hook_collides_with_one_gitrobot_reads(tmp_path, monkeypatch):
+    """⛔ `GITROBOT_ADMISSION` is the admission FILE PATH override that `admission_for` reads.
+    The first cut of the hook variable reused that name. Assert BEHAVIOUR, not just the
+    string: with every variable we hand the hook set in the environment, `admission_for` must
+    still resolve the file it would have resolved without them."""
+    import inspect
+    from core import ledger as ledger_client
+    handed = {**gates_mod.hook_provenance_env("push", "r"),
+              **gates_mod.admission_env("push", ["editorial"])}
+    src = inspect.getsource(ledger_client)
+    read_by_gitrobot = {n for n in handed if f'"{n}"' in src}
+    assert read_by_gitrobot == set(), f"handed to the hook AND read by gitRobot: {read_by_gitrobot}"
+
+    adm = tmp_path / "admission.json"
+    adm.write_bytes(json.dumps({"schema": "zp.admission.v1", "default": "NOT_ADMITTING",
+                                "admission": {"commit": [], "push": ["editorial"], "tag": []}}
+                               ).encode())
+    monkeypatch.setenv("GITROBOT_ADMISSION", str(adm))
+    for k, v in handed.items():
+        monkeypatch.setenv(k, v)
+    assert ledger_client.admission_for("push") == ["editorial"]
 
 
 def test_the_helper_names_both_variables_and_leaves_os_environ_alone(monkeypatch):

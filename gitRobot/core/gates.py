@@ -73,6 +73,10 @@ def admission_env(action: str, admitted: Optional[list], why: str = "") -> dict:
         EMPTY    {"state":"EMPTY","action":..,"admitted":[]}    read, and nothing admitted
         UNKNOWN  {"state":"UNKNOWN","action":..,"why":..}       could not be read — NEVER []
     ⚠ A human `git push` sets NOTHING; the hook must read an absent variable as UNKNOWN too.
+    ⛔ NOT `GITROBOT_ADMISSION` — that name already means the admission FILE PATH override in
+    `ledger.admission_for`. b3b604b shipped this variable under that name for minutes before a
+    re-read of ledger.py caught it: one name, two meanings, and anything under the hook reading
+    it the old way would have opened a JSON document as a path. Pinned by a test.
     ⚠ Same trust footing as GITROBOT_RUN_ID: it reports what gitRobot read, it is not evidence.
     A hook that BLOCKS on it would be trusting an env var anyone can set — report with it only.
     """
@@ -82,7 +86,7 @@ def admission_env(action: str, admitted: Optional[list], why: str = "") -> dict:
     else:
         doc = {"state": "SET" if admitted else "EMPTY", "action": action,
                "admitted": sorted(admitted)}
-    return {"GITROBOT_ADMISSION": json.dumps(doc, sort_keys=True)}
+    return {"GITROBOT_ADMITTED": json.dumps(doc, sort_keys=True)}
 
 
 _MAX_OUTPUT = 8000     # gate output echoed back to the caller, capped (receipt, not warehouse)
