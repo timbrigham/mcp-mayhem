@@ -152,10 +152,41 @@ function Get-McpHealth {
     }
   }
 
+  $sw = [Diagnostics.Stopwatch]::StartNew()
   $result.HttpOk = Test-McpHttp -Server $Server
+  $sw.Stop()
+  $result | Add-Member -NotePropertyName HttpMs -NotePropertyValue ([int]$sw.ElapsedMilliseconds)
   if ($result.HttpOk) { $result.Health = 'Healthy' } else { $result.Health = 'Down' }
   return $result
 }
+
+# ---------------------------------------------------------------------------
+# The restart decision, kept PURE so it can be tested without starting or
+# killing anything. Returns 'ok' | 'grace' | 'restart'.
+#
+# !! BUSY IS NOT DEAD. Measured 2026-10-04: verdictLedger was restarted TEN
+# times in one day (1-4 on any earlier day), three inside one consumer run,
+# never because it crashed - its stderr held no traceback. Each was ONE missed
+# GET (5 s timeout) while ~17 parallel clients kept it busy, and each restart
+# killed every in-flight call and threw away its in-memory cache, making the
+# next cold start slower still. Tim, same day: require 3 misses.
+#
+# !! ONLY A SLOW ANSWER GETS GRACE. A server with NOTHING LISTENING (process
+# gone) or a dead proxy child is dead, and restarts at once as before.
+# ---------------------------------------------------------------------------
+function Get-McpRepairAction {
+  param(
+    [Parameter(Mandatory)]$Health,
+    [int]$Misses = 0,
+    [int]$Threshold = 1
+  )
+  if ($Health.Health -eq 'Healthy') { return 'ok' }
+  $slowNotDead = ($Health.Health -eq 'Down') -and $Health.Listening -and (-not $Health.HttpOk)
+  if ($slowNotDead -and (($Misses + 1) -lt $Threshold)) { return 'grace' }
+  return 'restart'
+}
+
+$script:McpHttpMisses = @{}
 
 # ---------------------------------------------------------------------------
 # Stop / Start
@@ -271,10 +302,31 @@ function Start-McpServer {
 function Repair-McpServer {
   param(
     [Parameter(Mandatory)]$Server,
-    [int]$SettleSeconds = 6
+    [int]$SettleSeconds = 6,
+    # 1 = restart on the first miss (the CLI and the startup sweep: a human or a cold
+    # start means it). The poll loop passes the manifest's httpMissesBeforeRestart.
+    [int]$MissesBeforeRestart = 1
   )
+  $name = $Server.name
   $h = Get-McpHealth -Server $Server
-  if ($h.Health -eq 'Healthy') { return $h }
+  $misses = 0
+  if ($script:McpHttpMisses.ContainsKey($name)) { $misses = $script:McpHttpMisses[$name] }
+  $action = Get-McpRepairAction -Health $h -Misses $misses -Threshold $MissesBeforeRestart
+  if ($action -eq 'ok') {
+    if ($misses -gt 0) {
+      Write-McpLog "${name}: answered again after $misses slow probe(s) - no restart was needed."
+    }
+    $script:McpHttpMisses[$name] = 0
+    return $h
+  }
+  if ($action -eq 'grace') {
+    $script:McpHttpMisses[$name] = $misses + 1
+    Write-McpLog -Level 'WARN' -Message ("${name}: HTTP probe miss $($misses + 1)/$MissesBeforeRestart " +
+      "after $($h.HttpMs) ms, pid $($h.Pid) still listening - NOT restarting yet: busy is not dead.")
+    $h.Health = 'Slow'
+    return $h
+  }
+  $script:McpHttpMisses[$name] = 0
 
   Write-McpLog -Level 'WARN' -Message "$($Server.name): $($h.Health) - restarting."
   Stop-McpServer -Server $Server
@@ -597,6 +649,6 @@ function Get-McpBackupAge {
 
 Export-ModuleMember -Function `
   Write-McpLog, Get-McpManifest, Resolve-McpToken, Get-McpServer, Get-McpListenerPid, Get-McpChildProcess, `
-  Get-McpServerProcess, Test-McpHttp, Get-McpHealth, Stop-McpServer, Test-McpRequiredEnv, `
+  Get-McpServerProcess, Test-McpHttp, Get-McpHealth, Get-McpRepairAction, Stop-McpServer, Test-McpRequiredEnv, `
   Resolve-McpExe, Start-McpServer, Repair-McpServer, `
   Test-McpStreamIntact, Split-McpLargeStream, Join-McpStreamParts, Invoke-McpBackup, Get-McpBackupAge

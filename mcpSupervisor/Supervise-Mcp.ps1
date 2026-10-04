@@ -58,6 +58,9 @@ Set-Content -Path $LockFile -Value $PID
 
 $manifest = Get-McpManifest
 $poll = if ($manifest.PSObject.Properties.Name -contains 'pollSeconds') { [int]$manifest.pollSeconds } else { 30 }
+# Consecutive SLOW HTTP answers (still listening) before the loop restarts a server. A dead
+# process still restarts on the first poll. See Get-McpRepairAction for the 2026-10-04 measurement.
+$httpMisses = if ($manifest.PSObject.Properties.Name -contains 'httpMissesBeforeRestart') { [int]$manifest.httpMissesBeforeRestart } else { 3 }
 $fails = @{}          # server name -> consecutive failed repairs
 $lastState = @{}      # server name -> last Health, for change-only logging
 $heartbeatEvery = 20  # ticks between "all healthy" heartbeat lines
@@ -82,7 +85,7 @@ try {
     foreach ($server in $manifest.servers) {
       $name = $server.name
       try {
-        $h = Repair-McpServer -Server $server
+        $h = Repair-McpServer -Server $server -MissesBeforeRestart $httpMisses
         if (-not $lastState.ContainsKey($name)) { $lastState[$name] = '' }
         if ($h.Health -ne $lastState[$name]) {
           Write-McpLog "$name -> $($h.Health)"
@@ -90,6 +93,10 @@ try {
         }
         if ($h.Health -eq 'Healthy') {
           $fails[$name] = 0
+        } elseif ($h.Health -eq 'Slow') {
+          # NOT a failed repair - no repair was attempted. Counting it would trip the
+          # 3-strike backoff below and stall the loop for every server.
+          $allHealthy = $false
         } else {
           $allHealthy = $false
           if (-not $fails.ContainsKey($name)) { $fails[$name] = 0 }
