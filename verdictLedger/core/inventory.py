@@ -21,13 +21,36 @@ paid review rounds. "Re-run everything, always" wears the costume of rigour.
 from __future__ import annotations
 
 import fnmatch
+import functools
 import json
 import os
 import subprocess
 from typing import Optional
 
 
+@functools.lru_cache(maxsize=1_000_000)
+def _fnmatch_memo(path: str, glob: str) -> bool:
+    """`fnmatch.fnmatch`, memoised. ⭐ 2026-10-04: the scope audit in `build` re-tests the SAME
+    (subject path, glob) pairs on every call — 1.6M calls per inventory on the 8,410-record
+    stream, each paying Windows `ntpath.normcase` twice (LCMapStringEx), ~3 s of every call.
+    A pure function of its two arguments, so the memo is exactly equivalent — case folding and
+    all — and bounded so it cannot grow without limit."""
+    return fnmatch.fnmatch(path, glob)
+
+
 def _subject_index(records) -> tuple:
+    """See `_subject_index_fold` for the semantics. ⭐ 2026-10-04: a records snapshot from the
+    store carries its cache state, so the fold is reused and extended instead of re-walking every
+    record (measured: this walk dominated `inventory`, ~9 s per call on 8,410 records)."""
+    cache, state = getattr(records, "_cache", None), getattr(records, "_state", None)
+    if cache is not None and state is not None and len(records) == len(state.records):
+        idx = cache.subject_index(state)
+        if idx is not None:
+            return idx
+    return _subject_index_fold(None, records)
+
+
+def _subject_index_fold(base, records) -> tuple:
     """(tips, legacy): path -> the tip record that most recently examined it, per step.
 
     ⚠⚠ KEYED ON CONTENT. `by_content` maps (step, path, git_blob_id) to the record
@@ -45,16 +68,39 @@ def _subject_index(records) -> tuple:
     different remedies. Re-running a checker fixes the first and does nothing for the
     second.
     """
-    by_content: dict = {}      # (step, path, blob) -> the record that examined it
-    by_path: dict = {}         # (step, path)        -> some record, for STALE
-    legacy: dict = {}
-    evidence: dict = {}        # step -> {path, ...} recorded as V16/V17 evidence
-    ev_content: dict = {}      # (step, path, blob) -> the record that ran under it
-    # (step, subject path, subject blob) -> {(evidence path, evidence blob), ...} cited by
-    # ANY record that examined those subject bytes. See the approved-blob exemption in
-    # `build`: it asks whether an approved producer judged THESE bytes, not whether one
-    # judged something.
-    ev_by_subject: dict = {}
+    # ⭐ `base` is a previous result to EXTEND with `records` (which must be the records that
+    # FOLLOW it in stream order). It is never mutated: outer dicts are copied once, and any inner
+    # set is copied before its first write, so a caller still holding `base` sees it unchanged.
+    if base is None:
+        by_content, by_path, legacy, evidence, ev_content, ev_by_subject = {}, {}, {}, {}, {}, {}
+        fresh_sets = None                       # every set is new: no copying needed
+    else:
+        by_content, by_path, legacy, evidence, ev_content, ev_by_subject = (
+            dict(d) for d in base)
+        fresh_sets = set()                      # ids of sets already copied in this fold
+
+    def _own(d, key):
+        """d[key] as a set this fold may mutate (copy-on-write against `base`)."""
+        cur = d.get(key)
+        if cur is None:
+            cur = set()
+            d[key] = cur
+            if fresh_sets is not None:
+                fresh_sets.add(id(cur))
+        elif fresh_sets is not None and id(cur) not in fresh_sets:
+            cur = set(cur)
+            d[key] = cur
+            fresh_sets.add(id(cur))
+        return cur
+
+    # by_content: (step, path, blob) -> the record that examined it
+    # by_path:    (step, path)        -> some record, for STALE
+    # evidence:   step -> {path, ...} recorded as V16/V17 evidence
+    # ev_content: (step, path, blob) -> the record that ran under it
+    # ev_by_subject: (step, subject path, subject blob) -> {(evidence path, evidence blob), ...}
+    #   cited by ANY record that examined those subject bytes. See the approved-blob exemption in
+    #   `build`: it asks whether an approved producer judged THESE bytes, not whether one judged
+    #   something.
     for r in records:
         step = r.get("step")
         rev = r.get("revision", 0)
@@ -74,7 +120,7 @@ def _subject_index(records) -> tuple:
             path, blob = e.get("path"), e.get("git_blob_id")
             if not (path and blob):
                 continue
-            evidence.setdefault(step, set()).add(path)
+            _own(evidence, step).add(path)
             key = (step, path, blob)
             prior = ev_content.get(key)
             if prior is None or rev >= prior.get("revision", 0):
@@ -87,7 +133,7 @@ def _subject_index(records) -> tuple:
                     legacy[(step, path)] = (r, None)
                 continue
             key = (step, path, blob)
-            cited = ev_by_subject.setdefault(key, set())
+            cited = _own(ev_by_subject, key)
             for e in r.get("evidence") or []:
                 if e.get("path") and e.get("git_blob_id"):
                     cited.add((e["path"], e["git_blob_id"]))
@@ -1338,8 +1384,8 @@ def build(*, config, records, action: str, files: dict,
                 _sub.get("path") for _sub in (_rec.get("subjects") or [])
                 if _sub.get("path")
                 and _sub["path"] not in _switches
-                and (not any(fnmatch.fnmatch(_sub["path"], _g) for _g in _globs)
-                     or any(fnmatch.fnmatch(_sub["path"], _g) for _g in _drop))
+                and (not any(_fnmatch_memo(_sub["path"], _g) for _g in _globs)
+                     or any(_fnmatch_memo(_sub["path"], _g) for _g in _drop))
             })
             if _bad:
                 _record_ids.append(_rec.get("id"))

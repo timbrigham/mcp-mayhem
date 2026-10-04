@@ -40,12 +40,196 @@ from core.errors import Unavailable, UsageError
 GENESIS_STEP = "genesis"
 
 
+# =================================================================================================
+# THE STREAM CACHE — process-wide, per stream path. Tim, 2026-10-04: "the time is a factor of the
+# storage of the verdict ledger. It's getting massive."
+#
+# ⛔ MEASURED THAT DAY: one `append` cost a median 15,080 ms (n=34) — validate re-parsed the whole
+# 8,410-record stream FOUR times, the dedupe a fifth, and the receipt's `still_stale` disclosure
+# then built a full inventory whose `_subject_index` folded every record again. 30 `inventory`
+# calls inside one consumer routing-control run cost 268.7 s. Every cost was O(stream), per call.
+#
+# ⭐ THE DESIGN: records.jsonl STAYS THE ONLY TRUTH. This holds what a full pass would compute —
+# the parsed records and every derived index — and keeps it current by folding ONLY the bytes
+# appended since the last read. It is DISPOSABLE: any doubt rebuilds it from the file.
+#   · a change is noticed by (size, mtime_ns); nothing changed -> no I/O at all
+#   · on any change the ALREADY-INDEXED PREFIX is re-hashed; if it differs from what was indexed
+#     (an out-of-band edit — Tim's emergency-restoration case) the whole cache rebuilds
+#   · new records fold COPY-ON-WRITE into new structures, then publish atomically, so a reader
+#     iterating the previous state can never see it change underneath it
+#   · a corrupt line raises `Unavailable` exactly as the full pass did, and nothing is cached
+#
+# ⛔⛔ AND THE WRITER LOCK LIVES HERE, BECAUSE IT WAS PER-INSTANCE AND THEREFORE NO LOCK AT ALL.
+# The server builds a fresh Ledger — and Store — for EVERY call, so `threading.Lock()` on the
+# instance never serialised two appends arriving on two calls: exactly the torn-line race the
+# module docstring says the lock exists to prevent. Found 2026-10-04 while building this, the
+# same per-instance shape found in gitRobot the same night.
+# =================================================================================================
+
+_CACHES: dict = {}
+_CACHES_LOCK = threading.Lock()
+
+
+def _cache_for(path: Path) -> "_StreamCache":
+    key = str(Path(path).resolve())
+    with _CACHES_LOCK:
+        c = _CACHES.get(key)
+        if c is None:
+            c = _CACHES[key] = _StreamCache(Path(key))
+        return c
+
+
+class _State:
+    """One immutable-by-convention snapshot of everything a full pass derives."""
+    __slots__ = ("records", "ids", "by_id", "tips", "config_shas", "steps_timing",
+                 "genesis", "subject", "subject_n")
+
+    def __init__(self):
+        self.records: list = []
+        self.ids: set = set()
+        self.by_id: dict = {}
+        self.tips: dict = {}
+        self.config_shas: set = set()
+        self.steps_timing: set = set()
+        self.genesis: Optional[dict] = None
+        # inventory._subject_index's 6-tuple, folded lazily, and HOW MANY of THIS state's records
+        # it covers. ⚠ The count lives ON the state, never on the cache: a cache-level counter was
+        # shared by every snapshot, so asking an older snapshot for its index could re-point the
+        # counter and leave the current state folding the wrong slice. Per-state, every snapshot
+        # is self-consistent by construction (and the fold is idempotent besides).
+        self.subject = None
+        self.subject_n = 0
+
+
+class _StreamCache:
+    def __init__(self, path: Path):
+        self.path = path
+        self.writer_lock = threading.Lock()      # THE writer lock — see the banner above
+        self._refresh_lock = threading.Lock()
+        self._sig = None                         # (size, mtime_ns) the state reflects
+        self._offset = 0                         # bytes consumed
+        self._lines = 0                          # physical lines consumed, for error messages
+        self._prefix_sha: Optional[str] = None   # sha256 of bytes [0, _offset)
+        self.state = _State()
+
+    def current(self) -> _State:
+        """The state for the file as it is NOW. Raises Unavailable on a corrupt line."""
+        try:
+            st = os.stat(self.path)
+        except FileNotFoundError:
+            with self._refresh_lock:
+                self._reset()
+            return self.state
+        sig = (st.st_size, st.st_mtime_ns)
+        if sig == self._sig:
+            return self.state
+        with self._refresh_lock:
+            if sig == self._sig:
+                return self.state
+            data = self.path.read_bytes()
+            prefix_ok = (self._prefix_sha is not None and len(data) >= self._offset
+                         and hashlib.sha256(data[:self._offset]).hexdigest() == self._prefix_sha)
+            if not prefix_ok:
+                self._reset()
+            new_recs, consumed, new_lines = self._parse(data, self._offset, self._lines)
+            self.state = self._fold(self.state, new_recs)
+            self._offset = consumed
+            self._lines = new_lines
+            self._prefix_sha = hashlib.sha256(data[:consumed]).hexdigest()
+            # ⚠ the signature of the bytes READ, not a fresh stat: a write landing between the
+            # stat and the read must be seen as a change on the next call, never skipped
+            self._sig = (len(data), st.st_mtime_ns) if consumed == len(data) else None
+            return self.state
+
+    def _reset(self) -> None:
+        self._sig, self._offset, self._lines, self._prefix_sha = None, 0, 0, None
+        self.state = _State()
+
+    def _parse(self, data: bytes, start: int, lineno0: int):
+        """Records in data[start:], exactly as `Store._iter` would yield them."""
+        out = []
+        pos, lineno = start, lineno0
+        n = len(data)
+        while pos < n:
+            nl = data.find(b"\n", pos)
+            end = n if nl == -1 else nl + 1
+            raw = data[pos:end]
+            lineno += 1
+            line = raw.decode("utf-8").strip()
+            if line:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    raise Unavailable(
+                        f"stream is corrupt at line {lineno} of {self.path}: {exc}. "
+                        f"Records before it are intact; the tail needs repair.") from exc
+            pos = end
+        return out, pos, lineno
+
+    @staticmethod
+    def _fold(prev: _State, new: list) -> _State:
+        """prev + new, COPY-ON-WRITE: prev's structures are never mutated."""
+        if not new:
+            return prev
+        s = _State()
+        s.records = prev.records + new
+        s.ids = set(prev.ids)
+        s.by_id = dict(prev.by_id)
+        s.tips = dict(prev.tips)
+        s.config_shas = set(prev.config_shas)
+        s.steps_timing = set(prev.steps_timing)
+        s.genesis = prev.genesis
+        s.subject, s.subject_n = prev.subject, prev.subject_n   # extended lazily
+        copied = set()
+        for r in new:
+            rid = r.get("id")
+            s.ids.add(rid)
+            s.by_id.setdefault(rid, r)           # FIRST occurrence, as `Store.get` returns
+            key = (r.get("step"), (r.get("basis") or {}).get("value"))
+            rev = r.get("revision", 0)
+            entry = s.tips.get(key)
+            if key not in copied:
+                entry = ({"latest": None, "revisions": {}} if entry is None else
+                         {"latest": entry["latest"], "revisions": dict(entry["revisions"])})
+                s.tips[key] = entry
+                copied.add(key)
+            entry["revisions"][rev] = r
+            if entry["latest"] is None or rev >= entry["latest"].get("revision", 0):
+                entry["latest"] = r
+            if (r.get("cost") or {}).get("seconds") is not None:
+                s.steps_timing.add(r.get("step"))
+            run = r.get("run") or {}
+            s.config_shas.add(run.get("config_sha") or run.get("policy_sha"))
+            if s.genesis is None and r.get("step") == GENESIS_STEP:
+                s.genesis = r
+        return s
+
+    def subject_index(self, state: _State):
+        """inventory._subject_index over `state.records`, folded incrementally and shared."""
+        from core import inventory as _inv
+        with self._refresh_lock:
+            base, done = state.subject, (state.subject_n if state.subject is not None else 0)
+            if base is not None and done == len(state.records):
+                return base
+            idx = _inv._subject_index_fold(base, state.records[done:])
+            state.subject, state.subject_n = idx, len(state.records)
+            return idx
+
+
+class _Records(list):
+    """A records snapshot that knows which cache state it came from, so `_subject_index` can
+    reuse the shared fold instead of re-walking every record."""
+    __slots__ = ("_cache", "_state")
+
+
 class Store:
     def __init__(self, path, *, soft_seconds: float = 5.0, hard_seconds: float = 30.0):
         self.path = Path(path)
         self.soft = soft_seconds
         self.hard = hard_seconds
-        self._lock = threading.Lock()
+        self._cache = _cache_for(self.path)
+        # ⛔ THE PROCESS-WIDE writer lock for this stream — see the banner above _CACHES.
+        self._lock = self._cache.writer_lock
         # ⚠ These MUST be durable, not per-process. Every MCP call constructs a
         # fresh Ledger, so an in-memory counter reports 0 no matter how many
         # records were refused — the field meant to surface rejection would itself
@@ -78,9 +262,9 @@ class Store:
     # -- reading ---------------------------------------------------------------
 
     def __iter__(self) -> Iterator[dict]:
-        if not self.path.exists():
-            return iter(())
-        return self._iter()
+        # served from the stream cache: same records, same order, same Unavailable on a
+        # corrupt line — without re-parsing the whole file on every pass
+        return iter(self._cache.current().records)
 
     def _iter(self) -> Iterator[dict]:
         with open(self.path, "r", encoding="utf-8") as fh:
@@ -200,16 +384,23 @@ class Store:
         return self._counters().get("edge_conditions", 0)
 
     def records(self) -> list[dict]:
-        return list(self)
+        state = self._cache.current()
+        out = _Records(state.records)            # a fresh list: callers may extend/sort it
+        out._cache, out._state = self._cache, state
+        return out
+
+    def subject_index(self, records=None):
+        """The shared incremental `_subject_index` for `records` if it is a snapshot of the
+        current state, else None (the caller then computes it from its own list)."""
+        if isinstance(records, _Records) and len(records) == len(records._state.records):
+            return records._cache.subject_index(records._state)
+        return None
 
     def ids(self) -> set:
-        return {r.get("id") for r in self}
+        return set(self._cache.current().ids)
 
     def get(self, record_id: str) -> Optional[dict]:
-        for r in self:
-            if r.get("id") == record_id:
-                return r
-        return None
+        return self._cache.current().by_id.get(record_id)
 
     def tips(self) -> dict:
         """``(step, basis.value)`` -> ``{latest, revisions}``.
@@ -217,16 +408,11 @@ class Store:
         The TIP is the highest revision for a key. Every revision is kept; only the
         latest is operative (§4c). Chains never cross bases, so this is a group-by
         rather than a traversal.
+
+        ⚠ Served from the stream cache and SHARED with other callers — read it, never
+        mutate it. (Folded copy-on-write, so a later append never changes what you hold.)
         """
-        out: dict = {}
-        for r in self:
-            key = (r.get("step"), (r.get("basis") or {}).get("value"))
-            rev = r.get("revision", 0)
-            entry = out.setdefault(key, {"latest": None, "revisions": {}})
-            entry["revisions"][rev] = r
-            if entry["latest"] is None or rev >= entry["latest"].get("revision", 0):
-                entry["latest"] = r
-        return out
+        return self._cache.current().tips
 
     def steps_timing(self) -> set:
         """Every step that has EVER reported `cost.seconds` — V22's memory.
@@ -253,11 +439,7 @@ class Store:
         clock on its pass path and not on its fail path ratchets itself on the first pass and
         is refused on the next failure. Convert a step whole, not by branch.
         """
-        out = set()
-        for r in self:
-            if (r.get("cost") or {}).get("seconds") is not None:
-                out.add(r.get("step"))
-        return out
+        return set(self._cache.current().steps_timing)
 
     def config_shas(self) -> set:
         """Every config identity the stream has ever seen, NEW NAME AND OLD.
@@ -271,17 +453,10 @@ class Store:
         for that question the two keys carry the same fact; nothing downstream sees a
         heterogeneous stream because nothing downstream asks.
         """
-        out = set()
-        for r in self:
-            run = r.get("run") or {}
-            out.add(run.get("config_sha") or run.get("policy_sha"))
-        return out
+        return set(self._cache.current().config_shas)
 
     def genesis(self) -> Optional[dict]:
-        for r in self:
-            if r.get("step") == GENESIS_STEP:
-                return r
-        return None
+        return self._cache.current().genesis
 
     # -- writing ---------------------------------------------------------------
 
