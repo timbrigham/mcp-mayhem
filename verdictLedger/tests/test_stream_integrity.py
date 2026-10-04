@@ -89,6 +89,118 @@ def test_unstamped_does_NOT_break_health(tmp_path):
     assert st.health()["healthy"] is True, "an unstamped stream is honest, not broken"
 
 
+def _rec_n(n):
+    r = _rec()
+    r["id"] = f"guards@t#{n}"
+    r["revision"] = n
+    return r
+
+
+def test_concurrent_appends_from_separate_instances_never_false_alarm(tmp_path):
+    """⛔ THE 2026-10-04 FALSE ALARM. Five agents appended within 6 s; the stamp ran OUTSIDE the
+    writer lock and re-hashed ~250 MB, so an older stamp landed after newer rows and the ledger
+    reported MODIFIED with no outside writer. Separate Store instances, as the server makes."""
+    import threading
+    p = tmp_path / "records.jsonl"
+    errs = []
+
+    def worker(base):
+        try:
+            for k in range(8):
+                store_mod.Store(p).append(_rec_n(base * 100 + k))
+        except Exception as exc:                    # noqa: BLE001
+            errs.append(exc)
+
+    ts = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errs, errs
+    st = store_mod.Store(p)
+    assert st.verify_integrity()["state"] == "matches"
+    assert st.breaches() == []
+    assert json.loads(st._integrity_path.read_text())["records"] == 48
+
+
+def test_the_stamp_is_written_UNDER_the_writer_lock(tmp_path, monkeypatch):
+    st = _store(tmp_path)
+    held = []
+    real = type(st._integrity_path).write_text
+
+    def spy(self, *a, **k):
+        if self == st._integrity_path:
+            held.append(st._lock.locked())
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(st._integrity_path), "write_text", spy)
+    st.append(_rec_n(1))
+    assert held == [True], "the stamp must be written while the writer lock is held"
+
+
+def test_a_real_out_of_band_edit_is_STICKY_through_later_appends(tmp_path):
+    """⛔ THE DETECTOR THAT FORGOT. Before 2026-10-04 the next append re-stamped whatever was on
+    disk, erasing a genuine MODIFIED. Now the mismatch is recorded at append time and stays."""
+    st = _store(tmp_path)
+    st.append(_rec_n(1))
+    with open(st.path, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(_rec(step="handwritten")) + "\n")
+    st.append(_rec_n(2))                         # the append that used to erase the evidence
+    st.append(_rec_n(3))
+    out = st.verify_integrity()
+    assert out["state"] == "MODIFIED", "a later append must not clear a detected breach"
+    assert len(out["breaches"]) == 1 and out["breaches"][0]["found_sha256"]
+    assert st.health()["healthy"] is False
+
+
+def test_a_breach_found_after_a_restart_is_recorded_too(tmp_path):
+    """The fast path trusts this process's own last stamp; a restart has none, so the first
+    append re-hashes and compares against the stamp on disk."""
+    st = _store(tmp_path)
+    st.append(_rec_n(1))
+    with open(st.path, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(_rec(step="handwritten")) + "\n")
+    store_mod._CACHES.clear()                    # simulate a server restart
+    store_mod.Store(st.path).append(_rec_n(2))
+    assert store_mod.Store(st.path).verify_integrity()["state"] == "MODIFIED"
+
+
+def test_only_a_named_person_can_acknowledge_and_the_history_stays(tmp_path):
+    import pytest
+    from core.errors import UsageError
+    st = _store(tmp_path)
+    st.append(_rec_n(1))
+    with open(st.path, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(_rec(step="handwritten")) + "\n")
+    st.append(_rec_n(2))
+    with pytest.raises(UsageError):
+        st.acknowledge_breaches("", "no person")
+    assert st.acknowledge_breaches("Tim", "emergency restoration, reviewed") == 1
+    assert st.verify_integrity()["state"] == "matches"
+    assert st.breaches()[0]["acknowledged"]["who"] == "Tim", "acknowledged, never deleted"
+
+
+def test_a_steady_append_does_not_rehash_the_whole_stream(tmp_path, monkeypatch):
+    """The fast path: after this process's own stamp, an append extends the hash with the new
+    line instead of re-reading the file (~250 MB live)."""
+    st = _store(tmp_path)
+    st.append(_rec_n(1))                         # first append may hash once
+    opened = []
+    real_open = open
+
+    def spy_open(f, mode="r", *a, **k):
+        if str(f) == str(st.path) and "rb" in mode:
+            opened.append(mode)
+        return real_open(f, mode, *a, **k)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    for k in range(2, 6):
+        st.append(_rec_n(k))
+    assert opened == [], f"steady appends re-read the stream: {opened}"
+    monkeypatch.undo()
+    assert st.verify_integrity()["state"] == "matches"
+
+
 def test_a_stamp_failure_never_loses_an_accepted_record(tmp_path, monkeypatch):
     """⛔ THE VERDICT IS ALREADY FSYNCED WHEN THE STAMP RUNS. Raising there would discard a
     record the server had accepted — trading a durable verdict for a bookkeeping file."""

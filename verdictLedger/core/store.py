@@ -111,6 +111,10 @@ class _StreamCache:
         self._lines = 0                          # physical lines consumed, for error messages
         self._prefix_sha: Optional[str] = None   # sha256 of bytes [0, _offset)
         self.state = _State()
+        # The stream as THIS process last stamped it: (size, mtime_ns, sha256 hasher, records).
+        # Lets an append stamp by extending a hash instead of re-reading ~250 MB, and tells the
+        # pre-append check whether anything touched the file since. None = unknown (restart).
+        self.stamp_known = None
 
     def current(self) -> _State:
         """The state for the file as it is NOW. Raises Unavailable on a corrupt line."""
@@ -488,16 +492,24 @@ class Store:
                 self.bump("edge_conditions")
                 record.setdefault("cost", {})["lock_wait_seconds"] = round(waited, 3)
             self.path.parent.mkdir(parents=True, exist_ok=True)
+            # ⛔⛔ CHECK, WRITE AND STAMP ALL HAPPEN UNDER THE WRITER LOCK. Measured 2026-10-04:
+            # the stamp used to run AFTER the lock was released and re-hashed the whole ~250 MB
+            # stream, so five agents appending within 6 s let an OLDER stamp land after NEWER rows
+            # — the stamp lagged 5 records and the ledger reported MODIFIED with no outside writer
+            # (proved from the 16:07Z/17:13Z git backups: byte-exact prefixes, every row
+            # server-keyed). And every append re-stamped UNCONDITIONALLY, so a REAL out-of-band
+            # edit would have been erased by the next append — a detector that forgets.
+            pre = self._integrity_precheck()
             line = schema.serialise(record) + "\n"
             with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
                 fh.write(line)
                 fh.flush()
                 os.fsync(fh.fileno())
+            self._stamp_after_write(pre, line.encode("utf-8"))
         except OSError as exc:
             raise Unavailable(f"could not append to {self.path}: {exc}") from exc
         finally:
             self._lock.release()
-        self._stamp_integrity()
         return record
 
     # -- integrity -------------------------------------------------------------
@@ -512,26 +524,104 @@ class Store:
                 h.update(chunk)
         return h.hexdigest()
 
-    def _stamp_integrity(self) -> None:
-        """Record the stream's hash after a write we made. Best effort by design.
+    def _breaches_path(self) -> Path:
+        return Path(str(self.path) + ".integrity-breaches.json")
+
+    def breaches(self) -> list:
+        try:
+            data = json.loads(self._breaches_path().read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def _record_breach(self, *, expected, found, size, stamped) -> None:
+        """⭐ STICKY. A mismatch found at append time is written here and stays reported until a
+        HUMAN acknowledges it (`acknowledge_breaches`). The next stamp never clears it — that was
+        the defect: the evidence of an out-of-band edit lived only in a stamp the next append
+        overwrote."""
+        entries = self.breaches()
+        entries.append({"detected": datetime.now(timezone.utc).isoformat(),
+                        "expected_sha256": expected, "found_sha256": found,
+                        "stream_bytes": size, "last_stamp": stamped, "acknowledged": None})
+        try:
+            self._breaches_path().write_text(json.dumps(entries, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def acknowledge_breaches(self, who: str, reason: str) -> int:
+        """A HUMAN accepts the recorded breaches. Returns how many were acknowledged. The entries
+        stay in the file — acknowledged, never deleted — so the history survives."""
+        if not (who or "").strip() or not (reason or "").strip():
+            raise UsageError("acknowledging an integrity breach needs a person and a reason",
+                             "pass who=<the person accepting it> and reason=<why the bytes are "
+                             "trusted>; an unattributed acknowledgement is indistinguishable "
+                             "from the detector being switched off")
+        entries, n = self.breaches(), 0
+        for e in entries:
+            if not e.get("acknowledged"):
+                e["acknowledged"] = {"who": who, "reason": reason,
+                                     "when": datetime.now(timezone.utc).isoformat()}
+                n += 1
+        self._breaches_path().write_text(json.dumps(entries, indent=1), encoding="utf-8")
+        return n
+
+    def _integrity_precheck(self):
+        """Called UNDER the writer lock, before writing. Returns the hash state to extend, or
+        None when stamping is impossible (the append still proceeds — a failed stamp must never
+        lose an accepted record)."""
+        try:
+            known = self._cache.stamp_known
+            try:
+                st = os.stat(self.path)
+            except FileNotFoundError:
+                return {"hasher": hashlib.sha256(), "records": 0}
+            if known and (st.st_size, st.st_mtime_ns) == (known[0], known[1]):
+                return {"hasher": known[2].copy(), "records": known[3]}
+            # Unknown state (a restart, or the file changed since OUR last stamp): hash it all
+            # ONCE and compare with the stamp on disk.
+            h = hashlib.sha256()
+            with open(self.path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(chunk)
+            live = h.hexdigest()
+            try:
+                doc = json.loads(self._integrity_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                doc = None
+            if doc and doc.get("sha256") and doc["sha256"] != live:
+                self._record_breach(expected=doc.get("sha256"), found=live, size=st.st_size,
+                                    stamped=doc.get("stamped"))
+            return {"hasher": h, "records": len(self._cache.current().records)}
+        except Exception:                                   # noqa: BLE001 — never fail the append
+            return None
+
+    def _stamp_after_write(self, pre, line_bytes: bytes) -> None:
+        """UNDER the writer lock: extend the hash with exactly the bytes written, and stamp.
 
         ⚠ A FAILED STAMP MUST NOT FAIL THE APPEND. The verdict is already durably on disk and
         fsynced; losing the sidecar costs a later comparison, while raising here would throw
         away a record that was accepted. `verify_integrity` renders a missing stamp as its own
-        state rather than as agreement.
-        """
+        state rather than as agreement."""
+        if pre is None:
+            self._cache.stamp_known = None
+            return
         try:
+            h = pre["hasher"]
+            h.update(line_bytes)
+            count = pre["records"] + 1
+            st = os.stat(self.path)
             self._integrity_path.write_text(json.dumps({
-                "sha256": self._file_sha(),
-                "records": sum(1 for _ in self._iter()),
+                "sha256": h.hexdigest(),
+                "records": count,
                 # ⚠ UTC WITH AN EXPLICIT OFFSET, like every timestamp this fleet
                 # writes. `ledger.py:_now()` is the same expression; it is not
                 # imported because `ledger` imports `store` and the cycle is worse
                 # than the duplication of one stdlib call.
                 "stamped": datetime.now(timezone.utc).isoformat(),
             }, indent=1), encoding="utf-8")
-        except OSError:
-            pass
+            self._cache.stamp_known = (st.st_size, st.st_mtime_ns, h.copy(), count)
+        except Exception:                                   # noqa: BLE001
+            self._cache.stamp_known = None
 
     def verify_integrity(self) -> dict:
         """Compare the stream on disk against the hash stamped after the last append.
@@ -553,6 +643,16 @@ class Store:
                              "the detector, or the sidecar was removed. NOT a statement that "
                              "the stream is unmodified. The next append stamps it.")}
         expected = doc.get("sha256")
+        # ⭐ STICKY: an unacknowledged breach keeps the state MODIFIED even when a later stamp
+        # matches the file again — the next append must never be what clears the evidence.
+        open_breaches = [b for b in self.breaches() if not b.get("acknowledged")]
+        if open_breaches:
+            return {"state": "MODIFIED", "sha256": live, "expected": expected,
+                    "stamped": doc.get("stamped"), "breaches": open_breaches,
+                    "note": (f"{len(open_breaches)} unacknowledged integrity breach(es): at append "
+                             f"time the stream did not match the hash this server last stamped. "
+                             f"Later stamps do NOT clear this. A person reviews the bytes and "
+                             f"runs `python -m core.cli integrity-ack --who <name> --reason <why>`.")}
         if expected == live:
             return {"state": "matches", "sha256": live, "expected": expected,
                     "stamped": doc.get("stamped"), "records": doc.get("records")}

@@ -57,6 +57,15 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_integrity_ack(args) -> int:
+    """A PERSON accepts recorded integrity breaches (2026-10-04). Deliberately CLI-only — there
+    is no MCP tool for it, so an agent calling the server cannot clear its own alarm."""
+    st = _ledger(args).store
+    n = st.acknowledge_breaches(args.who, args.reason)
+    _emit({"acknowledged": n, "integrity": st.verify_integrity()})
+    return 0
+
+
 def cmd_validate(args) -> int:
     record = json.loads(Path(args.file).read_text(encoding="utf-8"))
     result = _ledger(args).validate(record)
@@ -169,6 +178,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="stream health, config state, genesis floor"
                    ).set_defaults(func=cmd_status)
+
+    ia = sub.add_parser("integrity-ack",
+                        help="a PERSON accepts the recorded integrity breaches (sticky until then)")
+    ia.add_argument("--who", required=True, help="the person accepting the bytes")
+    ia.add_argument("--reason", required=True, help="why the bytes are trusted")
+    ia.set_defaults(func=cmd_integrity_ack)
 
     v = sub.add_parser("validate", help="validate a record file; no write")
     v.add_argument("file")
