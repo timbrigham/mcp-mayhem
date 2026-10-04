@@ -120,6 +120,24 @@ PREFLIGHT_SCOPE = (
     "can_push(rev_range='origin/<branch>..<branch>'), which walks every commit.")
 
 
+_SHARED_STATES: dict = {}
+_SHARED_STATES_LOCK = threading.Lock()
+
+
+def _shared_state(repo) -> dict:
+    """Per-REPOSITORY, process-wide state every GitRobot instance must share. See __init__ for
+    the 2026-10-04 measurement that made this necessary. Keyed by the resolved repo path, so two
+    instances on one repo (the live server's per-call instances) share it and two different
+    repos (separate test fixtures) do not."""
+    key = str(Path(repo).resolve())
+    with _SHARED_STATES_LOCK:
+        return _SHARED_STATES.setdefault(key, {
+            "merge_lock": threading.Lock(), "merge_running": [None],
+            "commits_lock": threading.Lock(), "commits_running": {},
+            "attest_lock": threading.Lock(), "attestations": {},
+        })
+
+
 def _refusal_id(op: str, detail: str) -> str:
     return hashlib.sha256(f"{op}|{detail}".encode("utf-8")).hexdigest()[:12]
 
@@ -238,16 +256,22 @@ class GitRobot:
         self.gates = Gates(self.repo)
         self.actor = actor
         self.scratch = Path(scratch) if scratch else DEFAULT_SCRATCH
-        # one merge at a time — see merge(); `_merge_running` is what merge_status() reports
-        self._merge_lock = threading.Lock()
-        self._merge_running: Optional[dict] = None
-        # live commits by run_id — concurrent by design; the lock guards the dict, not commits
-        self._commits_lock = threading.Lock()
-        self._commits_running: dict = {}
+        # ⛔⛔ PROCESS-WIDE, NOT PER-INSTANCE. The server builds a FRESH GitRobot for EVERY MCP
+        # call (`gitrobot_server.server._robot`), so state held on `self` is invisible to every
+        # other call. Measured 2026-10-04 by ZeroParadox: both first live attest() calls answered
+        # "no armed attestation" while the commit that armed it was still in flight — armed on
+        # one instance, looked up on another. The SAME defect silently disabled the merge lock
+        # across calls and made a running merge/commit read `died` in status(). Every test
+        # passed because each drove ONE instance: a control testing a proxy for the property.
+        shared = _shared_state(self.repo)
+        self._shared = shared
+        self._merge_lock = shared["merge_lock"]          # one merge at a time — see merge()
+        self._commits_lock = shared["commits_lock"]      # guards the dict; commits stay concurrent
+        self._commits_running = shared["commits_running"]
         # in-memory pass attestations, armed after a gate passes and disarmed when the git
         # commit that follows returns — see attest(). NEVER persisted: no file to forge.
-        self._attest_lock = threading.Lock()
-        self._attestations: dict = {}
+        self._attest_lock = shared["attest_lock"]
+        self._attestations = shared["attestations"]
         # Long-form refusals, keyed by id, for `explain`. In-process only: the
         # durable copy is the audit record, which `explain` falls back to.
         self._refusals: dict[str, dict] = {}
@@ -2512,6 +2536,15 @@ class GitRobot:
         finally:
             self._merge_running = None
             self._merge_lock.release()
+
+    @property
+    def _merge_running(self) -> Optional[dict]:
+        """The running merge, shared by every GitRobot on this repo in this process."""
+        return self._shared["merge_running"][0]
+
+    @_merge_running.setter
+    def _merge_running(self, value: Optional[dict]) -> None:
+        self._shared["merge_running"][0] = value
 
     def _own_run_id(self, op: str) -> Optional[str]:
         """The running merge's run_id — ONLY for a row written by the thread that owns it.
