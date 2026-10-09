@@ -1,0 +1,24 @@
+{
+  "schema": "zp.required.v2",
+  "default": "REQUIRED_FOR_ALL_ACTIONS",
+  "types": {
+    "spelling": {
+      "family": "mechanical",
+      "reason": "every documentation file is spell-checked",
+      "scope": ["docs/*.md"],
+      "module": "tools/check_spelling.py"
+    },
+    "license_header": {
+      "family": "mechanical",
+      "reason": "every source file carries a license header",
+      "scope": ["src/*.py"],
+      "module": "tools/check_license_header.py"
+    },
+    "changelog_review": {
+      "family": "mechanical",
+      "reason": "the changelog is reviewed; this toy repository has none, so the step does not apply",
+      "scope": ["CHANGELOG.md"],
+      "module": "tools/check_changelog.py"
+    }
+  }
+}

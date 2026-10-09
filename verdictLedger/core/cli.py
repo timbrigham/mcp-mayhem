@@ -126,6 +126,88 @@ def cmd_inventory(args) -> int:
     return 0 if inv["complete"] else 1
 
 
+def evidence_currency(inv: dict) -> dict:
+    """EVIDENCE CURRENCY from an inventory: per step, how many in-scope subjects carry a verdict
+    bound to their CURRENT content (step, path, git blob id).
+
+    Four counts, never merged into one rate:
+      current         a verdict exists for this step at these exact bytes (PASS or FAIL alike -
+                      this measures whether the evidence is current, not whether it passed)
+      stale           a verdict exists for this step and path, but at older bytes
+      never_examined  no verdict for this step and path at any version
+      in_scope        the step's subjects at this ref (current + stale + never_examined)
+    A step whose scope is empty is NOT_APPLICABLE and reports `currency: null` - an empty scope
+    is not "100% current". The total is summed over (step, subject) pairs of applicable steps.
+    """
+    steps, tot = [], {"in_scope": 0, "current": 0, "stale": 0, "never_examined": 0}
+    not_applicable = []
+    for r in inv.get("rows") or []:
+        judged = r.get("judged")
+        in_scope = judged if isinstance(judged, int) else r.get("scope") or 0
+        if r.get("status") == "NOT_APPLICABLE" or not in_scope:
+            not_applicable.append(r["step"])
+            steps.append({"step": r["step"], "status": "NOT_APPLICABLE", "in_scope": 0,
+                          "current": 0, "stale": 0, "never_examined": 0, "currency": None})
+            continue
+        current, stale = r.get("subjects_covered") or 0, r.get("subjects_stale") or 0
+        # derived so the three always partition the denominator (the row's own `unexamined`
+        # is counted over scope only, and the denominator also includes switch files)
+        never = in_scope - current - stale
+        steps.append({"step": r["step"], "status": r.get("status"), "in_scope": in_scope,
+                      "current": current, "stale": stale, "never_examined": never,
+                      "currency": round(current / in_scope, 4)})
+        for k, v in (("in_scope", in_scope), ("current", current), ("stale", stale),
+                     ("never_examined", never)):
+            tot[k] += v
+    tot["currency"] = round(tot["current"] / tot["in_scope"], 4) if tot["in_scope"] else None
+    return {"metric": "evidence_currency", "ref": inv.get("ref"), "action": inv.get("action"),
+            "steps": steps, "total": tot, "not_applicable": not_applicable,
+            "definition": ("currency = current / in_scope, per step and over all (step, subject) "
+                           "pairs of applicable steps. stale and never_examined are reported "
+                           "separately and are never folded into one number. A step with an "
+                           "empty scope is NOT_APPLICABLE with currency null, not 100%.")}
+
+
+def cmd_evidence_currency(args) -> int:
+    # ⚠ BOTH GUARDS EXIST BECAUSE THE UNGUARDED COMMAND ANSWERED CONFIDENTLY ABOUT NOTHING.
+    # Measured 2026-10-09 by an adversarial review before publication: `--ref doesnotexist`
+    # printed every step `n/a` and exit 0 (the git error was swallowed into an empty file
+    # list), and an unset ZPLEDGER_DATA silently read the default stream and printed 0.0%
+    # everywhere. Both are absence rendering as a measurement.
+    if not args.data or not os.path.isfile(args.data):
+        raise UsageError(
+            f"no verdict stream at {args.data!r}",
+            "pass --data <records.jsonl> (or set ZPLEDGER_DATA) naming an existing stream; an "
+            "empty file is allowed and measures 0 current, but a missing one measures nothing")
+    if args.ref != "staged" and _git(args.repo, "rev-parse", "--verify", "--quiet",
+                                     f"{args.ref}^{{commit}}").returncode != 0:
+        raise UsageError(
+            f"{args.ref!r} does not resolve to a commit in {args.repo!r}",
+            "pass --repo <a git repository> and --ref <a commit, branch or tag that exists there>")
+    led = _ledger(args)
+    cfg = led._require_config()
+    files = _files_at(args.repo, args.ref)
+    inv = inventory_mod.build(config=cfg, records=led.store.records(), action=args.action,
+                              files=files, ref=args.ref, repo=args.repo)
+    out = evidence_currency(inv)
+    if args.json:
+        _emit(out)
+        return 0
+    fmt = "{:<24} {:>8} {:>8} {:>8} {:>15} {:>9}"
+    print(f"evidence currency at {args.ref} (action: {args.action})")
+    print(fmt.format("step", "in_scope", "current", "stale", "never_examined", "currency"))
+    for s in out["steps"]:
+        cur = "n/a" if s["currency"] is None else f"{s['currency']:.1%}"
+        print(fmt.format(s["step"][:24], s["in_scope"], s["current"], s["stale"],
+                         s["never_examined"], cur))
+    t = out["total"]
+    print(fmt.format("TOTAL (applicable steps)", t["in_scope"], t["current"], t["stale"],
+                     t["never_examined"], "n/a" if t["currency"] is None else f"{t['currency']:.1%}"))
+    if out["not_applicable"]:
+        print(f"not applicable (empty scope, excluded from totals): {', '.join(out['not_applicable'])}")
+    return 0
+
+
 def cmd_can_push(args) -> int:
     led = _ledger(args)
     result = canpush_mod.check(records=led.store.records(),
@@ -169,15 +251,28 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="zpledger",
         description="Append-only validated record store for gate verdicts.")
+    # `--data`, `--repo` (and the config variables) are TOP-LEVEL options: they go BEFORE the
+    # subcommand, e.g. `python -m core.cli --repo R --data D evidence-currency --ref HEAD`.
     p.add_argument("--data", default=os.environ.get("ZPLEDGER_DATA"),
                    help="the append-only stream (env ZPLEDGER_DATA)")
-    p.add_argument("--repo", default=os.environ.get("ZPLEDGER_REPO",
-                                                    r"C:\Workspace\ZeroParadox"),
-                   help="the repo whose content is judged (env ZPLEDGER_REPO)")
+    # The default is the current directory. It used to be a hard-coded path on one developer's
+    # machine, which meant nothing anywhere else and should never have been in a public repo.
+    p.add_argument("--repo", default=os.environ.get("ZPLEDGER_REPO", os.getcwd()),
+                   help="the git repo whose content is judged (env ZPLEDGER_REPO; default: "
+                        "the current directory)")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="stream health, config state, genesis floor"
                    ).set_defaults(func=cmd_status)
+
+    ec = sub.add_parser("evidence-currency",
+                        help="per step: in-scope subjects with a verdict at their CURRENT bytes, "
+                             "vs stale, vs never examined (never one merged rate)")
+    ec.add_argument("--ref", default="HEAD", help="the git ref to measure (default HEAD)")
+    ec.add_argument("--action", default="push",
+                    help="which action's registry narrowing applies (default push)")
+    ec.add_argument("--json", action="store_true", help="machine-readable output")
+    ec.set_defaults(func=cmd_evidence_currency)
 
     ia = sub.add_parser("integrity-ack",
                         help="a PERSON accepts the recorded integrity breaches (sticky until then)")

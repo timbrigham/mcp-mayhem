@@ -1,0 +1,31 @@
+{
+  "schema": "zp.policy.v1",
+  "agreement": {
+    "min_passes": 3
+  },
+  "supersede": {
+    "max_depth": 5
+  },
+  "lock": {
+    "soft_seconds": 5,
+    "hard_seconds": 30
+  },
+  "actions": [
+    "commit",
+    "push",
+    "tag"
+  ],
+  "signals": {
+    "never_fired_runs": 50,
+    "disagreement_low": 0.05,
+    "disagreement_high": 0.3,
+    "repeat_subject_rounds": 3
+  },
+  "genesis": {},
+  "push": {
+    "bar": "tip_green"
+  },
+  "coverage": {
+    "require_complete": false
+  }
+}
