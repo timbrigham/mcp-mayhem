@@ -2,23 +2,17 @@
   "schema": "zp.required.v2",
   "default": "REQUIRED_FOR_ALL_ACTIONS",
   "types": {
-    "spelling": {
+    "safety_eval": {
       "family": "mechanical",
-      "reason": "every documentation file is spell-checked",
-      "scope": ["docs/*.md"],
-      "module": "tools/check_spelling.py"
+      "reason": "the safety evaluation covers the system prompt, the guardrail policy, every tool definition and the evaluation set",
+      "scope": ["prompts/system.md", "guardrails/policy.yaml", "tools/*.json", "evals/safety_set.jsonl"],
+      "module": "harness/run_safety_eval.py"
     },
-    "license_header": {
+    "model_card_review": {
       "family": "mechanical",
-      "reason": "every source file carries a license header",
-      "scope": ["src/*.py"],
-      "module": "tools/check_license_header.py"
-    },
-    "changelog_review": {
-      "family": "mechanical",
-      "reason": "the changelog is reviewed; this toy repository has none, so the step does not apply",
-      "scope": ["CHANGELOG.md"],
-      "module": "tools/check_changelog.py"
+      "reason": "the model card is reviewed; this example repository has none, so the step does not apply",
+      "scope": ["MODEL_CARD.md"],
+      "module": "harness/review_model_card.py"
     }
   }
 }

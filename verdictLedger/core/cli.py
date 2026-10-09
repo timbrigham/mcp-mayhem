@@ -131,13 +131,20 @@ def evidence_currency(inv: dict) -> dict:
     bound to their CURRENT content (step, path, git blob id).
 
     Four counts, never merged into one rate:
-      current         a verdict exists for this step at these exact bytes (PASS or FAIL alike -
-                      this measures whether the evidence is current, not whether it passed)
+      current         a verdict exists for this step at these exact bytes, whatever it recorded
+                      (PASS, FAIL or UNDECIDED) - this measures whether the evidence is about
+                      these bytes, not whether they passed
       stale           a verdict exists for this step and path, but at older bytes
       never_examined  no verdict for this step and path at any version
       in_scope        the step's subjects at this ref (current + stale + never_examined)
-    A step whose scope is empty is NOT_APPLICABLE and reports `currency: null` - an empty scope
-    is not "100% current". The total is summed over (step, subject) pairs of applicable steps.
+    A step that does not apply is NOT_APPLICABLE with `currency: null` and is left out of the
+    totals - an empty scope is not "100% current". `not_applicable_because` says which cause:
+      empty_scope               nothing in the step's scope exists at this ref
+      when_matched_no_file      the step's applicability pattern (`when`) matched no file
+      not_required_for_action   the configuration does not require the step for this action
+      unclassified              the ledger marked it NOT_APPLICABLE without saying why; shown
+                                rather than guessed, so a new cause is visible the day it appears
+    The total is summed over (step, subject) pairs of applicable steps.
     """
     steps, tot = [], {"in_scope": 0, "current": 0, "stale": 0, "never_examined": 0}
     not_applicable = []
@@ -145,14 +152,24 @@ def evidence_currency(inv: dict) -> dict:
         judged = r.get("judged")
         in_scope = judged if isinstance(judged, int) else r.get("scope") or 0
         if r.get("status") == "NOT_APPLICABLE" or not in_scope:
+            because = (r.get("not_applicable_because") or "unclassified"
+                       if r.get("status") == "NOT_APPLICABLE" else "empty_scope")
             not_applicable.append(r["step"])
             steps.append({"step": r["step"], "status": "NOT_APPLICABLE", "in_scope": 0,
-                          "current": 0, "stale": 0, "never_examined": 0, "currency": None})
+                          "current": 0, "stale": 0, "never_examined": 0, "currency": None,
+                          "not_applicable_because": because})
             continue
         current, stale = r.get("subjects_covered") or 0, r.get("subjects_stale") or 0
         # derived so the three always partition the denominator (the row's own `unexamined`
         # is counted over scope only, and the denominator also includes switch files)
         never = in_scope - current - stale
+        # Cannot go negative while the inventory counts `covered` and `stale` as disjoint subsets
+        # of `judged`. If that ever stops holding, refuse rather than print a count that does
+        # not partition its denominator.
+        if never < 0:
+            raise LedgerError(f"evidence currency for step {r['step']!r}: current ({current}) + "
+                              f"stale ({stale}) exceeds in_scope ({in_scope}); the inventory "
+                              f"row is inconsistent and no currency is reported for it")
         steps.append({"step": r["step"], "status": r.get("status"), "in_scope": in_scope,
                       "current": current, "stale": stale, "never_examined": never,
                       "currency": round(current / in_scope, 4)})
@@ -164,8 +181,10 @@ def evidence_currency(inv: dict) -> dict:
             "steps": steps, "total": tot, "not_applicable": not_applicable,
             "definition": ("currency = current / in_scope, per step and over all (step, subject) "
                            "pairs of applicable steps. stale and never_examined are reported "
-                           "separately and are never folded into one number. A step with an "
-                           "empty scope is NOT_APPLICABLE with currency null, not 100%.")}
+                           "separately and are never folded into one number. A current verdict "
+                           "counts whatever it recorded (PASS, FAIL or UNDECIDED). A step that "
+                           "does not apply is NOT_APPLICABLE with currency null and is excluded "
+                           "from the totals; an empty scope is never 100%.")}
 
 
 def cmd_evidence_currency(args) -> int:
@@ -203,8 +222,10 @@ def cmd_evidence_currency(args) -> int:
     t = out["total"]
     print(fmt.format("TOTAL (applicable steps)", t["in_scope"], t["current"], t["stale"],
                      t["never_examined"], "n/a" if t["currency"] is None else f"{t['currency']:.1%}"))
-    if out["not_applicable"]:
-        print(f"not applicable (empty scope, excluded from totals): {', '.join(out['not_applicable'])}")
+    na = [f"{s['step']} ({s['not_applicable_because'].replace('_', ' ')})"
+          for s in out["steps"] if s["currency"] is None]
+    if na:
+        print(f"not applicable (excluded from totals): {', '.join(na)}")
     return 0
 
 

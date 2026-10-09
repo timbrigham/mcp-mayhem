@@ -457,7 +457,11 @@ def build(*, config, records, action: str, files: dict,
     for step, spec in sorted(reqs.items()):
         family = spec["family"]
         if not spec["required"]:
+            # ⚠ `not_applicable_because` names WHICH of the NOT_APPLICABLE causes this is, as
+            # a value rather than prose. Added 2026-10-09 for `evidence-currency`, whose output
+            # had labelled every such step "empty scope" — true of one cause in three.
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
+                         "not_applicable_because": "not_required_for_action",
                          "why": spec.get("reason") or "narrowed by action",
                          "record_id": None, "subjects_covered": 0,
                          "subjects_stale": 0, "subjects_unexamined": 0, "scope": 0, "subjects_unscoped": [],
@@ -487,6 +491,7 @@ def build(*, config, records, action: str, files: dict,
                    f"glob cannot match a top-level file and this gate has almost "
                    f"certainly never fired. Fix the pattern; do not re-run.")
             rows.append({"step": step, "family": family, "status": "NOT_APPLICABLE",
+                         "not_applicable_because": "when_matched_no_file",
                          "why": why, "record_id": None,
                          "subjects_covered": 0, "subjects_stale": 0,
                          "subjects_unexamined": 0, "scope": 0, "subjects_unscoped": [],
