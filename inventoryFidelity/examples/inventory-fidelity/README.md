@@ -1,5 +1,7 @@
 # AI inventory fidelity: example
 
+This is a single-author proof of concept, built for and used in one dedicated environment. It demonstrates the measurement; it is not a production or complete tool.
+
 ## The metric
 
 An inventory lists the components of an AI system: prompt templates, tool definitions,

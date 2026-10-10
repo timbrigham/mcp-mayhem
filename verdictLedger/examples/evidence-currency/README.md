@@ -3,6 +3,8 @@
 This folder shows how verdictLedger measures **evidence currency** on a small LLM application,
 built as a throwaway git repository. It runs in a few seconds.
 
+This is a single-author proof of concept, built for and used in one dedicated environment. It demonstrates the measurement; it is not a production or complete tool.
+
 **Requirements:** Python 3.11 or later and git 2.28 or later, on PATH. Nothing needs to be
 installed with pip; the code uses only the Python standard library. Use a full checkout of this
 repository, because `verdictLedger/` imports the shared `mcpcommon/` package that sits beside it.

@@ -4,6 +4,11 @@ Tools that mediate and record what AI coding agents do in a git repository. Most
 MCP servers; one is a standalone measurement tool. Python, standard library plus the `mcp`
 package.
 
+This is a single-author proof of concept, built for and used in one dedicated environment.
+Its controls are best effort against a well-intentioned agent that drifts, covering the
+common patterns rather than every possible variation, and it is not a production or
+complete security tool.
+
 | folder | what it is |
 |---|---|
 | `gitRobot/` | mediated git: refuses work-destroying operations, gates and audits the rest |
