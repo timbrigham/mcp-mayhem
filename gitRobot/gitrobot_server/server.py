@@ -51,6 +51,7 @@ from gitrobot_server.results import (  # noqa: E402
     AdmissionResult, AttestResult, ReadResult, ReceiptResult, RequirementsResult, StatusResult,
     VocabularyResult)
 
+from core import callctx
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError, UsageError
 
@@ -130,6 +131,18 @@ def _robot() -> GitRobot:
     return GitRobot(REPO, data_path=DATA, actor=ACTOR)
 
 
+def _session_id():
+    """The MCP session id of the request being served, or None when there is none (stdio, or
+    called outside a request)."""
+    # Attribution must never break a call, so any failure here records null rather than raise.
+    try:
+        request = mcp.get_context().request_context.request
+        headers = getattr(request, "headers", None)
+        return headers.get("mcp-session-id") if headers is not None else None
+    except Exception:
+        return None
+
+
 async def _guard(fn, *args, **kwargs) -> dict:
     """Run the operation OFF the event loop, and turn every failure into a result.
 
@@ -142,6 +155,9 @@ async def _guard(fn, *args, **kwargs) -> dict:
     verdict and its audit trail. Every tool is therefore async and every
     operation runs on a worker thread; the loop stays free to answer probes.
     """
+    # Attribution for the audit rows this call writes (core/callctx.py). Set here, on the event
+    # loop inside the request, and carried into the worker thread by anyio's context copy.
+    callctx.set_caller("mcp", _session_id())
     try:
         return {"ok": True, **await anyio.to_thread.run_sync(
             functools.partial(fn, *args, **kwargs))}
@@ -808,6 +824,7 @@ def _start_worktree_reaper() -> None:
     def _sweep() -> None:
         while True:
             try:
+                callctx.set_caller("internal", None)
                 GitRobot(REPO, data_path=DATA, actor="reaper").worktree("reap")
             except Exception:
                 # ⚠ NEVER let the sweep kill the server. A reaper that takes the git surface

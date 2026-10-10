@@ -44,6 +44,7 @@ from typing import Any, Optional, Sequence
 
 from core import ledger as ledger_client
 from core import tiers
+from core import callctx
 from core.audit import AuditLog, _now_iso
 from core.errors import ConfigError, GitRobotError, RefusalError, RepoError, UsageError
 from core import gates as gates_mod
@@ -1346,7 +1347,8 @@ class GitRobot:
 
         if wait:
             return _run()
-        thread = threading.Thread(target=_run, name=f"preflight-{run_id}", daemon=True)
+        thread = threading.Thread(target=callctx.run_in_thread_context(_run),
+                                  name=f"preflight-{run_id}", daemon=True)
         thread.start()
         return {"op": "preflight", "run_id": run_id, "head": head, "state": "running",
                 # ⚠ STATED AT START TOO, not only in the post-mortem: a caller who is told what
@@ -1810,7 +1812,8 @@ class GitRobot:
         if wait:
             return _do_push()
 
-        thread = threading.Thread(target=_do_push, name=f"push-{run_id}", daemon=True)
+        thread = threading.Thread(target=callctx.run_in_thread_context(_do_push),
+                                  name=f"push-{run_id}", daemon=True)
         thread.start()
         return {"op": "push", "run_id": run_id, "branch": branch, "state": "running",
                 # ⚠ `target`, for the reason given at the audit row above: the async receipt

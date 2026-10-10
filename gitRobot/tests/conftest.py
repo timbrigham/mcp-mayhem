@@ -78,6 +78,15 @@ def fake_gate(repo):
 
 
 @pytest.fixture(autouse=True)
+def _no_caller_carried_between_tests():
+    """core/callctx: an in-process `cli.main` sets the caller for the rest of the process, so
+    every test starts from 'no caller', as a library caller would."""
+    from core import callctx
+    callctx.SURFACE.set(None)
+    callctx.SESSION.set(None)
+
+
+@pytest.fixture(autouse=True)
 def _never_a_live_ledger(monkeypatch):
     """⚠ NO TEST MAY REACH THE RUNNING LEDGER ON :8011.
 

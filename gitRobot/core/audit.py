@@ -28,6 +28,7 @@ _root = _Path(__file__).resolve().parents[2]
 if str(_root) not in _sys.path:
     _sys.path.insert(0, str(_root))
 from mcpcommon.vocabulary import DECISIONS as _DECISIONS
+from core import callctx as _callctx
 
 from typing import Any, Optional
 
@@ -144,6 +145,8 @@ class AuditLog:
             "alternative": alternative,
             "run_id": run_id,
             "pid": os.getpid(),
+            # Always present, null when unknown: see core/callctx.py.
+            **_callctx.current(),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as fh:

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 
+from core import callctx
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError, UsageError
 
@@ -233,6 +234,7 @@ def _utf8_stdout() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdout()
+    callctx.set_caller("cli", None)        # the CLI has no session; recorded as null
     parser = build_parser()
     # argparse claims a leading-dash token for itself before REMAINDER can see it,
     # so `gitrobot stage -A` would die as "unrecognized arguments" — a usage error
