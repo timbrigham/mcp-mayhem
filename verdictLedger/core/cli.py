@@ -37,8 +37,8 @@ def _git(repo, *a):
 def _files_at(repo, ref):
     """path -> blob sha for a ref, or for the staged index when ref is 'staged'.
 
-    ⚠ 'staged' resolves through `git write-tree`, which exists BEFORE the commit
-    does — the commit sha does not, because checks run before the object.
+    'staged' reads the index directly (`git ls-files -s`): checks run before the commit object
+    exists, so there is no commit sha to resolve yet, but the staged blob ids already are.
     """
     if ref == "staged":
         listing = _git(repo, "ls-files", "-s")
@@ -58,7 +58,7 @@ def cmd_status(args) -> int:
 
 
 def cmd_integrity_ack(args) -> int:
-    """A PERSON accepts recorded integrity breaches (2026-10-04). Deliberately CLI-only — there
+    """A person accepts recorded integrity breaches (2026-10-04). Deliberately CLI-only: there
     is no MCP tool for it, so an agent calling the server cannot clear its own alarm."""
     st = _ledger(args).store
     n = st.acknowledge_breaches(args.who, args.reason)
@@ -127,8 +127,8 @@ def cmd_inventory(args) -> int:
 
 
 def evidence_currency(inv: dict) -> dict:
-    """EVIDENCE CURRENCY from an inventory: per step, how many in-scope subjects carry a verdict
-    bound to their CURRENT content (step, path, git blob id).
+    """Evidence currency from an inventory: per step, how many in-scope subjects carry a verdict
+    bound to their current content (step, path, git blob id).
 
     Four counts, never merged into one rate:
       current         a verdict exists for this step at these exact bytes, whatever it recorded
@@ -188,7 +188,7 @@ def evidence_currency(inv: dict) -> dict:
 
 
 def cmd_evidence_currency(args) -> int:
-    # ⚠ BOTH GUARDS EXIST BECAUSE THE UNGUARDED COMMAND ANSWERED CONFIDENTLY ABOUT NOTHING.
+    # Both guards exist because the unguarded command answered confidently about nothing.
     # Measured 2026-10-09 by an adversarial review before publication: `--ref doesnotexist`
     # printed every step `n/a` and exit 0 (the git error was swallowed into an empty file
     # list), and an unset ZPLEDGER_DATA silently read the default stream and printed 0.0%
@@ -272,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="zpledger",
         description="Append-only validated record store for gate verdicts.")
-    # `--data`, `--repo` (and the config variables) are TOP-LEVEL options: they go BEFORE the
+    # `--data`, `--repo` (and the config variables) are top-level options: they go before the
     # subcommand, e.g. `python -m core.cli --repo R --data D evidence-currency --ref HEAD`.
     p.add_argument("--data", default=os.environ.get("ZPLEDGER_DATA"),
                    help="the append-only stream (env ZPLEDGER_DATA)")
@@ -372,10 +372,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _utf8_stdout() -> None:
-    """⚠ Refusal text carries ⚠ and — , and a Windows console defaults to cp1252.
-    Without this the tool raises UnicodeEncodeError and prints NOTHING — the
-    refusal that matters most would crash instead of explaining itself. Measured
-    2026-08-23 while proving the ledger gate.
+    """Refusal text contains non-ASCII characters (warning signs, em dashes), and a
+    Windows console defaults to cp1252. Without this the tool raises
+    UnicodeEncodeError and prints nothing, so the refusal that matters most would
+    crash instead of explaining itself. Measured 2026-08-23 while testing the
+    ledger gate.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
