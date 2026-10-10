@@ -444,6 +444,10 @@ class GitRobot:
                 f"exec path, so the result would not describe the tree gitRobot guards.",
                 "Drop the flag. gitRobot reads exactly one repository, configured at startup.",
             )
+        # Tier 1 first: a work-destroying op gets the refusal that says what it would destroy,
+        # not the generic "not an allow-listed read". The allow-list below would also refuse it;
+        # each layer is tested with the other one removed.
+        self.guard_tier1(op, args, via="read")
         if not tiers.is_read(op, args):
             allowed = ", ".join(sorted(tiers.READ_OPS))
             elsewhere = tiers.MEDIATED_ELSEWHERE.get(op)
@@ -736,12 +740,22 @@ class GitRobot:
     # Tier 1 — refused outright.
     # =========================================================================
 
-    def guard_tier1(self, op: str, args: Sequence[str]) -> None:
-        """Raise if (op, args) destroys uncommitted work in the shared tree."""
+    def guard_tier1(self, op: str, args: Sequence[str], via: Optional[str] = None) -> None:
+        """Raise if (op, args) destroys uncommitted work in the shared tree.
+
+        ⛔ UNTIL 2026-10-09 NOTHING CALLED THIS. Its 18 tests exercised the classifier directly,
+        so they passed while no entry point reached it; the work-destroying ops were refused on
+        the real path only because `read`'s allow-list happens not to list them. Found by an
+        outside adversarial review of the containment claims, not by this suite. `read` now
+        calls it before the allow-list, so the two are independent layers and the refusal an
+        agent sees is the one that names what would be lost and the safe alternative.
+        `via` is the tool the caller actually used, so the audit row names that tool.
+        """
         refusal = tiers.tier1_refusal(op, list(args))
         if refusal:
             what, alternative = refusal
-            raise self._refuse(op, {"args": list(args)}, what, alternative)
+            raise self._refuse(via or op, {"op": op, "args": list(args), "tier": 1},
+                               what, alternative)
 
     # =========================================================================
     # Tier 2 — mediated.
@@ -1570,6 +1584,24 @@ class GitRobot:
                 f"{branch!r} is not a pushable branch name here "
                 f"(private/* never reaches a remote; a leading '-' is a flag, not a branch).",
                 "Push the working branch by name, e.g. push(branch='illustrated').",
+                reason=reason, target=target,
+            )
+        # ⛔⛔ `branch` IS PASSED TO `git push origin <branch>` AS A REFSPEC, AND REFSPEC SYNTAX IS
+        # A FORCE FLAG IN DISGUISE. Measured 2026-10-09 by the restriction-verification harness:
+        # push(branch='+illustrated') with the ledger allowing FORCE-PUSHED, and a colleague's
+        # commit on the remote was overwritten and lost, while push('illustrated') correctly
+        # failed as non-fast-forward. The leading-'-' check above was the only shape check, so
+        # "there is no force parameter" held while force was one character away in a string. A
+        # ':' is the other half of refspec syntax (push one ref onto another). The name must also
+        # BE a local branch, so nothing else that git would read as a refspec can arrive here.
+        if (branch.startswith("+") or ":" in branch
+                or target.run(["rev-parse", "--verify", "--quiet",
+                               f"refs/heads/{branch}"]).exit_code != 0):
+            raise self._refuse(
+                "push", args,
+                f"{branch!r} is not the name of a local branch. A leading '+' would force the "
+                f"push and ':' would push onto a different ref; neither is reachable here.",
+                "Pass the plain name of an existing local branch, e.g. push(branch='illustrated').",
                 reason=reason, target=target,
             )
         if not reason:

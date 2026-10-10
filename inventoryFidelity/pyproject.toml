@@ -1,0 +1,22 @@
+[project]
+name = "inventory-fidelity"
+version = "0.1.0"
+description = "AI inventory fidelity: reconcile an inventory of AI system components against a scan of the deployed artifact, without modifying the inventory."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+inventory-fidelity = "inventory_fidelity.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["inventory_fidelity"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

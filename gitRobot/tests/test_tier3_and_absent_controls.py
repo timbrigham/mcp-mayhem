@@ -136,13 +136,33 @@ def test_the_mcp_surface_has_no_bypass_parameter_either():
         assert not (params & FORBIDDEN_PARAMS), f"MCP tool {name} exposes a bypass parameter"
 
 
+RAW_TOOL_NAMES = ("passthrough", "run", "git", "exec", "raw", "shell")
+
+
+def _raw_tools(tools) -> list:
+    return sorted(n for n in tools if n.lower() in RAW_TOOL_NAMES)
+
+
 def test_there_is_no_raw_passthrough_tool():
+    """Checked against the REGISTERED tool names an agent sees, not module attributes: a tool
+    can be registered under a name no attribute carries (`@mcp.tool(name="git")`). Until
+    2026-10-09 this used `hasattr(server, ...)`, which such a tool would have passed."""
     pytest.importorskip("mcp")
     from gitrobot_server import server
 
-    for banned in ("passthrough", "run", "git", "exec", "raw", "shell"):
-        assert not hasattr(server, banned), (
-            f"a {banned!r} tool would make every tier classification decorative")
+    tools = server.mcp._tool_manager._tools
+    assert len(tools) >= 9, "tool registry looks empty; the introspection broke"
+    assert _raw_tools(tools) == [], "a raw tool would make every tier classification decorative"
+
+
+def test_the_raw_tool_check_flags_a_seeded_raw_tool():
+    """The control: register a tool named `git` on a copy of the registry and the check fires."""
+    pytest.importorskip("mcp")
+    from gitrobot_server import server
+
+    seeded = dict(server.mcp._tool_manager._tools)
+    seeded["git"] = object()
+    assert _raw_tools(seeded) == ["git"]
 
 
 def test_gate_disabling_flags_are_never_synthesised():
@@ -170,9 +190,9 @@ def test_the_forbidden_flag_table_covers_the_known_bypasses():
 
 def test_history_returns_the_log(robot, dirty):
     with pytest.raises(RefusalError):
-        robot.guard_tier1("clean", ["-fd"])
+        robot.read("clean", ["-fd"])
     result = robot.history(limit=5)
-    assert result["count"] == 1 and result["records"][0]["op"] == "clean"
+    assert result["count"] == 1 and result["records"][0]["op"] == "read"
 
 
 def test_explain_on_an_unknown_id_is_a_usage_error(robot):

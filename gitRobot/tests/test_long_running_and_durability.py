@@ -185,7 +185,7 @@ def test_explain_survives_a_restart(robot, tmp_path, dirty):
     """A fresh process has an empty in-process cache; the alternative has to come
     back from the log, because the alternative is the useful half."""
     with pytest.raises(RefusalError) as exc:
-        robot.guard_tier1("reset", ["--hard"])
+        robot.read("reset", ["--hard"])
     rid = exc.value.refusal_id
 
     from core.engine import GitRobot
@@ -200,7 +200,7 @@ def test_explain_survives_a_restart(robot, tmp_path, dirty):
 def test_the_alternative_is_persisted_on_every_refusal(robot, dirty):
     for sub, args in [("reset", ["--hard"]), ("clean", ["-fd"]), ("stash", [])]:
         with pytest.raises(RefusalError):
-            robot.guard_tier1(sub, args)
+            robot.read(sub, args)
     for record in robot.audit.read():
         assert record["decision"] == "refused"
         assert record["alternative"], f"{record['op']} refusal persisted no alternative"

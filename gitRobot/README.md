@@ -5,7 +5,7 @@ operations are gated and audited, reads pass straight through, and every mutatin
 call leaves a record — including the refused ones and the clean ones.
 
 ```
-gitrobot --repo C:\Workspace\ZeroParadox status
+gitrobot --repo <path-to-repo> status
 gitrobot read log -5 --oneline
 gitrobot stage src/a.lean docs/b.md
 gitrobot commit .msg.txt --reason "fix the valuation bridge"
@@ -97,7 +97,7 @@ required field, not a nicety.
 | `commit` | the project's `pre-commit` pipeline runs **first**, so a failing gate costs a report rather than a half-made commit; the installed hook runs again during the commit as the backstop. Message read from a **file**, never argv. |
 | `preflight` | STARTS the full `pre-push` pipeline **without pushing** and returns at once; the verdict is recorded against the current HEAD when it lands |
 | `preflight_status` | `running` / `passed` / `failed` / **`died`** / `none` for the current HEAD |
-| `push` | refuses without a passing preflight for the current HEAD, and without a stated reason |
+| `push` | refuses without a stated reason, and on the main repository unless verdictLedger allows the range being pushed. A passing `preflight` is **not** required; it is an early, non-blocking run of the same pipeline |
 | `switch` / `merge` / `rebase` | refused while the tree is dirty. `rebase` additionally refuses to rewrite commits **already on the remote** |
 | `branch_delete` | **safe delete only** — an unmerged branch is refused, never force-deleted |
 | `tag_create` | annotated tags only; there is deliberately **no tag deletion** |
@@ -108,8 +108,9 @@ required field, not a nicety.
 **Why `preflight` is separate from `push`.** A gate that runs *inside* the push has
 a zero-length response window: the push completes in the same invocation, so the
 findings arrive after the irreversible act. Splitting the verdict from the act is
-the point. A preflight is bound to the HEAD it ran against, so it cannot authorise
-anything committed after it.
+the point. A preflight is bound to the HEAD it ran against and authorises nothing: it
+gives early findings, and the push decision is verdictLedger's, made for the exact range
+being pushed.
 
 **Why `preflight` does not wait.** Measured 2026-08-22: the real pipeline took
 ~155s. ⚠ IT NO LONGER DOES — 2026-09-08 it ran **743s**, and before the consumer's
@@ -170,13 +171,22 @@ alone would have let the second through.
 
 No `force`, no `no_verify`, no `skip_gates`, no `allow_dirty`, no `repo`, no raw
 `passthrough(cmd)`. Their absence is what makes the installed hooks a real
-backstop instead of an honour system, so it is **asserted by a test** over both
-the library and the MCP surface, not assumed. *A control nobody has seen fail is a
-hypothesis.*
+backstop instead of an honour system, so it is **asserted by a test**, not assumed.
+*A control nobody has seen fail is a hypothesis.*
+
+Git's own redirect and override flags are refused anywhere they can be passed:
+`-C`, `-c`, `--git-dir`, `--work-tree`, `--exec-path`, `--namespace`, `--config-env`.
+Each would point git at a different repository or change what runs.
 
 `GITROBOT_REPO` is an allow-list of one, resolved at startup. There is no repo
 argument: accepting one would make this a general-purpose git proxy for every
 checkout on the machine — a strictly worse hole than the one it closes.
+
+**Where these restrictions are claimed.** They are claimed for the two surfaces an agent
+is given: the MCP tools and the `gitrobot` command line. The Python library is the
+implementation, not a boundary. Its tool methods (`read`, `stage`, `commit`, …) apply
+the same checks, but in-process code can reach git directly (`GitRobot.git`), so
+nothing here holds against code running inside the same Python process.
 
 ## The audit log
 
