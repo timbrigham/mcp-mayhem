@@ -436,7 +436,7 @@ class GitRobot:
                 f"pass the subcommand and its arguments separately: "
                 f"read(op={op.split()[0]!r}, args={op.split()[1:]!r})"
             )
-        bad = tiers.forbidden_token(args)
+        bad = tiers.forbidden_token(args, op)
         if bad:
             raise self._refuse(
                 "read", {"op": op, "args": args},

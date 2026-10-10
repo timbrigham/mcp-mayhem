@@ -65,6 +65,10 @@ READ_OPS: dict[str, Optional[tuple[str, ...]]] = {
     "describe": None,
     "blame": None,
     "shortlog": None,
+    # `grep` ADDED 2026-10-09: searching tracked content is a read, and five real calls
+    # (`grep -n ...`) were refused because it was missing. Its one form that runs another
+    # program, `-O`/`--open-files-in-pager`, is refused in `is_read`.
+    "grep": None,
     # ⭐ `--get-regexp` ADDED 2026-09-19, ON ZeroParadox's REPORT, AND THE ARGUMENT IS AN
     # INCONSISTENCY RATHER THAN A PREFERENCE: `--list` already dumps EVERY config value, so the
     # BROADER read was allowed while the NARROWER one — a filtered subset of the same output —
@@ -199,9 +203,30 @@ MEDIATED_ELSEWHERE: dict[str, str] = {
 }
 
 
-def forbidden_token(args: Sequence[str]) -> Optional[str]:
-    """The first redirect/gate-disabling flag present, if any."""
+# Tokens that are forbidden in general but mean something harmless for ONE read op, so they
+# are exempt for that op only. Measured 2026-10-09 in the audit log: all 8 refusals by this
+# check were benign - `log -n 25` (a count), `grep -n` (line numbers), `rev-parse --git-dir`
+# (prints a path) - because the check matched the spelling wherever it appeared. `tag -n` was
+# even on the allow-list below and still always refused. Scoped per op, never globally: `-n`
+# stays forbidden everywhere else (it is `commit --no-verify`), and so does `--git-dir`.
+READ_TOKEN_EXEMPTIONS: dict[str, frozenset] = {
+    "log": frozenset({"-n"}),
+    "grep": frozenset({"-n"}),
+    "tag": frozenset({"-n"}),
+    "rev-parse": frozenset({"--git-dir"}),
+}
+
+# `git grep -O<cmd>` opens the matches in another program.
+GREP_RUNS_A_PROGRAM = ("-O", "--open-files-in-pager")
+
+
+def forbidden_token(args: Sequence[str], op: Optional[str] = None) -> Optional[str]:
+    """The first redirect/gate-disabling flag present, if any. `op` applies that op's
+    exemptions; with no `op`, nothing is exempt."""
+    exempt = READ_TOKEN_EXEMPTIONS.get(op or "", frozenset())
     for arg in args:
+        if arg in exempt:
+            continue
         if arg in FORBIDDEN_GLOBALS or arg in FORBIDDEN_FLAGS:
             return arg
         # --git-dir=… / --work-tree=… / --config-env=… attached forms
@@ -215,7 +240,9 @@ def is_read(sub: str, args: Sequence[str]) -> bool:
     """Is this an allow-listed, side-effect-free read?"""
     if sub not in READ_OPS:
         return False
-    if forbidden_token(args):
+    if forbidden_token(args, sub):
+        return False
+    if sub == "grep" and any(a.startswith(GREP_RUNS_A_PROGRAM) for a in args):
         return False
     allowed_first = READ_OPS[sub]
     if allowed_first is None:

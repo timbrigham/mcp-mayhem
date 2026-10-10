@@ -63,7 +63,7 @@ def test_the_classifier_alone_refuses_through_read(robot, dirty, monkeypatch, su
     """Allow-list and flag check removed (`clean -f` would otherwise stop at the flag check,
     which refuses `-f` on its own): the classifier must still stop the op, and the work survive."""
     monkeypatch.setattr(tiers, "is_read", lambda op, a: True)
-    monkeypatch.setattr(tiers, "forbidden_token", lambda a: None)
+    monkeypatch.setattr(tiers, "forbidden_token", lambda a, op=None: None)
     with pytest.raises(RefusalError) as exc:
         robot.read(sub, args)
     assert "uncommitted" in str(exc.value).lower()
@@ -75,7 +75,7 @@ def test_the_allow_list_alone_refuses_through_read(robot, dirty, monkeypatch, su
     """Classifier and flag check removed: the allow-list must still stop the op, and the work
     must survive."""
     monkeypatch.setattr(tiers, "tier1_refusal", lambda op, a: None)
-    monkeypatch.setattr(tiers, "forbidden_token", lambda a: None)
+    monkeypatch.setattr(tiers, "forbidden_token", lambda a, op=None: None)
     with pytest.raises(RefusalError) as exc:
         robot.read(sub, args)
     assert "not an allow-listed read" in str(exc.value)
