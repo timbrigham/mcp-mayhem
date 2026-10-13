@@ -77,12 +77,21 @@ def test_fixture_reproduces_documented_numbers():
     expected = json.loads((FIX / "expected_report.json").read_bytes().decode("utf-8"))
     assert rep == expected
     # the documented numbers, stated outright so a regenerated fixture cannot drift silently
-    assert (rep["item1"]["K"], rep["item1"]["G"]) == (3, 2)
-    assert rep["item1"]["unguarded"] == ["git.reset.work-destroying"]
+    # 3/3 since INC-0001's guard was corrected to the shell hook and its reset control (283157b)
+    assert (rep["item1"]["K"], rep["item1"]["G"]) == (3, 3)
+    assert rep["item1"]["unguarded"] == []
     assert all(v["lower_bound"] for v in rep["item2"]["values"])
     assert rep["item2"]["median_days"] is None
     assert rep["inputs"]["policy_refusal_observations"] == 0
-    assert rep["item4"]["current"] is None and "n = 0" in rep["item4"]["withheld"]
+    # item 4 is withheld in every window: sessions carrying version fields are far below 100
+    def _uhats(o):
+        if isinstance(o, dict):
+            return [v for k, v in o.items() if k == "U_hat"] + [x for v in o.values() for x in _uhats(v)]
+        if isinstance(o, list):
+            return [x for v in o for x in _uhats(v)]
+        return []
+    found = _uhats(rep["item4"])
+    assert found and all(v is None for v in found), found
 
 
 def test_fixture_has_no_crlf_or_bom():

@@ -1,36 +1,30 @@
 {
-  "as_of": "2026-10-13T14:23:31.326410+00:00",
+  "as_of": "2026-10-13T18:00:12.751574+00:00",
   "caveats": [
     "guard zp-block-git-gh (agent-shell) does not log refusals: it contributes no refusal observations",
     "guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals: it contributes no refusal observations"
   ],
   "inputs": {
     "audit_guard": "gitrobot",
-    "audit_rows": 6100,
+    "audit_rows": 6126,
     "incident_observations": 5,
     "manifest_guards": 3,
-    "mcp_sessions": 14,
+    "mcp_sessions": 17,
     "policy_refusal_observations": 0,
     "register_entries": 5
   },
   "item1": {
-    "G": 2,
+    "G": 3,
     "K": 3,
     "patterns": [
       {
-        "age_days": 51.75,
-        "age_is_lower_bound": true,
         "entry_points": [
           "agent-shell"
         ],
         "first_evidence": "2026-08-22T20:27:40+00:00",
-        "in_G": false,
+        "in_G": true,
         "occurrence_known": false,
-        "pattern_id": "git.reset.work-destroying",
-        "why_not_in_G": [
-          "guard zp-block-git-gh at agent-shell has no regression test replaying it",
-          "INC-0001's recorded guard 77c6d09 is gitrobot's, at gitrobot-mcp/cli, not at agent-shell"
-        ]
+        "pattern_id": "git.reset.work-destroying"
       },
       {
         "entry_points": [
@@ -51,16 +45,24 @@
         "pattern_id": "powershell.dotnet-file-write.relative-path"
       }
     ],
-    "share": 0.6666666666666666,
-    "unguarded": [
-      "git.reset.work-destroying"
-    ],
+    "share": 1.0,
+    "unguarded": [],
     "withheld": null
   },
   "item2": {
     "median_days": null,
     "median_of": 0,
     "values": [
+      {
+        "days": 51.89,
+        "detected_at_fix_time": false,
+        "guarded_at": "2026-10-13T17:47:17+00:00",
+        "guarded_before_first_observation": false,
+        "lower_bound": true,
+        "measured_from": "detection",
+        "pattern_id": "git.reset.work-destroying",
+        "seconds": 4483177.0
+      },
       {
         "days": 0.0,
         "detected_at_fix_time": true,
@@ -82,7 +84,7 @@
         "seconds": 749242.0
       }
     ],
-    "withheld": "every value (2) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence"
+    "withheld": "every value (3) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence"
   },
   "item3": {
     "batch_size": 10,
@@ -98,16 +100,25 @@
         "batch": 2,
         "new_patterns": 0,
         "partial": true,
-        "sessions": 4,
+        "sessions": 7,
         "start": "2026-10-13T12:33:42.317781+00:00"
       }
     ],
     "before_first_session": 3,
     "note": "a pattern is placed by its first evidence time (occurrence if known, else detection) into the batch whose session interval contains it",
-    "sessions": 14
+    "sessions": 17
   },
   "item4": {
-    "current": null,
+    "current": {
+      "Q1": 0,
+      "Q2": 0,
+      "U_hat": null,
+      "end": "2026-10-13T18:00:12.751574+00:00",
+      "n": 1,
+      "start": "2026-10-13T15:02:32.376569+00:00",
+      "window": "W1",
+      "withheld": "n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
+    },
     "min_sessions": 100,
     "observations_excluded": [
       {
@@ -124,8 +135,28 @@
     },
     "sessions_in_no_window": 14,
     "window_source": "derived from versions fields and manifest guard versions",
-    "windows": [],
-    "withheld": "no window contains a session: n = 0, Q1 = 0, Q2 = 0; U_hat needs n >= 100"
+    "windows": [
+      {
+        "Q1": 0,
+        "Q2": 0,
+        "U_hat": null,
+        "end": "2026-10-13T18:00:12.751574+00:00",
+        "n": 1,
+        "start": "2026-10-13T15:02:32.376569+00:00",
+        "window": "W1",
+        "withheld": "n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
+      },
+      {
+        "Q1": 0,
+        "Q2": 0,
+        "U_hat": null,
+        "end": "2026-10-13T17:47:17.607088+00:00",
+        "n": 2,
+        "start": "2026-10-13T17:41:54.163069+00:00",
+        "window": "W2",
+        "withheld": "n = 2 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
+      }
+    ]
   },
   "metric": "Incident-Driven Guard Coverage",
   "rule": "1",

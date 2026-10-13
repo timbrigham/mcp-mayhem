@@ -44,8 +44,8 @@ feature).
 
 ```console
 $ python3 -m guard_coverage measure --audit examples/guard-coverage/fixture/audit.jsonl --register examples/guard-coverage/fixture/register.json --manifest examples/guard-coverage/fixture/manifest.json
-Incident-Driven Guard Coverage (rule 1), as of 2026-10-13T14:23:31.326410+00:00
-inputs: 6100 audit rows, 5 register entries, 3 declared guards; 0 policy-refusal observations, 5 incident observations, 14 MCP sessions
+Incident-Driven Guard Coverage (rule 1), as of 2026-10-13T18:00:12.751574+00:00
+inputs: 6126 audit rows, 5 register entries, 3 declared guards; 0 policy-refusal observations, 5 incident observations, 17 MCP sessions
 skipped audit rows:
      177  refused rows lacking refusal_class (before it existed): cannot be observations
        3  refused rows with refusal_class operational: not policy refusals
@@ -53,25 +53,25 @@ skipped audit rows:
 caveat: guard zp-block-git-gh (agent-shell) does not log refusals: it contributes no refusal observations
 caveat: guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals: it contributes no refusal observations
 
-1. guarded share |G|/|K| = 2/3 = 66.7%
+1. guarded share |G|/|K| = 3/3 = 100.0%
+   in G       git.reset.work-destroying  (agent-shell)
    in G       gitrobot.push.refspec-force  (gitrobot-mcp/cli)
    in G       powershell.dotnet-file-write.relative-path  (agent-shell)
-   unguarded  git.reset.work-destroying  (agent-shell), age >= 51.75 days
-              - guard zp-block-git-gh at agent-shell has no regression test replaying it
-              - INC-0001's recorded guard 77c6d09 is gitrobot's, at gitrobot-mcp/cli, not at agent-shell
 
 2. time to guard (first occurrence to the commit with guard and test in place)
+   git.reset.work-destroying: >= 51.89 days  [lower bound: measured from detection]
    gitrobot.push.refspec-force: >= 0.00 days  [lower bound: measured from detection; detected at fix time]
    powershell.dotnet-file-write.relative-path: >= 8.67 days  [lower bound: measured from detection]
-   median: withheld (every value (2) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence)
+   median: withheld (every value (3) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence)
 
-3. discovery trend: new patterns per batch of 10 sessions (14 sessions)
+3. discovery trend: new patterns per batch of 10 sessions (17 sessions)
    before the first logged session: 3
    batch 1 (10 sessions, from 2026-10-13T11:55:19.802146+00:00): 0 new
-   batch 2 (4 sessions, partial, from 2026-10-13T12:33:42.317781+00:00): 0 new
+   batch 2 (7 sessions, partial, from 2026-10-13T12:33:42.317781+00:00): 0 new
 
 4. unseen-pattern estimate U_hat = Q1/n (windows derived from versions fields and manifest guard versions)
-   no window contains a session: n = 0, Q1 = 0, Q2 = 0; U_hat needs n >= 100
+   W1 2026-10-13T15:02:32.376569+00:00 .. 2026-10-13T18:00:12.751574+00:00: n=1 Q1=0 Q2=0; U_hat withheld (n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n))
+   W2 2026-10-13T17:41:54.163069+00:00 .. 2026-10-13T17:47:17.607088+00:00: n=2 Q1=0 Q2=0; U_hat withheld (n = 2 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n))
    sessions in no window: 14
    rows not placed in a window (no versions field: before it existed): 6099
    excluded from item 4: 1 incident observation(s) whose session is in no window
@@ -81,15 +81,17 @@ caveat: guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals:
 The real data is thin. K is 3 patterns, all from incidents. There are 0 policy refusals since
 the `refusal_class` field was added, partly by construction: 2 of the 3 declared guards do not
 log refusals. **Item 2's median is withheld and item 4 is not computable here**: every time to
-guard is a lower bound, and no session yet carries version fields, so n = 0. The behaviour of
+guard is a lower bound, and only 3 sessions so far carry version fields, in windows of n = 1
+and n = 2, far below 100. The behaviour of
 both is shown only on synthetic data.
 
 **One case shows what the metric is for.** `git.reset.work-destroying` (INC-0001) happened in a raw
 agent shell. ZeroParadox (the public project these agents work on) has a shell hook that has
-denied all direct git since 2026-08-23T14:22:18Z, about 18 hours after detection. But no
-regression test yet replays `git reset --hard` through that hook, and the register still records
-gitRobot's guard, at a different entry point. So the pattern is **not** in G: protection came
-fast, while the tested guard is still pending, about 52 days on.
+blocked every direct git call since 2026-08-23T14:22:18Z, about 18 hours after detection. But
+only on 2026-10-13 did a regression test replay `git reset --hard` through that hook, so the
+pattern entered G about 52 days after detection: protection came fast, the tested guard much
+later. The register keeps the guard it first recorded (gitRobot's, at a different entry point)
+in a `guard_history` list.
 
 ## Synthetic replay
 

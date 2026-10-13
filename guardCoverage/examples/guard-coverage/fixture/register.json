@@ -4,8 +4,13 @@
       "entries": [
         {
           "detected_at": "2026-08-22T20:27:40+00:00",
-          "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
-          "guarded_at": "2026-10-10T02:12:12+00:00",
+          "guard_commit": "283157b90077450f651907054b12ca2a45089949",
+          "guard_history": [
+            {
+              "entry_point": "gitrobot-mcp/cli (gitRobot read)"
+            }
+          ],
+          "guarded_at": "2026-10-13T17:47:17+00:00",
           "has_regression_test": true,
           "id": "INC-0001",
           "observed_at": null,

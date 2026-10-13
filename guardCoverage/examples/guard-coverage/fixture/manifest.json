@@ -36,14 +36,18 @@
       "logs_refusals": false,
       "version": "872811c2fa16d051eb0dbd7f41f7f8d31b905428",
       "version_at": "2026-08-23T14:22:18+00:00",
-      "_version_provenance": "the ZeroParadox commit that added the hook and its test file (verified read-only from that repository's history); it has denied all direct git since then",
+      "_version_provenance": "the ZeroParadox commit that added the hook and its test file (verified read-only from that repository's history); it has blocked every direct git call since then",
       "pattern_ids": [
         "git.reset.work-destroying"
       ],
       "regression_test": {
-        "git.reset.work-destroying": null
+        "git.reset.work-destroying": {
+          "test": "ZeroParadox block_git_gh hook suite, control GIT-INC0001",
+          "guard_commit": "283157b90077450f651907054b12ca2a45089949",
+          "guarded_at": "2026-10-13T17:47:17+00:00"
+        }
       },
-      "_regression_test_note": "no control yet replays 'git reset --hard' through this hook; one is being added"
+      "_regression_test_note": "the reset control was added in 5bf7106 and reached the agents' branch in merge 283157b; the hook has blocked every direct git call since 872811c"
     },
     {
       "id": "zp-dc71-dotnet-relative-write",
