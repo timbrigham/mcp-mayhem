@@ -247,7 +247,12 @@ def test_the_cli_reports_no_client(repo, dirty, tmp_path):
                         "stage", "tracked.txt"], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     v = _rows(data)[-1]["versions"]
-    assert v["client_name"] is None and v["client_version"] is None and v["gitrobot_commit"]
+    assert v["client_name"] is None and v["client_version"] is None
+    # Outside a git checkout (e.g. a release zip) the commit is unknown and must read as null,
+    # not fail: reported by an export-based verification, 2026-10-13.
+    in_checkout = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                                 capture_output=True).returncode == 0
+    assert (len(v["gitrobot_commit"]) == 40) if in_checkout else (v["gitrobot_commit"] is None), v
 
 def _scratch_repo(tmp_path):
     root = tmp_path / "repo"
