@@ -143,6 +143,16 @@ def _session_id():
         return None
 
 
+def _client_info() -> tuple:
+    """(name, version) the MCP client reported in its initialize handshake, or (None, None).
+    Self-reported by the client; recorded as given."""
+    try:
+        info = mcp.get_context().request_context.session.client_params.clientInfo
+        return (info.name, info.version)
+    except Exception:
+        return (None, None)
+
+
 async def _guard(fn, *args, **kwargs) -> dict:
     """Run the operation OFF the event loop, and turn every failure into a result.
 
@@ -157,7 +167,7 @@ async def _guard(fn, *args, **kwargs) -> dict:
     """
     # Attribution for the audit rows this call writes (core/callctx.py). Set here, on the event
     # loop inside the request, and carried into the worker thread by anyio's context copy.
-    callctx.set_caller("mcp", _session_id())
+    callctx.set_caller("mcp", _session_id(), _client_info())
     try:
         return {"ok": True, **await anyio.to_thread.run_sync(
             functools.partial(fn, *args, **kwargs))}

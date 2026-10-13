@@ -183,4 +183,114 @@ def test_the_reaper_records_surface_internal(repo, tmp_path, monkeypatch):
     server._start_worktree_reaper()
     with pytest.raises(_Stop):
         started[0]()                        # one sweep, then the sleep ends the loop
-    assert seen == [{"surface": "internal", "session": None}], seen
+    assert [(s["surface"], s["session"]) for s in seen] == [("internal", None)], seen
+
+# -- versions (instrumentation item 5) ------------------------------------------------------
+
+VERSION_KEYS = {"gitrobot_commit", "gitrobot_dirty", "client_name", "client_version",
+                "consumer_hook_commit"}
+
+
+def test_every_row_carries_the_versions_block(robot, dirty):
+    robot.stage(["tracked.txt"])
+    v = _rows(robot.audit.path)[-1]["versions"]
+    assert set(v) == VERSION_KEYS, v
+    assert v["consumer_hook_commit"] is None, "not observable from gitRobot; always null"
+
+
+def test_the_running_commit_is_captured_when_the_module_loads():
+    """Set at import, not at the first audit row: a commit made after the server starts must not
+    be attributed to code the process never loaded."""
+    # A FRESH process that only imports the module: in this process other tests have already
+    # written rows, which would fill the cache whether or not the import did.
+    out = subprocess.run([sys.executable, "-c",
+                          "import core.callctx as c; print(c._RUNNING is not None, sorted(c._RUNNING or {}))"],
+                         cwd=ROOT, capture_output=True, text=True)
+    assert out.stdout.strip() == "True ['gitrobot_commit', 'gitrobot_dirty']", out.stdout + out.stderr
+
+
+def test_the_mcp_tool_records_the_client_it_was_called_by(repo, dirty, tmp_path, monkeypatch):
+    pytest.importorskip("mcp")
+    from gitrobot_server import server
+    monkeypatch.setattr(server, "REPO", repo)
+    monkeypatch.setattr(server, "DATA", tmp_path / "mcp_ops.jsonl")
+    monkeypatch.setattr(server, "_client_info", lambda: ("claude-code", "9.9.9"))
+    stage = server.mcp._tool_manager._tools["stage"].fn
+    assert asyncio.run(stage(paths=["tracked.txt"]))["ok"] is True
+    v = _rows(tmp_path / "mcp_ops.jsonl")[-1]["versions"]
+    assert (v["client_name"], v["client_version"]) == ("claude-code", "9.9.9"), v
+
+
+def test_client_info_is_read_from_the_initialize_handshake(monkeypatch):
+    """Real mcp types, as the session stores them after initialize."""
+    pytest.importorskip("mcp")
+    from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
+    from gitrobot_server import server
+    params = InitializeRequestParams(protocolVersion="2025-06-18",
+                                     capabilities=ClientCapabilities(),
+                                     clientInfo=Implementation(name="claude-code", version="2.1.0"))
+
+    class _Ctx:
+        class request_context:
+            class session:
+                client_params = params
+
+    monkeypatch.setattr(server.mcp, "get_context", lambda: _Ctx())
+    assert server._client_info() == ("claude-code", "2.1.0")
+    monkeypatch.setattr(server.mcp, "get_context", lambda: (_ for _ in ()).throw(ValueError()))
+    assert server._client_info() == (None, None)
+
+
+def test_the_cli_reports_no_client(repo, dirty, tmp_path):
+    data = tmp_path / "cli_ops.jsonl"
+    r = subprocess.run([sys.executable, "-m", "core.cli", "--repo", str(repo), "--data", str(data),
+                        "stage", "tracked.txt"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    v = _rows(data)[-1]["versions"]
+    assert v["client_name"] is None and v["client_version"] is None and v["gitrobot_commit"]
+
+def _scratch_repo(tmp_path):
+    root = tmp_path / "repo"
+    (root / "gitRobot").mkdir(parents=True)
+    (root / "mcpcommon").mkdir()
+    for a in (["init", "-q"], ["config", "user.email", "e@e.invalid"], ["config", "user.name", "e"]):
+        subprocess.run(["git", *a], cwd=root, check=True, capture_output=True)
+    (root / "gitRobot" / "g.py").write_text("a\n", encoding="utf-8")
+    (root / "mcpcommon" / "m.py").write_text("a\n", encoding="utf-8")
+    (root / "other.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=root, check=True, capture_output=True)
+    return root
+
+
+def test_the_dirty_flag_covers_gitrobot_mcpcommon_and_untracked_files(tmp_path):
+    """Against scratch repositories, so the result never depends on the developer's own tree."""
+    root = _scratch_repo(tmp_path)
+    here = root / "gitRobot"
+    clean = callctx._probe(here)
+    assert clean["gitrobot_dirty"] is False and len(clean["gitrobot_commit"]) == 40
+    (root / "other.txt").write_text("b\n", encoding="utf-8")
+    assert callctx._probe(here)["gitrobot_dirty"] is False, "outside the scope must not count"
+    (root / "mcpcommon" / "m.py").write_text("b\n", encoding="utf-8")
+    assert callctx._probe(here)["gitrobot_dirty"] is True, "mcpcommon is imported, so it counts"
+    subprocess.run(["git", "checkout", "--", "mcpcommon"], cwd=root, check=True, capture_output=True)
+    (here / "new_module.py").write_text("x = 1\n", encoding="utf-8")
+    assert callctx._probe(here)["gitrobot_dirty"] is True, "an untracked file can be imported"
+
+
+def test_an_inherited_git_dir_cannot_redirect_the_probe(tmp_path, monkeypatch):
+    root = _scratch_repo(tmp_path / "a")
+    other = _scratch_repo(tmp_path / "b")
+    (other / "other.txt").write_text("make it a different commit\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "y"], cwd=other, check=True, capture_output=True)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
+                          env={k: v for k, v in __import__("os").environ.items()
+                               if not k.startswith("GIT_")}).stdout.strip()
+    assert callctx._probe(root / "gitRobot")["gitrobot_commit"] == head
+
+
+def test_an_existing_directory_that_is_not_a_repository_gives_nulls(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert callctx._probe(plain) == {"gitrobot_commit": None, "gitrobot_dirty": None}

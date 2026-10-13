@@ -103,16 +103,34 @@ def test_a_missing_reason_is_refused_before_anything_starts(robot, repo, ledger_
     assert robot.push_status()["state"] == "none"
 
 
-def test_a_second_push_while_one_runs_is_refused(robot, repo, ledger_ok):
+def test_a_second_push_while_one_runs_is_refused(robot, repo, ledger_ok, monkeypatch):
     """⚠ Same guard `preflight` uses. Two concurrent pushes of one branch race, and the audit
     could not say which receipt belonged to which act — and the hook would spend the ~25 minute
-    pipeline twice."""
+    pipeline twice.
+
+    The first push is HELD inside its `git push` until the second has been tried. Without that
+    the test raced: under full-suite load the first push sometimes finished before the second
+    call, leaving nothing to collide with ("DID NOT RAISE", 2026-10-09 and 2026-10-13)."""
+    import threading
+    from core.gitio import Git
+    release, entered = threading.Event(), threading.Event()
+    real_run = Git.run
+
+    def held_run(self, args, *a, **kw):
+        if args and args[0] == "push":
+            entered.set()
+            release.wait(timeout=60)
+        return real_run(self, args, *a, **kw)
+
+    monkeypatch.setattr(Git, "run", held_run)
     robot.push("illustrated", reason="first", wait=False)
+    assert entered.wait(timeout=30), "the first push never reached git push"
     try:
         with pytest.raises(RefusalError) as exc:
             robot.push("illustrated", reason="second", wait=False)
         assert "already running" in str(exc.value)
     finally:
+        release.set()
         _wait_for(robot.push_status, {"allowed", "failed"})
 
 
