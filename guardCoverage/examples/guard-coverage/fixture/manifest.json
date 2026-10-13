@@ -1,5 +1,7 @@
 {
   "manifest_version": "1",
+  "agent_clients": ["claude-code"],
+  "_agent_clients": "MCP clients whose sessions are agent sessions, the metric's unit. Other clients (for example a commit hook calling the guard layer) and sessions with no recorded client are not counted, and the report lists them.",
   "_about": "Declared guard set for Incident-Driven Guard Coverage. Each guard's version and version_at are used to restart item-4 windows. regression_test maps every pattern the guard covers to the first commit at which both the guard and a regression test replaying the observed action through this entry point are in place, or to null when no such test exists yet.",
   "guards": [
     {

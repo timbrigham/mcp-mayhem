@@ -231,7 +231,7 @@ def materialise(sim):
                 "guarded_at": gts})
     register = {"collections": {"incidents": {"schema_version": "1", "pattern_rule": "1",
                                               "entries": entries}}}
-    manifest = {"manifest_version": "1", "guards": guards}
+    manifest = {"manifest_version": "1", "guards": guards, "agent_clients": ["synthetic"]}
     return rows, register, manifest
 
 

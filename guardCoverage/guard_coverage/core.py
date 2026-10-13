@@ -178,11 +178,13 @@ def measure(rows, register, manifest, rule="1", *, audit_guard="gitrobot", bound
 
     skipped = Counter()
     obs = []                        # one dict per observation
-    sessions_first = {}             # session -> first ts (all mcp sessions, item 3)
+    sessions_first = {}             # agent session -> first ts (items 3 and 4)
     window_sessions = defaultdict(set)
     window_span = {}
     unplaced_sessions = set()
     placed_sessions = set()
+    agents = man["agent_clients"]
+    non_agent_sessions = defaultdict(set)   # reason -> sessions not counted as agent sessions
 
     for i, r in enumerate(rows):
         ts = tss[i]
@@ -192,8 +194,21 @@ def measure(rows, register, manifest, rule="1", *, audit_guard="gitrobot", bound
                     "cannot be sessions"] += 1
         elif r["surface"] == "mcp":
             s = r["session"]
+            client = (r.get("versions") or {}).get("client_name")
             if s is None:
                 skipped["mcp rows with a null session id: cannot be sessions"] += 1
+            elif agents is None:
+                skipped["mcp rows when the manifest declares no agent_clients: "
+                        "cannot tell agent sessions, so none count"] += 1
+                non_agent_sessions["agent_clients not declared"].add(s)
+            elif "versions" not in r:
+                skipped["mcp rows without a versions field (before it existed): "
+                        "client unknown, not counted as agent sessions"] += 1
+                non_agent_sessions["client unknown (no versions field)"].add(s)
+            elif client not in agents:
+                skipped["mcp rows from a client not declared as an agent: not agent "
+                        "sessions"] += 1
+                non_agent_sessions["client %s not declared as an agent" % client].add(s)
             else:
                 if s not in sessions_first or ts < sessions_first[s]:
                     sessions_first[s] = ts
@@ -225,6 +240,11 @@ def measure(rows, register, manifest, rule="1", *, audit_guard="gitrobot", bound
             # The definition: a refusal is "logged with its session". A null session cannot
             # be placed in any session, so the row is not an observation.
             skipped["policy refusals with a null session: not logged with a session"] += 1
+            continue
+        client = (r.get("versions") or {}).get("client_name")
+        if agents is None or "versions" not in r or client not in agents:
+            skipped["policy refusals outside an agent session (client not declared as an "
+                    "agent, or unknown): not observations"] += 1
             continue
         if not src["logs_refusals"]:
             skipped["policy refusals from a guard the manifest says does not log "
@@ -258,7 +278,10 @@ def measure(rows, register, manifest, rule="1", *, audit_guard="gitrobot", bound
                    "manifest_guards": len(guards), "audit_guard": audit_guard,
                    "policy_refusal_observations": sum(1 for o in obs if o["source"] == "refusal"),
                    "incident_observations": len(reg["entries"]),
-                   "mcp_sessions": len(sessions_first)},
+                   "agent_sessions": len(sessions_first),
+                   "agent_clients": None if agents is None else sorted(agents),
+                   "sessions_not_counted": [{"count": len(v), "reason": k}
+                                            for k, v in sorted(non_agent_sessions.items())]},
         "skipped": [{"count": c, "reason": k} for k, c in sorted(skipped.items())],
         "caveats": _caveats(guards),
     }

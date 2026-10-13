@@ -208,7 +208,14 @@ def validate_manifest(doc) -> dict:
                     "logs_refusals": g["logs_refusals"], "version": g["version"],
                     "version_at": version_at, "versions": versions,
                     "patterns": recs})
-    return {"guards": out}
+    # The unit is an AGENT session. Which MCP clients are agents is declared, never assumed:
+    # an allow-list, so a new automation client cannot silently inflate n. Absent means "not
+    # declared", and then no session counts (reported with its reason), never "all of them".
+    agents = doc.get("agent_clients")
+    if agents is not None and (not isinstance(agents, list)
+                               or not all(isinstance(a, str) and a for a in agents)):
+        raise InputError("manifest agent_clients must be a list of client names")
+    return {"guards": out, "agent_clients": None if agents is None else set(agents)}
 
 
 def load_windows(path) -> list:

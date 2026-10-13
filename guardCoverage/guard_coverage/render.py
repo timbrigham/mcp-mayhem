@@ -13,12 +13,18 @@ def render(report: dict) -> str:
     a("Incident-Driven Guard Coverage (rule %s), as of %s" % (report["rule"], report["as_of"]))
     i = report["inputs"]
     a("inputs: %d audit rows, %d register entries, %d declared guards; "
-      "%d policy-refusal observations, %d incident observations, %d MCP sessions"
+      "%d policy-refusal observations, %d incident observations, %d agent sessions"
       % (i["audit_rows"], i["register_entries"], i["manifest_guards"],
-         i["policy_refusal_observations"], i["incident_observations"], i["mcp_sessions"]))
+         i["policy_refusal_observations"], i["incident_observations"], i["agent_sessions"]))
     if report["skipped"]:
         a("skipped audit rows:")
         for s in report["skipped"]:
+            a("  %6d  %s" % (s["count"], s["reason"]))
+    a("agent clients declared: %s" % (", ".join(i["agent_clients"]) if i["agent_clients"]
+                                        else "none (no session counts as an agent session)"))
+    if i["sessions_not_counted"]:
+        a("sessions not counted as agent sessions:")
+        for s in i["sessions_not_counted"]:
             a("  %6d  %s" % (s["count"], s["reason"]))
     for c in report["caveats"]:
         a("caveat: %s" % c)

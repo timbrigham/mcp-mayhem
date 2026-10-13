@@ -50,7 +50,7 @@ def test_rows_lacking_fields_are_skipped_and_counted_not_treated_as_null():
                    "cannot be observations"] == 1
     assert reasons["rows lacking the surface/session fields (before they existed): "
                    "cannot be sessions"] == 2
-    assert rep["inputs"]["mcp_sessions"] == 2
+    assert rep["inputs"]["agent_sessions"] == 2
 
 
 def test_policy_refusal_lacking_session_field_is_skipped():
@@ -257,11 +257,14 @@ def test_window_restarts_even_when_a_server_version_returns():
     assert [w["n"] for w in m(rows)["item4"]["windows"]] == [2, 1, 3]
 
 
-def test_rows_without_versions_are_not_windowed():
+def test_sessions_without_versions_are_not_agent_sessions():
+    """No versions field means no client name, so the session cannot be shown to be an agent
+    session: it is not counted, and the report says so."""
     rows = sessions(3, versions=None)
     rep = m(rows)
-    assert rep["item4"]["windows"] == [] and rep["item4"]["sessions_in_no_window"] == 3
-    assert "n = 0" in rep["item4"]["withheld"]
+    assert rep["item4"]["windows"] == []
+    assert {"count": 3, "reason": "client unknown (no versions field)"} in \
+        rep["inputs"]["sessions_not_counted"]
 
 
 def test_null_gitrobot_commit_is_not_windowed():
@@ -272,9 +275,41 @@ def test_null_gitrobot_commit_is_not_windowed():
                for k in rep["item4"]["rows_not_placed_in_a_window"])
 
 
-def test_explicit_windows_place_unversioned_sessions():
+def test_explicit_windows_place_agent_sessions():
     from datetime import timedelta
     from helpers import T0
-    rows = sessions(6, versions=None)
+    rows = sessions(6)
     rep = m(rows, boundaries=[T0, T0 + timedelta(hours=3)])
     assert [w["n"] for w in rep["item4"]["windows"]] == [3, 3]
+
+
+# -- agent sessions only (the unit is an agent session) -------------------------------------
+
+def test_a_client_not_declared_as_an_agent_is_not_counted():
+    """Automation calling the guard layer (e.g. a commit hook) is not an agent session."""
+    agent = sessions(3)
+    hook = [row(10 + i, session="h%d" % i, versions=dict(VERS, client_name="hooks"))
+            for i in range(2)]
+    rep = m(agent + hook)
+    assert sum(w["n"] for w in rep["item4"]["windows"]) == 3
+    assert {"count": 2, "reason": "client hooks not declared as an agent"} in \
+        rep["inputs"]["sessions_not_counted"]
+
+
+def test_a_refusal_from_a_non_agent_session_is_not_an_observation():
+    hook_refusal = refusal(1, session="h1", versions=dict(VERS, client_name="hooks"))
+    rep = m(sessions(2) + [hook_refusal])
+    assert rep["inputs"]["policy_refusal_observations"] == 0
+    assert any("outside an agent session" in s["reason"] for s in rep["skipped"])
+
+
+def test_no_declared_agent_clients_means_no_session_counts():
+    """Undeclared is unknown, never 'all of them'."""
+    from guard_coverage.core import measure
+    from helpers import manifest, register
+    man = manifest()
+    del man["agent_clients"]
+    rep = measure(sessions(4), register(), man)
+    assert rep["item4"]["windows"] == [] and rep["inputs"]["agent_clients"] is None
+    assert any(s["reason"] == "agent_clients not declared" for s in rep["inputs"]["sessions_not_counted"])
+

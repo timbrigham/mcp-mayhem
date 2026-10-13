@@ -5,13 +5,26 @@
     "guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals: it contributes no refusal observations"
   ],
   "inputs": {
+    "agent_clients": [
+      "claude-code"
+    ],
+    "agent_sessions": 1,
     "audit_guard": "gitrobot",
     "audit_rows": 6126,
     "incident_observations": 5,
     "manifest_guards": 3,
-    "mcp_sessions": 17,
     "policy_refusal_observations": 0,
-    "register_entries": 5
+    "register_entries": 5,
+    "sessions_not_counted": [
+      {
+        "count": 14,
+        "reason": "client unknown (no versions field)"
+      },
+      {
+        "count": 2,
+        "reason": "client zp-hooks-attest not declared as an agent"
+      }
+    ]
   },
   "item1": {
     "G": 3,
@@ -92,21 +105,14 @@
       {
         "batch": 1,
         "new_patterns": 0,
-        "partial": false,
-        "sessions": 10,
-        "start": "2026-10-13T11:55:19.802146+00:00"
-      },
-      {
-        "batch": 2,
-        "new_patterns": 0,
         "partial": true,
-        "sessions": 7,
-        "start": "2026-10-13T12:33:42.317781+00:00"
+        "sessions": 1,
+        "start": "2026-10-13T15:02:32.376569+00:00"
       }
     ],
     "before_first_session": 3,
     "note": "a pattern is placed by its first evidence time (occurrence if known, else detection) into the batch whose session interval contains it",
-    "sessions": 17
+    "sessions": 1
   },
   "item4": {
     "current": {
@@ -133,7 +139,7 @@
     "rows_not_placed_in_a_window": {
       "no versions field: before it existed": 6099
     },
-    "sessions_in_no_window": 14,
+    "sessions_in_no_window": 0,
     "window_source": "derived from versions fields and manifest guard versions",
     "windows": [
       {
@@ -145,22 +151,20 @@
         "start": "2026-10-13T15:02:32.376569+00:00",
         "window": "W1",
         "withheld": "n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
-      },
-      {
-        "Q1": 0,
-        "Q2": 0,
-        "U_hat": null,
-        "end": "2026-10-13T17:47:17.607088+00:00",
-        "n": 2,
-        "start": "2026-10-13T17:41:54.163069+00:00",
-        "window": "W2",
-        "withheld": "n = 2 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
       }
     ]
   },
   "metric": "Incident-Driven Guard Coverage",
   "rule": "1",
   "skipped": [
+    {
+      "count": 2,
+      "reason": "mcp rows from a client not declared as an agent: not agent sessions"
+    },
+    {
+      "count": 54,
+      "reason": "mcp rows without a versions field (before it existed): client unknown, not counted as agent sessions"
+    },
     {
       "count": 177,
       "reason": "refused rows lacking refusal_class (before it existed): cannot be observations"

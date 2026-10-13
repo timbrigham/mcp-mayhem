@@ -66,4 +66,5 @@ def manifest(*guards):
     gs = list(guards)
     if not any(g["id"] == "gitrobot" for g in gs):
         gs.insert(0, guard("gitrobot", "gitrobot-mcp/cli", {}, version_at=-1000))
-    return {"manifest_version": "1", "guards": gs}
+    # "cc" is the client name helper rows carry (VERS), declared as the agent client
+    return {"manifest_version": "1", "guards": gs, "agent_clients": ["cc"]}
