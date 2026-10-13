@@ -1,0 +1,75 @@
+{
+  "collections": {
+    "incidents": {
+      "entries": [
+        {
+          "detected_at": "2026-08-22T20:27:40+00:00",
+          "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
+          "guarded_at": "2026-10-10T02:12:12+00:00",
+          "has_regression_test": true,
+          "id": "INC-0001",
+          "observed_at": null,
+          "pattern_id": "git.reset.work-destroying",
+          "session": null,
+          "session_known": false,
+          "status": "guarded",
+          "tool": "agent-shell"
+        },
+        {
+          "detected_at": "2026-10-10T02:12:12+00:00",
+          "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
+          "guarded_at": "2026-10-10T02:12:12+00:00",
+          "has_regression_test": true,
+          "id": "INC-0002",
+          "observed_at": null,
+          "pattern_id": "gitrobot.push.refspec-force",
+          "session": null,
+          "session_known": false,
+          "status": "guarded",
+          "tool": "gitrobot-mcp/cli"
+        },
+        {
+          "detected_at": "2026-10-04T20:26:20+00:00",
+          "guard_commit": "b6bae57fbc6eb4cd2bc8f20e8a311991c986aff3",
+          "guarded_at": "2026-10-13T12:33:42+00:00",
+          "has_regression_test": true,
+          "id": "INC-0003",
+          "observed_at": null,
+          "pattern_id": "powershell.dotnet-file-write.relative-path",
+          "session": null,
+          "session_known": false,
+          "status": "guarded",
+          "tool": "agent-shell"
+        },
+        {
+          "detected_at": "2026-10-04T20:26:20+00:00",
+          "guard_commit": "b6bae57fbc6eb4cd2bc8f20e8a311991c986aff3",
+          "guarded_at": "2026-10-13T12:33:42+00:00",
+          "has_regression_test": true,
+          "id": "INC-0004",
+          "observed_at": null,
+          "pattern_id": "powershell.dotnet-file-write.relative-path",
+          "session": null,
+          "session_known": false,
+          "status": "guarded",
+          "tool": "agent-shell"
+        },
+        {
+          "detected_at": "2026-10-09T01:44:00+00:00",
+          "guard_commit": "b6bae57fbc6eb4cd2bc8f20e8a311991c986aff3",
+          "guarded_at": "2026-10-13T12:33:42+00:00",
+          "has_regression_test": true,
+          "id": "INC-0005",
+          "observed_at": null,
+          "pattern_id": "powershell.dotnet-file-write.relative-path",
+          "session": "96d6a1c78bd8d321",
+          "session_known": true,
+          "status": "guarded",
+          "tool": "agent-shell"
+        }
+      ],
+      "pattern_rule": "1",
+      "schema_version": "1"
+    }
+  }
+}

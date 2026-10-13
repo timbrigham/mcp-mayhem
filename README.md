@@ -1,7 +1,7 @@
 # mcp-mayhem
 
 Tools that mediate and record what AI coding agents do in a git repository. Most are local
-MCP servers; one is a standalone measurement tool. Python, standard library plus the `mcp`
+MCP servers; two are standalone measurement tools. Python, standard library plus the `mcp`
 package.
 
 This is a single-author proof of concept, built for and used in one dedicated environment.
@@ -14,6 +14,7 @@ complete security tool.
 | `gitRobot/` | mediated git: refuses work-destroying operations, gates and audits the rest |
 | `verdictLedger/` | append-only record of check results, each bound to the exact file content it examined |
 | `inventoryFidelity/` | compares an inventory of an AI system's components with what is deployed |
+| `guardCoverage/` | measures how well tested guards keep up with the risky actions agents are seen to attempt |
 | `structuredJsonValidator/` | a schema-checked JSON registry |
 | `mcpSupervisor/` | keeps the local servers running (Windows) |
 | `mcpcommon/` | code shared by the servers |
@@ -22,6 +23,7 @@ Worked examples, each runnable in a few seconds:
 
 - `verdictLedger/examples/evidence-currency/`
 - `inventoryFidelity/examples/inventory-fidelity/`
+- `guardCoverage/examples/guard-coverage/`
 
 `CLAUDE.md` holds the working notes for the AI sessions that develop this repository. It is
 not user documentation.

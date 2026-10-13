@@ -1,0 +1,33 @@
+{
+  "kept_audit_fields": [
+    "ts",
+    "op",
+    "decision",
+    "refusal_class",
+    "surface",
+    "session (hashed)",
+    "versions",
+    "args (refused read: op; refused push: refspec shape)"
+  ],
+  "kept_register_fields": [
+    "id",
+    "pattern_id",
+    "status",
+    "observed_at",
+    "detected_at",
+    "guarded_at",
+    "guard_commit",
+    "has_regression_test",
+    "tool (entry point)",
+    "session_known",
+    "session (hashed)",
+    "guard_history[].entry_point"
+  ],
+  "rule": "1",
+  "salt": "59b0c10188647a6969de9d84c24a2c20",
+  "salt_note": "The salt is published so the hashing is reproducible. It is safe here because the only hashed values are session ids, which are random MCP connection ids and cannot be guessed. Test names are not hashed: the register extract keeps only has_regression_test.",
+  "session_hash": "first 16 hex digits of sha256(salt + ':' + id)",
+  "source_audit_rows": 6100,
+  "source_register_entries": 5,
+  "what": "Redacted public extract of a private gitRobot audit log and incident register, for Incident-Driven Guard Coverage. Real data, reduced."
+}

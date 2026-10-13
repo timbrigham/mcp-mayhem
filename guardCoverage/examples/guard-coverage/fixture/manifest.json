@@ -1,0 +1,68 @@
+{
+  "manifest_version": "1",
+  "_about": "Declared guard set for Incident-Driven Guard Coverage. Each guard's version and version_at are used to restart item-4 windows. regression_test maps every pattern the guard covers to the first commit at which both the guard and a regression test replaying the observed action through this entry point are in place, or to null when no such test exists yet.",
+  "guards": [
+    {
+      "id": "gitrobot",
+      "repo": "mcp-mayhem",
+      "description": "gitRobot, the mediated git server (MCP and CLI)",
+      "entry_point": "gitrobot-mcp/cli",
+      "logs_refusals": true,
+      "version": "f8132168f33efdb3e043325431b438c3044d4e8e",
+      "version_at": "2026-10-13T14:23:31.326410+00:00",
+      "_version_provenance": "the gitrobot_commit on the first audit row carrying a versions field; version_at is when it was first observed there, not when it was installed",
+      "pattern_ids": [
+        "git.reset.work-destroying",
+        "gitrobot.push.refspec-force"
+      ],
+      "regression_test": {
+        "git.reset.work-destroying": {
+          "test": "gitRobot/tests/test_tier1_refusals.py::test_refused_through_read_and_the_work_survives",
+          "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
+          "guarded_at": "2026-10-10T02:12:12+00:00"
+        },
+        "gitrobot.push.refspec-force": {
+          "test": "gitRobot/tests/test_push_refspec_is_not_a_force_flag.py::test_refspec_syntax_is_refused_and_the_remote_commit_survives",
+          "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
+          "guarded_at": "2026-10-10T02:12:12+00:00"
+        }
+      }
+    },
+    {
+      "id": "zp-block-git-gh",
+      "repo": "ZeroParadox",
+      "description": "ZeroParadox PreToolUse shell hook denying all direct git and gh commands",
+      "entry_point": "agent-shell",
+      "logs_refusals": false,
+      "version": "872811c2fa16d051eb0dbd7f41f7f8d31b905428",
+      "version_at": "2026-08-23T14:22:18+00:00",
+      "_version_provenance": "the ZeroParadox commit that added the hook and its test file (verified read-only from that repository's history); it has denied all direct git since then",
+      "pattern_ids": [
+        "git.reset.work-destroying"
+      ],
+      "regression_test": {
+        "git.reset.work-destroying": null
+      },
+      "_regression_test_note": "no control yet replays 'git reset --hard' through this hook; one is being added"
+    },
+    {
+      "id": "zp-dc71-dotnet-relative-write",
+      "repo": "ZeroParadox",
+      "description": "ZeroParadox PreToolUse shell hook for DC-71: refuses relative-path .NET writes",
+      "entry_point": "agent-shell",
+      "logs_refusals": false,
+      "version": "b6bae57fbc6eb4cd2bc8f20e8a311991c986aff3",
+      "version_at": "2026-10-13T12:33:42+00:00",
+      "pattern_ids": [
+        "powershell.dotnet-file-write.relative-path"
+      ],
+      "regression_test": {
+        "powershell.dotnet-file-write.relative-path": {
+          "test": "ZeroParadox DC-71 hook suite, controls 2 and 3",
+          "guard_commit": "b6bae57fbc6eb4cd2bc8f20e8a311991c986aff3",
+          "guarded_at": "2026-10-13T12:33:42+00:00"
+        }
+      }
+    }
+  ]
+}

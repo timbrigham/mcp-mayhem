@@ -1,0 +1,146 @@
+{
+  "as_of": "2026-10-13T14:23:31.326410+00:00",
+  "caveats": [
+    "guard zp-block-git-gh (agent-shell) does not log refusals: it contributes no refusal observations",
+    "guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals: it contributes no refusal observations"
+  ],
+  "inputs": {
+    "audit_guard": "gitrobot",
+    "audit_rows": 6100,
+    "incident_observations": 5,
+    "manifest_guards": 3,
+    "mcp_sessions": 14,
+    "policy_refusal_observations": 0,
+    "register_entries": 5
+  },
+  "item1": {
+    "G": 2,
+    "K": 3,
+    "patterns": [
+      {
+        "age_days": 51.75,
+        "age_is_lower_bound": true,
+        "entry_points": [
+          "agent-shell"
+        ],
+        "first_evidence": "2026-08-22T20:27:40+00:00",
+        "in_G": false,
+        "occurrence_known": false,
+        "pattern_id": "git.reset.work-destroying",
+        "why_not_in_G": [
+          "guard zp-block-git-gh at agent-shell has no regression test replaying it",
+          "INC-0001's recorded guard 77c6d09 is gitrobot's, at gitrobot-mcp/cli, not at agent-shell"
+        ]
+      },
+      {
+        "entry_points": [
+          "gitrobot-mcp/cli"
+        ],
+        "first_evidence": "2026-10-10T02:12:12+00:00",
+        "in_G": true,
+        "occurrence_known": false,
+        "pattern_id": "gitrobot.push.refspec-force"
+      },
+      {
+        "entry_points": [
+          "agent-shell"
+        ],
+        "first_evidence": "2026-10-04T20:26:20+00:00",
+        "in_G": true,
+        "occurrence_known": false,
+        "pattern_id": "powershell.dotnet-file-write.relative-path"
+      }
+    ],
+    "share": 0.6666666666666666,
+    "unguarded": [
+      "git.reset.work-destroying"
+    ],
+    "withheld": null
+  },
+  "item2": {
+    "median_days": null,
+    "median_of": 0,
+    "values": [
+      {
+        "days": 0.0,
+        "detected_at_fix_time": true,
+        "guarded_at": "2026-10-10T02:12:12+00:00",
+        "guarded_before_first_observation": false,
+        "lower_bound": true,
+        "measured_from": "detection",
+        "pattern_id": "gitrobot.push.refspec-force",
+        "seconds": 0.0
+      },
+      {
+        "days": 8.67,
+        "detected_at_fix_time": false,
+        "guarded_at": "2026-10-13T12:33:42+00:00",
+        "guarded_before_first_observation": false,
+        "lower_bound": true,
+        "measured_from": "detection",
+        "pattern_id": "powershell.dotnet-file-write.relative-path",
+        "seconds": 749242.0
+      }
+    ],
+    "withheld": "every value (2) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence"
+  },
+  "item3": {
+    "batch_size": 10,
+    "batches": [
+      {
+        "batch": 1,
+        "new_patterns": 0,
+        "partial": false,
+        "sessions": 10,
+        "start": "2026-10-13T11:55:19.802146+00:00"
+      },
+      {
+        "batch": 2,
+        "new_patterns": 0,
+        "partial": true,
+        "sessions": 4,
+        "start": "2026-10-13T12:33:42.317781+00:00"
+      }
+    ],
+    "before_first_session": 3,
+    "note": "a pattern is placed by its first evidence time (occurrence if known, else detection) into the batch whose session interval contains it",
+    "sessions": 14
+  },
+  "item4": {
+    "current": null,
+    "min_sessions": 100,
+    "observations_excluded": [
+      {
+        "count": 1,
+        "reason": "incident observation(s) whose session is in no window"
+      },
+      {
+        "count": 4,
+        "reason": "incident observation(s) with no known session"
+      }
+    ],
+    "rows_not_placed_in_a_window": {
+      "no versions field: before it existed": 6099
+    },
+    "sessions_in_no_window": 14,
+    "window_source": "derived from versions fields and manifest guard versions",
+    "windows": [],
+    "withheld": "no window contains a session: n = 0, Q1 = 0, Q2 = 0; U_hat needs n >= 100"
+  },
+  "metric": "Incident-Driven Guard Coverage",
+  "rule": "1",
+  "skipped": [
+    {
+      "count": 177,
+      "reason": "refused rows lacking refusal_class (before it existed): cannot be observations"
+    },
+    {
+      "count": 3,
+      "reason": "refused rows with refusal_class operational: not policy refusals"
+    },
+    {
+      "count": 5935,
+      "reason": "rows lacking the surface/session fields (before they existed): cannot be sessions"
+    }
+  ]
+}
