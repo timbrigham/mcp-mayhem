@@ -92,6 +92,27 @@ DECISIONS = {
                 "failure."),
 }
 
+# Why a `refused` audit row was refused. Set by the code that refuses, never inferred later from
+# the message text: added 2026-10-09 after two independent text-based classifications of the
+# same 177 refusals disagreed (44 patterns against 62). gitRobot's `AuditLog.append` refuses to
+# write a refused row without one of these values.
+REFUSAL_CLASSES = {
+    "policy": ("a rule the tool exists to enforce stopped a risky or work-destroying action: "
+               "destroying uncommitted work, bulk staging, a redirect or force flag, rewriting "
+               "published history, acting outside the one repository."),
+    "gate": ("a check pipeline, gate or ledger admission did not pass, or could not answer. "
+             "Fix the content or the evidence, not the call."),
+    "operational": ("the repository or the tool was in a state that blocks the call right now: "
+                    "already running, nothing staged, a dirty tree, a merge that did not "
+                    "apply. Usually resolves by waiting or by changing state."),
+    "allowlist": ("a read that is not on the read allow-list. Not a judgement that it is "
+                  "harmful; the list grows deliberately. Reads only: other allow-lists, such "
+                  "as permitted pull-request pairs, are policy."),
+}
+# Precedence when a refusal seems to fit two classes: operational if waiting, or changing
+# state, clears it without anyone giving up the action; gate if changing the content or
+# evidence clears it; otherwise policy. A missing required argument is operational.
+
 ROW_STATUSES = {
     "SATISFIED": "a verdict covers these exact bytes and it passed.",
     "MISSING": ("no verdict exists for this step at this content. NOT a failure - nobody "
@@ -475,6 +496,7 @@ TREE_OBJECTS = {
 VOCABULARIES = {
     "error_type": ERROR_TYPES,
     "decision": DECISIONS,
+    "refusal_class": REFUSAL_CLASSES,
     "row_status": ROW_STATUSES,
     "exit_code": EXIT_CODES,
     "claim_field": CLAIM_FIELDS,

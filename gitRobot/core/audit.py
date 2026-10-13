@@ -28,6 +28,7 @@ _root = _Path(__file__).resolve().parents[2]
 if str(_root) not in _sys.path:
     _sys.path.insert(0, str(_root))
 from mcpcommon.vocabulary import DECISIONS as _DECISIONS
+from mcpcommon.vocabulary import REFUSAL_CLASSES as _REFUSAL_CLASSES
 from core import callctx as _callctx
 
 from typing import Any, Optional
@@ -57,6 +58,22 @@ def _decision(name: str) -> str:
 
 
 
+def _refusal_class(decision: str, refusal_class):
+    """A refused row must say why, from the published set; any other row carries null.
+    Checked here because every row passes through `append`, so a refusal path that forgets
+    its class fails loudly instead of writing an unclassifiable row."""
+    if decision == "refused":
+        if refusal_class not in _REFUSAL_CLASSES:
+            raise AssertionError(
+                "a refused row needs refusal_class from mcpcommon.vocabulary.REFUSAL_CLASSES "
+                "(%s); got %r" % (", ".join(_REFUSAL_CLASSES), refusal_class))
+        return refusal_class
+    if refusal_class is not None:
+        raise AssertionError("refusal_class is only for refused rows, not %r" % decision)
+    return None
+
+
+
 class AuditLog:
     def __init__(self, path: str | os.PathLike):
         self.path = Path(path)
@@ -76,6 +93,7 @@ class AuditLog:
         detail: Optional[str] = None,
         alternative: Optional[str] = None,
         run_id: Optional[str] = None,
+        refusal_class: Optional[str] = None,
         repo: Optional[str] = None,
         # ⛔⛔ WHICH REPOSITORY BY URL, NOT BY ALIAS. Added 2026-09-25 on Tim's question:
         # *"origin main should be safe in theory, as long as the URL it means doesn't change."*
@@ -145,6 +163,8 @@ class AuditLog:
             "alternative": alternative,
             "run_id": run_id,
             "pid": os.getpid(),
+            # Why a refusal was refused; null on every other decision.
+            "refusal_class": _refusal_class(decision, refusal_class),
             # Always present, null when unknown: see core/callctx.py.
             **_callctx.current(),
         }

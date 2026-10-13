@@ -318,6 +318,9 @@ class GitRobot:
                     "worktree(action='add') — gitRobot will not accept a path git has not "
                     "vouched for, because that is the general-proxy hole the repo modes exist "
                     "to close.",
+                    # a foreign path that exists is the general-proxy case; one that is gone
+                    # is usually a reaped worktree or a typo
+                    refusal_class="policy" if resolved.exists() else "operational"
                 )
             return Git(resolved, timeout=self.git.timeout)
         if repo_mode in ("", "main", None):
@@ -331,7 +334,7 @@ class GitRobot:
 
     def _refuse(self, op: str, args: Any, what: str, alternative: str, *,
                 reason: Optional[str] = None, target: Optional[Git] = None,
-                own_run: bool = True) -> RefusalError:
+                own_run: bool = True, refusal_class: str) -> RefusalError:
         """Record the refusal, then return the error for the caller to raise.
 
         Refusals are audited exactly like allowed operations. A guard that only
@@ -348,6 +351,7 @@ class GitRobot:
             head=git.head(), branch=git.branch(), tree=git.tree_state(),
             reason=reason, detail=f"[{rid}] {what}", alternative=alternative,
             run_id=self._own_run_id(op) if own_run else None,
+            refusal_class=refusal_class,
         )
         return RefusalError(f"{what}\n\nINSTEAD: {alternative}",
                             alternative=alternative, refusal_id=rid)
@@ -443,7 +447,7 @@ class GitRobot:
                 "read", {"op": op, "args": args},
                 f"{bad!r} redirects git to a different repository, work tree, hook path or "
                 f"exec path, so the result would not describe the tree gitRobot guards.",
-                "Drop the flag. gitRobot reads exactly one repository, configured at startup.",
+                "Drop the flag. gitRobot reads exactly one repository, configured at startup.", refusal_class="policy"
             )
         # Tier 1 first: a work-destroying op gets the refusal that says what it would destroy,
         # not the generic "not an allow-listed read". The allow-list below would also refuse it;
@@ -467,7 +471,7 @@ class GitRobot:
                 "read", {"op": op, "args": args},
                 f"{('git ' + op + ' ' + ' '.join(args)).strip()!r} is not an "
                 f"allow-listed read.",
-                alternative,
+                alternative, refusal_class="allowlist"
             )
         # ⚠ Validated against the registered worktree set by `_target`, exactly as the write
         # paths are — a read aimed at an arbitrary directory would describe a tree gitRobot does
@@ -756,7 +760,7 @@ class GitRobot:
         if refusal:
             what, alternative = refusal
             raise self._refuse(via or op, {"op": op, "args": list(args), "tier": 1},
-                               what, alternative)
+                               what, alternative, refusal_class="policy")
 
     # =========================================================================
     # Tier 2 — mediated.
@@ -779,7 +783,7 @@ class GitRobot:
                 f"Commit it in its own repo instead: "
                 f"stage(paths=[…], repo_mode='{BULK_ADD_EXEMPT_REPO}') then "
                 f"commit(..., repo_mode='{BULK_ADD_EXEMPT_REPO}') then "
-                f"push(..., repo_mode='{BULK_ADD_EXEMPT_REPO}').",
+                f"push(..., repo_mode='{BULK_ADD_EXEMPT_REPO}').", refusal_class="policy"
             )
         bulk = [p for p in paths if p in BULK_ADD_TOKENS]
         if bulk and repo_mode != BULK_ADD_EXEMPT_REPO:
@@ -791,7 +795,7 @@ class GitRobot:
                 f"List the paths you actually changed: stage(paths=['a.lean','b.md']). "
                 f"Use read(op='status') to see what is outstanding. (The {BULK_ADD_EXEMPT_REPO} "
                 f"repository is exempt — bulk add is its documented flow — via "
-                f"repo_mode='{BULK_ADD_EXEMPT_REPO}'.)",
+                f"repo_mode='{BULK_ADD_EXEMPT_REPO}'.)", refusal_class="policy"
             )
         if bulk:
             # Only reachable for the exempt nested repo (guarded above). Normalised
@@ -872,7 +876,7 @@ class GitRobot:
                 f"concurrently.",
                 "Name the paths you actually want out of the index: "
                 "unstage(paths=['a.md'], reason='…'). read(op='status') shows what is "
-                "staged.",
+                "staged.", refusal_class="policy"
             )
         escaped = [p for p in paths if p.startswith("-")]
         if escaped:
@@ -920,7 +924,7 @@ class GitRobot:
                            "worktree": worktree},
                 "nothing is staged, so this commit would be empty.",
                 "stage(paths=[…]) the files you changed first; read(op='status') shows them.",
-                reason=reason, target=target,
+                reason=reason, target=target, refusal_class="operational"
             )
 
         # ⛔⛔ THE BACKSTOP: A COMMIT MAY NEVER CARRY A NON-ZERO ARC ROUND.
@@ -988,7 +992,7 @@ class GitRobot:
                  f"It is the ARC HANDSHAKE: a tracked default every worktree opens with, never a "
                  f"place to record this arc's progress. Its round stays local and dies with the "
                  f"worktree."),
-                reason=reason, target=target,
+                reason=reason, target=target, refusal_class="gate"
             )
 
         # ⭐ A COMMIT THAT IS RUNNING SAYS SO — Tim, 2026-10-03, "I like consistency" (merge got
@@ -1038,7 +1042,7 @@ class GitRobot:
                     decision="refused", repo=str(getattr(target, "repo", "") or ""),
                     head=target.head(), branch=target.branch(),
                     tree=target.tree_state(), gates=gate_records, reason=reason,
-                    detail="pre-commit gate did not pass", run_id=run_id,
+                    detail="pre-commit gate did not pass", run_id=run_id, refusal_class="gate"
                 )
                 raise RefusalError(
                     f"the pre-commit gate did not pass, so nothing was committed.\n\n"
@@ -1140,7 +1144,7 @@ class GitRobot:
             head=(target or self.git).head(), branch=(target or self.git).branch(),
             tree=(target or self.git).tree_state(), run_id=run_id,
             detail=("YES: gate passed for this exact tree and tools/verify; the hook may skip its "
-                    "second run" if ok else f"NO: {why}"))
+                    "second run" if ok else f"NO: {why}"), refusal_class=None if ok else "gate")
         return {"ok": True, "op": "attest", "attested": ok, "run_id": run_id, "tree": tree,
                 "why": None if ok else why,
                 "attested_prices": ("gitRobot's OWN pre-commit gate passed in this run, for this "
@@ -1288,7 +1292,7 @@ class GitRobot:
                 "run preflight again. A preflight with no branch would hand the pipeline no "
                 "refs, and a pipeline with no refs reports every check green over an empty "
                 "scope — which is what this refusal exists to prevent.",
-                reason=reason,
+                reason=reason, refusal_class="operational"
             )
         remote_head = self.git.run(["rev-parse", "--verify", "--quiet",
                                     f"origin/{branch}"])
@@ -1300,7 +1304,7 @@ class GitRobot:
                 "preflight", {}, "a preflight is already running for this store.",
                 "Wait for it and poll preflight_status(). Starting a second run would "
                 "spend the pipeline twice and leave two verdicts racing for the same HEAD.",
-                reason=reason,
+                reason=reason, refusal_class="operational"
             )
 
         run_id = _refusal_id("preflight", f"{head}|{self.audit.path}|{len(self.audit.read())}")
@@ -1586,7 +1590,7 @@ class GitRobot:
                 f"{branch!r} is not a pushable branch name here "
                 f"(private/* never reaches a remote; a leading '-' is a flag, not a branch).",
                 "Push the working branch by name, e.g. push(branch='illustrated').",
-                reason=reason, target=target,
+                reason=reason, target=target, refusal_class="policy"
             )
         # ⛔⛔ `branch` IS PASSED TO `git push origin <branch>` AS A REFSPEC, AND REFSPEC SYNTAX IS
         # A FORCE FLAG IN DISGUISE. Measured 2026-10-09 by the restriction-verification harness:
@@ -1605,6 +1609,9 @@ class GitRobot:
                 f"push and ':' would push onto a different ref; neither is reachable here.",
                 "Pass the plain name of an existing local branch, e.g. push(branch='illustrated').",
                 reason=reason, target=target,
+                # refspec syntax is the force attempt; a missing branch is usually a typo
+                refusal_class=("policy" if branch.startswith("+") or ":" in branch
+                               else "operational"),
             )
         if not reason:
             raise self._refuse(
@@ -1613,7 +1620,7 @@ class GitRobot:
                 "Say what this push is for in one line: push(branch=…, reason='…'). It goes "
                 "in the audit log, which is the only durable record of why a publication "
                 "happened.",
-                target=target,
+                target=target, refusal_class="operational"
             )
 
         gates = None
@@ -1648,7 +1655,7 @@ class GitRobot:
                 "push", args, "a push is already running for this store.",
                 "Wait for it and poll push_status(). The pre-push hook re-runs the full "
                 "pipeline on every push, so a second run would spend it twice.",
-                reason=reason, target=target,
+                reason=reason, target=target, refusal_class="operational"
             )
 
         # ⚠⚠ `target`, NEVER `self.git` — THE RECEIPT MUST NAME THE REPO THAT MOVED.
@@ -2204,7 +2211,7 @@ class GitRobot:
         if not head:
             raise self._refuse(
                 "push", args, "cannot resolve HEAD, so there is no hash to evaluate.",
-                "Commit something first.", reason=reason, target=target)
+                "Commit something first.", reason=reason, target=target, refusal_class="operational")
 
         rev_range = self._push_range(branch, target)
         try:
@@ -2216,7 +2223,7 @@ class GitRobot:
                 "push", args, f"the admission set could not be read: {exc}",
                 "gitRobot refuses rather than guessing what should gate a push — an "
                 "absent list is not an empty one. Fix config/admission.v1.json.",
-                reason=reason, target=target)
+                reason=reason, target=target, refusal_class="gate")
 
         # ⚠⚠ AN EMPTY ADMISSION SET REFUSES. It does NOT allow-with-a-warning.
         #
@@ -2249,7 +2256,7 @@ class GitRobot:
                 f"type(s) available to promote: {named}. Registering a type is free; "
                 f"gating on one is the deliberate act — which is why the empty set "
                 f"cannot be treated as 'nothing required'.",
-                reason=reason, target=target)
+                reason=reason, target=target, refusal_class="gate")
 
         if not inv.get("ok", True) or not inv.get("allowed"):
             # ⚠ Print the ROWS, not a count. The ledger already renders this and it
@@ -2319,7 +2326,7 @@ class GitRobot:
                 "being pushed. This is not advisory and there is no flag that skips it — "
                 "a push allowed while the ledger said 0/19 is the failure this gate "
                 "exists to prevent." + extra,
-                reason=reason, target=target)
+                reason=reason, target=target, refusal_class="gate")
         return inv
 
     def _lossless_reconcilable(self, target_rev: str) -> dict:
@@ -2465,7 +2472,7 @@ class GitRobot:
             "on a private checkout: worktree(action='add', ref=<ref>). There is no "
             "acknowledgement flag — the escape is an action that keeps your work "
             "findable, not a parameter that waves it through.",
-            reason=reason,
+            reason=reason, refusal_class="operational"
         )
 
     def switch(self, branch: str, *, create: bool = False,
@@ -2551,7 +2558,7 @@ class GitRobot:
                 # ⛔ NEVER the running merge's run_id, even from its own thread (a re-entrant
                 # call): this row is about the REFUSED call, and carrying run 1's id would make
                 # it run 1's terminal row — so a run 1 that then died would read `concluded`.
-                reason=reason, own_run=False)
+                reason=reason, own_run=False, refusal_class="operational")
         try:
             recovered = self._recover_interrupted_merge(args, reason)
             run_id = _refusal_id("merge", f"{branch}|{self.git.head()}|{len(self.audit.read())}")
@@ -2662,7 +2669,7 @@ class GitRobot:
                 "A human resolves this one: inspect `git status` in the main checkout, save any "
                 "uncommitted work you want to keep, then `git merge --abort` (or finish that merge "
                 "by hand). Then call merge() again. Retrying without that will refuse the same way.",
-                reason=reason)
+                reason=reason, refusal_class="operational")
         aborted = self.git.run(["merge", "--abort"], timeout=300)
         head_now = self.git.head()
         info = {"run_id": dangling.get("run_id"), "started_at": dangling.get("ts"),
@@ -2682,7 +2689,7 @@ class GitRobot:
                 f"an interrupted merge was found and `git merge --abort` did not restore the "
                 f"HEAD it started from ({info}).",
                 "A human inspects the main checkout before anything else merges.",
-                reason=reason)
+                reason=reason, refusal_class="operational")
         return info
 
     def _merge_body(self, branch: str, args: dict, reason: str) -> dict:
@@ -2785,7 +2792,7 @@ class GitRobot:
                         "commit(...) do not apply -- an untracked file is in neither the index "
                         "nor HEAD. If you want to KEEP them, move them outside the repository "
                         "first: this server will not delete an untracked file for you.",
-                        reason=reason,
+                        reason=reason, refusal_class="operational"
                     )
                 index_dirty = not self.git.run(
                     ["diff", "--cached", "--quiet"], timeout=30).ok
@@ -2800,7 +2807,7 @@ class GitRobot:
                         "unstage(paths=[...]) if it does not, then merge again. Unstaged "
                         "changes to paths this merge does NOT touch are carried forward and "
                         "are listed in the receipt.",
-                        reason=reason,
+                        reason=reason, refusal_class="operational"
                     )
                 # ⭐⭐ BEFORE REFUSING: ARE THE COLLIDING COPIES ALREADY THE MERGE RESULT?
                 # If every colliding path is byte-identical to what the merge would write, then
@@ -2866,7 +2873,7 @@ class GitRobot:
                         "already modified: worktree(action='add') starts from a ref with a "
                         "clean tree. Unstaging does NOT help here, and neither does retrying: "
                         "git refuses before beginning, so there is nothing to resolve.",
-                        reason=reason,
+                        reason=reason, refusal_class="operational"
                     )
             # ⚠ CONDITIONAL, BECAUSE THE RECONCILE ABOVE MAY HAVE RE-RUN THE MERGE SUCCESSFULLY.
             # The first draft left this raise unconditional, so a reconcile that WORKED still
@@ -2882,7 +2889,7 @@ class GitRobot:
                     "Take a private checkout — worktree(action='add', ref=<ref>) — resolve "
                     "there, commit through commit(...) so the gate still runs, and merge the "
                     "result.",
-                    reason=reason,
+                    reason=reason, refusal_class="operational"
                 )
 
         if not in_progress:
@@ -2938,7 +2945,7 @@ class GitRobot:
                 # the read-the-analogue defect again, inside a fix for a mis-stated remedy.
                 detail=("pre-commit gate did not pass on the merge result"
                         + ("; reconcile ROLLED BACK for %s" % (reconcile_rollback,)
-                           if reconcile_rollback else "")),
+                           if reconcile_rollback else "")), refusal_class="gate"
             )
             raise RefusalError(
                 f"the pre-commit gate did not pass on the RESULT of merging {branch!r}, "
@@ -3053,7 +3060,7 @@ class GitRobot:
                 f"and the damage only surfaces when someone else pulls.",
                 "Merge instead: merge(branch=…, reason=…). If the history really must be "
                 "rewritten, that is a deliberate human operation, not an agent one.",
-                reason=reason,
+                reason=reason, refusal_class="policy"
             )
         result = self.git.run(["rebase", onto], timeout=900)
         return self._receipt("rebase", args, "allowed" if result.ok else "failed",
@@ -3141,7 +3148,7 @@ class GitRobot:
                 "HEAD is detached, so there is no branch to move; the squashed commit "
                 "would be created and immediately unreferenced.",
                 "Check out the branch you mean to rewrite first.",
-                reason=reason)
+                reason=reason, refusal_class="operational")
 
         published = self._published_commits_rewritten_by(onto)
         if published:
@@ -3153,7 +3160,7 @@ class GitRobot:
                 "Squash only unpublished work. Confirm with "
                 "read(op='branch', args=['-r','--contains','<oldest sha>']) — an empty "
                 "result means no remote has it.",
-                reason=reason)
+                reason=reason, refusal_class="policy")
 
         count = self.git.run(["rev-list", "--count", f"{onto}..HEAD"])
         n = int(count.stdout.strip()) if count.ok and count.stdout.strip().isdigit() else 0
@@ -3162,7 +3169,7 @@ class GitRobot:
                 "squash", args,
                 f"{onto}..HEAD is empty — there is nothing to squash.",
                 "Check the base ref: read(op='log', args=['--oneline', f'{onto}..HEAD']).",
-                reason=reason)
+                reason=reason, refusal_class="operational")
 
         old_tip = self.git.run(["rev-parse", "HEAD"]).stdout.strip()
         tree = self.git.run(["rev-parse", "HEAD^{tree}"])
@@ -3259,7 +3266,7 @@ class GitRobot:
             raise self._refuse(
                 "branch_delete", {"name": name},
                 f"{name!r} is the branch currently checked out.",
-                "switch(branch=<other>) first, then delete it.", reason=reason,
+                "switch(branch=<other>) first, then delete it.", reason=reason, refusal_class="operational"
             )
         result = self.git.run(["branch", "-d", name])
         if not result.ok and "not fully merged" in result.output:
@@ -3270,7 +3277,7 @@ class GitRobot:
                 "If the work matters, merge it or tag it first (tag_create) — a tag keeps "
                 "the commits reachable. gitRobot has no force-delete: recovering from one "
                 "depends on the reflog, which expires.",
-                reason=reason,
+                reason=reason, refusal_class="policy"
             )
         return self._receipt("branch_delete", {"name": name},
                              "allowed" if result.ok else "failed",
@@ -3314,7 +3321,7 @@ class GitRobot:
                 f"current is unknown ({exc}).",
                 "Bring verdictLedger up and retry: `policy()` must answer, and its `bar` must "
                 "not report an active pin exemption. A tag is permanent and mints a DOI, so an "
-                "unverifiable freeze blocks rather than passes.", reason=reason)
+                "unverifiable freeze blocks rather than passes.", reason=reason, refusal_class="gate")
         bar = (pol or {}).get("bar") or {}
         ex = bar.get("pin_exemption") or {}
         if ex.get("active"):
@@ -3330,7 +3337,7 @@ class GitRobot:
                 "without a release is not covered by it."
                 % ((bar.get("rule_digest") or "?")[:12],
                    (ex.get("scope_digest_now") or "?")[:12]),
-                reason=reason)
+                reason=reason, refusal_class="gate")
 
     # =========================================================================
     # Pull requests — OPEN, read STATUS, refresh the BODY of one we opened. Nothing else.
@@ -3452,7 +3459,7 @@ class GitRobot:
                     f"is not this server's to rewrite.",
                     "Only PRs opened through pull_request(action='open') can be updated here. For "
                     "any other PR, the person who owns it edits the description.",
-                    reason=reason)
+                    reason=reason, refusal_class="policy")
             res = self._gh(["pr", "edit", str(number), "--repo", repo, "--body-file", str(path)])
             return self._receipt("pull_request.update_body", args,
                                  "allowed" if res.returncode == 0 else "failed", reason=reason,
@@ -3471,7 +3478,7 @@ class GitRobot:
                 f"{head} -> {base} is not an allowed pull-request pair in {self._PR_CONFIG.name}.",
                 f"Allowed pairs: {self._pr_policy()}. Adding one is a policy edit to that file, "
                 f"which is the owner's call — it acts on GitHub as their account.",
-                reason=reason)
+                reason=reason, refusal_class="policy")
         path = self._read_body_file(body_file)
         local = self.git.run(["rev-parse", "--verify", "--quiet", head]).stdout.strip()
         remote = self.git.run(["ls-remote", "origin", f"refs/heads/{head}"],
@@ -3484,7 +3491,7 @@ class GitRobot:
                 f"{local[:12] or 'ABSENT'}, so a PR opened now would not show what you have.",
                 f"push('{head}') first (it runs the gate), then open the PR. Measured with "
                 f"ls-remote, i.e. the remote itself, not the local tracking ref.",
-                reason=reason)
+                reason=reason, refusal_class="operational")
         existing = self._gh(["pr", "list", "--repo", repo, "--head", head, "--base", base,
                              "--state", "open", "--json", "number,url,title"])
         if existing.returncode != 0:
@@ -3561,7 +3568,7 @@ class GitRobot:
                 "remove_files", {"paths": paths},
                 f"{bulk[0]!r} would delete everything matching it from the tree.",
                 "Name the files: remove_files(paths=['a.lean'], reason='…'). "
-                "read(op='status') shows what is there.", reason=reason,
+                "read(op='status') shows what is there.", reason=reason, refusal_class="policy"
             )
         escaped = [p for p in paths if p.startswith("-")]
         if escaped:
@@ -3577,7 +3584,7 @@ class GitRobot:
                 "would discard work that exists nowhere else.",
                 "Commit or discard the modification deliberately first, or pass "
                 "cached=True to untrack the file while leaving it on disk. gitRobot has "
-                "no force flag for this.", reason=reason,
+                "no force flag for this.", reason=reason, refusal_class="policy"
             )
         return self._receipt("remove_files",
                              {"paths": paths, "cached": cached, "repo": repo_mode},
@@ -4090,14 +4097,14 @@ class GitRobot:
                         "Remove each link FIRST, non-recursively, so only the link goes and not "
                         "its target — PowerShell: [System.IO.Directory]::Delete($p, $false). "
                         "Verify the target still exists, then remove the worktree. Note "
-                        "os.path.islink() returns FALSE for a junction, so do not rely on it.",
+                        "os.path.islink() returns FALSE for a junction, so do not rely on it.", refusal_class="policy"
                     )
             if resolved == self.repo:
                 raise self._refuse(
                     "worktree.remove", {"name": name},
                     "that is the main checkout, not a worktree.",
                     "The main checkout is not removable by design — it is the thing every "
-                    "other guard here exists to protect.",
+                    "other guard here exists to protect.", refusal_class="policy"
                 )
             if resolved not in known:
                 # ⚠⚠ THE ORPHAN CASE, AND THE OLD REFUSAL NAMED TWO REMEDIES THAT BOTH
@@ -4136,6 +4143,7 @@ class GitRobot:
                     f"that. Neither applies to a path git never knew about outside "
                     f"gitRobot's own scratch root -- if that path is real work, removing "
                     f"it is not this server's call.",
+                    refusal_class="policy" if resolved.exists() else "operational"
                 )
             result = self.git.run(["worktree", "remove", "--force", str(path)], timeout=300)
             decision = "allowed" if result.ok else "failed"

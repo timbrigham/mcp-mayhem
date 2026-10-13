@@ -86,6 +86,7 @@ def _fill(robot, n=40):
         robot.audit.append(actor="test", op="push" if i % 2 else "commit",
                            args={"branch": "illustrated", "noise": "x" * 400},
                            decision="refused" if i % 3 else "allowed",
+                           refusal_class="gate" if i % 3 else None,
                            head="a" * 40, branch="illustrated",
                            tree={"dirty": False}, detail="y" * 800,
                            reason=f"reason {i}")
