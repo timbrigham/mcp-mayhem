@@ -19,8 +19,13 @@ from core.errors import IntegrityError, OperationError, ValidationError
 
 
 def _load_store(args) -> Any:
+    if args.consumer == "incidents":
+        # A separate store file holding only the incidents collection (consumers/incidents).
+        from consumers.incidents import build_incident_store
+
+        return build_incident_store(args.data, actor=args.actor)
     if args.consumer != "lean":
-        print(f"unknown consumer {args.consumer!r} (only 'lean' is wired up)", file=sys.stderr)
+        print(f"unknown consumer {args.consumer!r} (wired up: lean, incidents)", file=sys.stderr)
         raise SystemExit(2)
     from consumers.store import build_store
 
@@ -180,7 +185,7 @@ def cmd_check_head(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sjv", description="Schema-enforced flat-file SSOT registry.")
     p.add_argument("--data", required=True, help="path to the flat JSON source of truth")
-    p.add_argument("--consumer", default="lean", help="consumer wiring (default: lean)")
+    p.add_argument("--consumer", default="lean", help="consumer wiring: lean (default) or incidents")
     p.add_argument("--collection", default="declarations",
                    help="target collection for get/find/view/apply (default: declarations; also 'claims')")
     p.add_argument("--actor", default="cli", help="actor recorded in the audit log")
