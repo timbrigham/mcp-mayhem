@@ -94,12 +94,13 @@ below 100). The behaviour of
 both is shown only on synthetic data.
 
 **One case shows what the metric is for.** `git.reset.work-destroying` (INC-0001) happened in a raw
-agent shell. ZeroParadox (the public project these agents work on) has a shell hook that has
-blocked every direct git call since 2026-08-23T14:22:18Z, about 18 hours after detection. But
-only on 2026-10-13 did a regression test replay `git reset --hard` through that hook, so the
-pattern entered G about 52 days after detection: protection came fast, the tested guard much
-later. The register keeps the guard it first recorded (gitRobot's, at a different entry point)
-in a `guard_history` list.
+agent shell. It was blocked by a hook committed the day after its first record (ZeroParadox,
+the public project these agents work on, commit 872811c; per its message the hooks were
+already wired through an ignored local settings file, so blocking may have started earlier).
+But it waited at least 51.9 days from that first record for a regression test replaying
+`git reset --hard` through the hook (5bf7106, merged as 283157b, 2026-10-13): blocking came fast, the tested guard
+much later. The register keeps the guard it first recorded (gitRobot's, at a different entry
+point) in a `guard_history` list.
 
 ## Synthetic replay
 
