@@ -38,6 +38,23 @@
         "guard_commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
         "regression_test": { "type": ["string", "null"], "minLength": 1 },
         "guarded_at": { "anyOf": [{ "$ref": "#/$defs/utc" }, { "type": "null" }] },
+        "guard_history": {
+          "type": "array",
+          "$comment": "Guards this entry used to name, oldest first, each superseded by correct_guard. Append-only. Absent means no guard was ever superseded.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["guard_commit", "regression_test", "guarded_at", "entry_point", "reason", "superseded_at"],
+            "properties": {
+              "guard_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "regression_test": { "type": "string", "minLength": 1 },
+              "guarded_at": { "$ref": "#/$defs/utc" },
+              "entry_point": { "type": "string", "minLength": 1, "$comment": "The entry point the superseded guard covered." },
+              "reason": { "type": "string", "minLength": 1 },
+              "superseded_at": { "$ref": "#/$defs/utc" }
+            }
+          }
+        },
         "notes": {
           "type": "array",
           "items": {

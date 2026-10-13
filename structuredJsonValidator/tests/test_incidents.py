@@ -175,3 +175,58 @@ def test_ids_continue_past_four_digits(store):
     v = _violations(store, [_entry(id="INC-10000")])
     assert not any("id" in x and "pattern" in x.lower() for x in v), v
     assert v == [], v
+
+# -- correct_guard ---------------------------------------------------------------------
+
+def _guarded(store):
+    iid = store.apply("incidents", "add_incident", dict(BASE))["entries_touched"][0]
+    _guard(store, iid)
+    return iid
+
+
+CORRECTION = {"guard_commit": "c" * 40, "regression_test": "hooks/test.ps1::reset",
+              "guarded_at": "2026-10-13T13:00:00Z", "superseded_entry_point": "gitRobot read",
+              "reason": "the old guard covers a different entry point", "at": "2026-10-13T14:00:00Z"}
+
+
+def test_correct_guard_keeps_the_old_guard_in_history(store):
+    iid = _guarded(store)
+    store.apply("incidents", "correct_guard", {"id": iid, **CORRECTION})
+    inc = store.get("incidents", iid)
+    assert inc["guard_commit"] == "c" * 40 and inc["status"] == "guarded"
+    assert inc["guard_history"] == [{
+        "guard_commit": "a" * 40, "regression_test": "tests/x.py::t",
+        "guarded_at": "2026-10-13T11:00:00Z", "entry_point": "gitRobot read",
+        "reason": "the old guard covers a different entry point",
+        "superseded_at": "2026-10-13T14:00:00Z"}]
+    assert store.validate() == [] and store.verify_integrity()
+
+
+def test_corrections_accumulate_and_never_erase(store):
+    iid = _guarded(store)
+    store.apply("incidents", "correct_guard", {"id": iid, **CORRECTION})
+    store.apply("incidents", "correct_guard", {"id": iid, **CORRECTION, "guard_commit": "d" * 40})
+    hist = store.get("incidents", iid)["guard_history"]
+    assert [h["guard_commit"] for h in hist] == ["a" * 40, "c" * 40]
+
+
+@pytest.mark.parametrize("missing", ["superseded_entry_point", "reason", "regression_test"])
+def test_correct_guard_requires_every_field(store, missing):
+    iid = _guarded(store)
+    with pytest.raises(OperationError):
+        store.apply("incidents", "correct_guard", {"id": iid, **CORRECTION, missing: ""})
+
+
+def test_correct_guard_only_replaces_an_existing_guard(store):
+    iid = store.apply("incidents", "add_incident", dict(BASE))["entries_touched"][0]
+    with pytest.raises(OperationError, match="replaces an existing"):
+        store.apply("incidents", "correct_guard", {"id": iid, **CORRECTION})
+
+
+def test_a_history_entry_without_its_entry_point_is_rejected(store):
+    e = _entry(status="guarded", guard_commit="a" * 40, regression_test="t::x",
+               guarded_at="2026-10-13T11:00:00Z",
+               guard_history=[{"guard_commit": "b" * 40, "regression_test": "t::y",
+                               "guarded_at": "2026-10-13T10:30:00Z", "reason": "r",
+                               "superseded_at": "2026-10-13T11:00:00Z"}])
+    assert any("entry_point" in v for v in _violations(store, [e]))

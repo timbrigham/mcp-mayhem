@@ -4,6 +4,7 @@
   * ``set_guarded``: mark it guarded, which requires the guard commit, the regression test's
     node id and when it was guarded, all together.
   * ``annotate``: append a dated note. Notes are never edited or removed.
+  * ``correct_guard``: replace a wrong guard, moving the old one into ``guard_history``.
 """
 
 from __future__ import annotations
@@ -74,4 +75,27 @@ def annotate(document, *, id: str, text: str, at: str):
     return doc, [id]
 
 
-OPERATIONS = {"add_incident": add_incident, "set_guarded": set_guarded, "annotate": annotate}
+def correct_guard(document, *, id: str, guard_commit: str, regression_test: str,
+                  guarded_at: str, superseded_entry_point: str, reason: str, at: str):
+    """Replace a recorded guard that was the wrong one (e.g. it covers a different entry point
+    from the one the incident happened through). The old guard is not erased: it moves into the
+    append-only `guard_history` with the entry point it covered, why it was superseded and
+    when, so a reader can still reconstruct what was claimed before."""
+    doc = _require(document)
+    if not all((guard_commit, regression_test, guarded_at, superseded_entry_point, reason, at)):
+        raise OperationError("correct_guard requires guard_commit, regression_test, guarded_at, "
+                             "superseded_entry_point, reason and at")
+    inc = _find(doc, id)
+    if inc.get("status") != "guarded":
+        raise OperationError(f"{id} is {inc.get('status')!r}; correct_guard replaces an existing "
+                             f"guard. Use set_guarded to record a first one.")
+    inc.setdefault("guard_history", []).append({
+        "guard_commit": inc["guard_commit"], "regression_test": inc["regression_test"],
+        "guarded_at": inc["guarded_at"], "entry_point": superseded_entry_point,
+        "reason": reason, "superseded_at": at})
+    inc.update(guard_commit=guard_commit, regression_test=regression_test, guarded_at=guarded_at)
+    return doc, [id]
+
+
+OPERATIONS = {"add_incident": add_incident, "set_guarded": set_guarded, "annotate": annotate,
+              "correct_guard": correct_guard}
