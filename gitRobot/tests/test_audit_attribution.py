@@ -27,6 +27,7 @@ def _fresh_context():
     """Each test starts with no caller set, as a library caller would."""
     callctx.SURFACE.set(None)
     callctx.SESSION.set(None)
+    callctx.CALL_ID.set(None)
 
 
 def test_every_record_type_carries_both_keys(robot, dirty, fake_gate):
@@ -57,8 +58,8 @@ def test_every_record_type_carries_both_keys(robot, dirty, fake_gate):
 def test_a_library_caller_records_explicit_nulls(robot, dirty):
     robot.stage(["tracked.txt"])
     row = _rows(robot.audit.path)[-1]
-    assert "surface" in row and "session" in row
-    assert row["surface"] is None and row["session"] is None
+    assert "surface" in row and "session" in row and "client_call_id" in row
+    assert row["surface"] is None and row["session"] is None and row["client_call_id"] is None
 
 
 def test_the_cli_records_surface_cli_and_a_null_session(repo, dirty, tmp_path):

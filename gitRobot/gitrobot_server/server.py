@@ -52,6 +52,7 @@ from gitrobot_server.results import (  # noqa: E402
     VocabularyResult)
 
 from core import callctx
+from core import calls
 from core.engine import GitRobot
 from core.errors import GitRobotError, RefusalError, UsageError
 
@@ -153,7 +154,7 @@ def _client_info() -> tuple:
         return (None, None)
 
 
-async def _guard(fn, *args, **kwargs) -> dict:
+async def _guard(tool: str, *args, **kwargs) -> dict:
     """Run the operation OFF the event loop, and turn every failure into a result.
 
     ⚠ The offload is not an optimisation. FastMCP calls a synchronous tool
@@ -167,15 +168,62 @@ async def _guard(fn, *args, **kwargs) -> dict:
     """
     # Attribution for the audit rows this call writes (core/callctx.py). Set here, on the event
     # loop inside the request, and carried into the worker thread by anyio's context copy.
-    callctx.set_caller("mcp", _session_id(), _client_info())
+    # `tool` is the registered tool's name and the GitRobot method it runs; the two are the same
+    # by construction (tests/test_tool_calls_log.py). A robot that cannot be built (the repository
+    # is missing) still writes its call row.
+    call = _client_call_id()
+    callctx.set_caller("mcp", _session_id(), _client_info(), call[0])
+    # One row per call, reads included, naming the client's own call id (core/calls.py). Written
+    # on every exit path, an unexpected exception included, so a call never goes unrecorded.
     try:
-        return {"ok": True, **await anyio.to_thread.run_sync(
+        robot = _robot()
+    except BaseException as exc:
+        # Not caught into a result: a robot that cannot be built raised out of the tool before
+        # this log existed, and the log must not change what the caller receives.
+        _log_call(tool, call, "raised", getattr(exc, "error_type", None),
+                  exception=type(exc).__name__)
+        raise
+    try:
+        fn = getattr(robot, tool)
+        out = {"ok": True, **await anyio.to_thread.run_sync(
             functools.partial(fn, *args, **kwargs))}
+        _log_call(tool, call, "returned")
+        return out
     except RefusalError as exc:
+        _log_call(tool, call, "refused", exc.error_type, exc.refusal_id)
         return {"ok": False, "error_type": "refusal", "error": str(exc),
                 "alternative": exc.alternative, "refusal_id": exc.refusal_id}
     except GitRobotError as exc:
+        _log_call(tool, call, "error", exc.error_type)
         return {"ok": False, "error_type": exc.error_type, "error": str(exc)}
+    except BaseException as exc:
+        _log_call(tool, call, "raised", exception=type(exc).__name__)
+        raise
+
+
+def _client_call_id() -> tuple:
+    """(the client's per-call id or None, its state) from the request's `_meta` (core/calls.py).
+    Outside a request there is no `_meta`: absent."""
+    try:
+        meta = mcp.get_context().request_context.meta
+    except Exception:
+        return None, "absent"
+    return calls.client_call_id(meta)
+
+
+def _log_call(tool, call, outcome, error_type=None, refusal_id=None, *,
+              exception=None) -> None:
+    """Logging only: a failure to write the row is reported on stderr and never changes the
+    call's result, the same footing the HTTP call log has."""
+    try:
+        calls.append(calls.path_beside(DATA), tool=tool, call_id=call[0],
+                     call_id_state=call[1], outcome=outcome, error_type=error_type,
+                     refusal_id=refusal_id, exception=exception)
+    except Exception as exc:
+        try:
+            print(f"gitRobot: tool_calls row not written for {tool}: {exc!r}", file=sys.stderr)
+        except Exception:
+            pass        # stderr itself is gone (a broken pipe): the call's result still stands
 
 
 # -- Tier 3: reads ------------------------------------------------------------
@@ -199,7 +247,7 @@ async def read(op: str, args: Optional[list[str]] = None, repo_mode: str = "main
     target `stage`, `unstage` and `commit` take, validated against the registered set. Use it
     to inspect the tree you are working in: an agent that can WRITE to a worktree but cannot
     READ it is pushed toward raw git, which is the one outcome this surface exists to prevent."""
-    return await _guard(_robot().read, op, args, repo_mode=repo_mode, worktree=worktree)
+    return await _guard("read", op, args, repo_mode=repo_mode, worktree=worktree)
 
 
 @mcp.tool(title='Repository and gate status',
@@ -233,7 +281,7 @@ async def status() -> StatusResult:
     bounded by the pre-push GATE PHASE (1800s). A push is bounded by the whole `git push`
     subprocess — hook AND network — at 3600s. `cap_seconds` and `cap_prices` travel together
     so an elapsed time is never compared against the wrong ceiling."""
-    return await _guard(_robot().status)
+    return await _guard("status")
 
 
 # -- Tier 2: mediated mutations -----------------------------------------------
@@ -249,7 +297,7 @@ async def stage(paths: list[str], repo_mode: str = "main",
     reached permanent history exactly that way. List what you changed; read(op='status')
     shows the candidates. `.claude-local` is exempt (bulk add is its documented flow):
     stage(paths=['-A'], repo_mode='.claude-local')."""
-    return await _guard(_robot().stage, paths, repo_mode=repo_mode, worktree=worktree)
+    return await _guard("stage", paths, repo_mode=repo_mode, worktree=worktree)
 
 
 @mcp.tool(title='Unstage paths',
@@ -272,7 +320,7 @@ async def unstage(paths: list[str], reason: Optional[str] = None,
 
     Named paths only, no bulk form: background agents write to this checkout
     concurrently, so 'unstage everything' would clear entries this session never made."""
-    return await _guard(_robot().unstage, paths, reason=reason, repo_mode=repo_mode,
+    return await _guard("unstage", paths, reason=reason, repo_mode=repo_mode,
                         worktree=worktree)
 
 
@@ -300,7 +348,7 @@ async def commit(message_file: str, reason: Optional[str] = None,
     ⚠ THE GATE RUNS IN THE TREE BEING COMMITTED, not the main one. A worktree whose pipeline
     fails is refused even if the main checkout would pass — verifying one tree while committing
     another is exactly the mistake this project keeps finding."""
-    return await _guard(_robot().commit, message_file, reason=reason, repo_mode=repo_mode,
+    return await _guard("commit", message_file, reason=reason, repo_mode=repo_mode,
                         worktree=worktree)
 
 
@@ -328,7 +376,7 @@ async def preflight(reason: Optional[str] = None) -> ReceiptResult:
     ⛔ Before that fix it fed the hook nothing, so a hook deriving scope from those refs judged
     an EMPTY scope and reported clean — measured on a real push that then failed over 76
     files."""
-    return await _guard(_robot().preflight, reason=reason)
+    return await _guard("preflight", reason=reason)
 
 
 @mcp.tool(title='Preflight state',
@@ -343,7 +391,7 @@ async def preflight_status() -> PreflightStatusResult:
     (its process is gone) and never recorded a verdict — worth having as its own state,
     because "it failed" and "it never ran" are different facts and only one of them means
     the gate actually judged your tree."""
-    return await _guard(_robot().preflight_status)
+    return await _guard("preflight_status")
 
 
 @mcp.tool(title='Push to the remote',
@@ -387,7 +435,7 @@ async def push(branch: str, reason: str, repo_mode: str = "main") -> ReceiptResu
     them, so the installed pre-push hook runs as the backstop on every push. private/* branches
     are refused outright. The reason is recorded in the audit log, which is the only durable
     record of why a publication happened."""
-    return await _guard(_robot().push, branch, reason=reason, repo_mode=repo_mode,
+    return await _guard("push", branch, reason=reason, repo_mode=repo_mode,
                         wait=False)
 
 
@@ -411,7 +459,7 @@ async def admission(action: str = "push") -> AdmissionResult:
 
     Use requirements() when you need WHY a step is excluded, the preconditions, the order of
     operations, or the which_tool_answers_what routing map. Use this when you need the set."""
-    return await _guard(_robot().admission, action)
+    return await _guard("admission", action)
 
 
 @mcp.tool(title='Required gates for an action',
@@ -453,7 +501,7 @@ async def requirements(action: str = "push") -> RequirementsResult:
     keeps finding; it is worse here because the sentence was load-bearing.
 
     Ask this before deciding what blocks you."""
-    return await _guard(_robot().requirements, action)
+    return await _guard("requirements", action)
 
 
 @mcp.tool(title='Push state',
@@ -472,7 +520,7 @@ async def push_status() -> PushStatusResult:
     The remote is the only authority: check read(op='ls-remote') or compare origin/<branch>
     against local BEFORE retrying. This differs from preflight_status, where a died run
     provably changed nothing."""
-    return await _guard(_robot().push_status)
+    return await _guard("push_status")
 
 
 @mcp.tool(title='Fetch from the remote',
@@ -484,7 +532,7 @@ async def fetch(prune: bool = False, reason: Optional[str] = None,
     Run it before pushing so you know whether the remote moved. It cannot destroy anything
     — it is mediated rather than a plain read only because it goes to the network and
     writes refs, and those get an audit row."""
-    return await _guard(_robot().fetch, prune=prune, reason=reason, repo_mode=repo_mode)
+    return await _guard("fetch", prune=prune, reason=reason, repo_mode=repo_mode)
 
 
 @mcp.tool(title='Switch branch',
@@ -496,7 +544,7 @@ async def switch(branch: str, create: bool = False, reason: Optional[str] = None
     quieter case: carrying uncommitted work across a branch change so it later gets
     committed on a branch it was never written for. There is no acknowledgement flag —
     commit the work, or take a worktree. Both leave it somewhere a person can find it."""
-    return await _guard(_robot().switch, branch, create=create, reason=reason)
+    return await _guard("switch", branch, create=create, reason=reason)
 
 
 @mcp.tool(title='Merge a branch',
@@ -536,7 +584,7 @@ async def merge(branch: str, reason: str) -> ReceiptResult:
 
     No squash, no strategy overrides, no --no-verify: a merge needing those is a decision,
     not a mechanical step."""
-    return await _guard(_robot().merge, branch, reason=reason)
+    return await _guard("merge", branch, reason=reason)
 
 
 @mcp.tool(title='Rebase — REWRITES HISTORY',
@@ -548,7 +596,7 @@ async def rebase(onto: str, reason: str) -> ReceiptResult:
     That second guard is the important one: rewriting published history breaks every
     checkout that already has it, and the damage only surfaces when someone else pulls.
     gitRobot cannot make that safe, so it declines to be what made it easy — use merge."""
-    return await _guard(_robot().rebase, onto, reason=reason)
+    return await _guard("rebase", onto, reason=reason)
 
 
 @mcp.tool(title='Squash — REWRITES HISTORY',
@@ -632,7 +680,7 @@ async def squash(onto: str, message_file: str, reason: str) -> ReceiptResult:
 
     The receipt names old_tip. The replaced commits become unreferenced, not deleted —
     that sha is how you get them back before gc."""
-    return await _guard(_robot().squash, onto, message_file, reason=reason)
+    return await _guard("squash", onto, message_file, reason=reason)
 
 
 @mcp.tool(title='Delete a branch',
@@ -643,7 +691,7 @@ async def branch_delete(name: str, reason: str) -> ReceiptResult:
     A branch whose commits are not merged anywhere is REFUSED rather than force-deleted:
     those commits would survive only in the reflog, which expires. Merge or tag them first.
     There is no force-delete here and no parameter that reaches one."""
-    return await _guard(_robot().branch_delete, name, reason=reason)
+    return await _guard("branch_delete", name, reason=reason)
 
 
 @mcp.tool(title='Attest a passed commit gate',
@@ -658,7 +706,7 @@ async def attest(run_id: str, tree: str) -> AttestResult:
     is byte-identical on disk. SINGLE-USE. Anything else is `attested: false` with `why` — and the
     hook must then run in full. Unreachable or erroring must also mean: run in full.
     ⚠ Not read-only: a yes CONSUMES the attestation, and every answer is audited."""
-    return await _guard(_robot().attest, run_id, tree)
+    return await _guard("attest", run_id, tree)
 
 
 @mcp.tool(title='Open or read a pull request',
@@ -679,7 +727,7 @@ async def pull_request(action: str, reason: str, head: Optional[str] = None,
 
     ⛔ There is NO merge, approve, close or edit-of-others: merging into main is the owner's act.
     ⚠ openWorldHint: this acts on GitHub as the repository owner's account, through `gh`."""
-    return await _guard(_robot().pull_request, action, reason=reason, head=head, base=base,
+    return await _guard("pull_request", action, reason=reason, head=head, base=base,
                         title=title, body_file=body_file, number=number)
 
 
@@ -691,7 +739,7 @@ async def tag_create(name: str, reason: str, message_file: Optional[str] = None)
     A pushed tag is a public marker other things reference — here, releases mint permanent
     DOIs. Removing one is not an agent decision, so the verb does not exist; supersede a
     wrong tag with a corrected one."""
-    return await _guard(_robot().tag_create, name, reason=reason, message_file=message_file)
+    return await _guard("tag_create", name, reason=reason, message_file=message_file)
 
 
 @mcp.tool(title='Remove files',
@@ -703,7 +751,7 @@ async def remove_files(paths: list[str], reason: str, cached: bool = False,
     cached=True untracks the file but leaves it on disk. Without it the file is deleted, so
     a path carrying uncommitted modifications is REFUSED — git would need -f to discard
     them, and -f is not available here."""
-    return await _guard(_robot().remove_files, paths, reason=reason, cached=cached,
+    return await _guard("remove_files", paths, reason=reason, cached=cached,
                         repo_mode=repo_mode)
 
 
@@ -732,7 +780,7 @@ async def ledger_subjects(observed: dict, ref: str = "INDEX") -> ReceiptResult:
     blob ids — untracked, not repo-relative, or drifted since you read it. A caller
     that hands over eight paths and records four subjects without noticing has
     recorded a narrower verdict than it believes."""
-    return await _guard(_robot().ledger_subjects, observed, ref=ref)
+    return await _guard("ledger_subjects", observed, ref=ref)
 
 
 @mcp.tool(title='Add or remove a worktree',
@@ -782,7 +830,7 @@ async def worktree(action: str, ref: Optional[str] = None, name: Optional[str] =
     action='remove' also accepts any path git itself lists as a worktree of this repo (never
     the main checkout), so leftovers from other sessions can be cleaned up. action='prune'
     drops the administrative records of worktrees whose directories are already gone."""
-    return await _guard(_robot().worktree, action, ref=ref, name=name)
+    return await _guard("worktree", action, ref=ref, name=name)
 
 
 # -- Explanation + the log ----------------------------------------------------
@@ -793,7 +841,7 @@ async def explain(refusal_id: str) -> ExplainResult:
     """Why an operation was refused, and exactly what discharges it.
 
     Every refusal returns a `refusal_id`; pass it here for the long form."""
-    return await _guard(_robot().explain, refusal_id)
+    return await _guard("explain", refusal_id)
 
 
 @mcp.tool(title='Audit history',
@@ -814,7 +862,7 @@ async def history(limit: int = 20, full: bool = False, op: Optional[str] = None,
 
     Filter with `op=` ("push", "commit", ...) or `decision=` ("refused", "allowed")
     to answer the incident question directly rather than by reading everything."""
-    return await _guard(_robot().history, limit=limit, full=full, op=op,
+    return await _guard("history", limit=limit, full=full, op=op,
                         decision=decision)
 
 
@@ -895,14 +943,24 @@ async def vocabulary(name: Optional[str] = None) -> VocabularyResult:
     serialiser — the published contract is the one you receive.
     """
     from mcpcommon.vocabulary import as_payload, UnknownVocabulary
+    # Not routed through `_guard` (its refusal must keep `satisfied_when`), so it logs its own
+    # tool_calls row: a subagent that only reads the vocabulary is still an instance that called.
+    call = _client_call_id()
+    callctx.set_caller("mcp", _session_id(), _client_info(), call[0])
     try:
-        return {"ok": True, **as_payload(name)}
+        out = {"ok": True, **as_payload(name)}
+        _log_call("vocabulary", call, "returned")
+        return out
     except UnknownVocabulary as exc:
+        _log_call("vocabulary", call, "error", UsageError.error_type)
         # Mapped to THIS server's usage refusal. mcpcommon cannot import gitRobot's error
         # classes without inverting the dependency, so the shared raise carries the two fields
         # a refusal owes and each server puts its own envelope on them.
         return {"ok": False, "error_type": UsageError.error_type, "error": str(exc),
                 "satisfied_when": exc.satisfied_when}
+    except BaseException as exc:
+        _log_call("vocabulary", call, "raised", exception=type(exc).__name__)
+        raise
 
 
 @mcp.resource(

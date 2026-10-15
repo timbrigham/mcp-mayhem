@@ -84,6 +84,7 @@ def _no_caller_carried_between_tests():
     from core import callctx
     callctx.SURFACE.set(None)
     callctx.SESSION.set(None)
+    callctx.CALL_ID.set(None)
 
 
 @pytest.fixture(autouse=True)

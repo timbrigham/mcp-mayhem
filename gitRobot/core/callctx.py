@@ -27,23 +27,31 @@ SESSION: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("gitrobo
 CLIENT: contextvars.ContextVar[tuple] = contextvars.ContextVar("gitrobot_client",
                                                               default=(None, None))
 
+# The client's own id for the call being served, from the request's `_meta` (core/calls.py),
+# so an audit row can be traced to the agent that made the call. Added 2026-10-15: one MCP
+# session can carry hundreds of subagents, and the session id cannot tell them apart.
+CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("gitrobot_call_id",
+                                                                         default=None)
+
 # "internal" is work the server starts itself, such as the hourly worktree reaper: the caller
 # is known, so it must not read like an unknown library caller (null).
 SURFACES = ("mcp", "cli", "internal")
 
 
 def set_caller(surface: str, session: Optional[str] = None,
-               client: tuple = (None, None)) -> None:
+               client: tuple = (None, None), call_id: Optional[str] = None) -> None:
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}; expected one of {SURFACES}")
     SURFACE.set(surface)
     SESSION.set(session)
     CLIENT.set(tuple(client))
+    CALL_ID.set(call_id)
 
 
 def current() -> dict:
     name, version = CLIENT.get()
     return {"surface": SURFACE.get(), "session": SESSION.get(),
+            "client_call_id": CALL_ID.get(),
             "versions": {**_running(), "client_name": name, "client_version": version,
                          # Not observable from here: the consumer's hooks run in the agent's
                          # own tool calls, which never pass through gitRobot. Always null.
