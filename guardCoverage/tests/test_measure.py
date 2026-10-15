@@ -2,7 +2,7 @@
 
 import pytest
 
-from guard_coverage import measure
+from helpers import measure
 from guard_coverage.inputs import InputError
 from guard_coverage.rule import UnknownRule
 from helpers import (VERS, guard, incident, manifest, refusal, register, row, sessions)
@@ -48,8 +48,8 @@ def test_rows_lacking_fields_are_skipped_and_counted_not_treated_as_null():
     reasons = {s["reason"]: s["count"] for s in rep["skipped"]}
     assert reasons["refused rows lacking refusal_class (before it existed): "
                    "cannot be observations"] == 1
-    assert reasons["rows lacking the surface/session fields (before they existed): "
-                   "cannot be sessions"] == 2
+    assert reasons["audit rows lacking the surface/session fields (before they existed): "
+                   "cannot be agent rows"] == 2
     assert rep["inputs"]["agent_sessions"] == 2
 
 
@@ -175,16 +175,16 @@ def test_discovery_trend_batches():
                            refusal(13, session="s0013", sub="push")]
     rep = m(rows, batch_size=10)
     b = rep["item3"]["batches"]
-    assert [x["sessions"] for x in b] == [10, 10, 5]
+    assert [x["instances"] for x in b] == [10, 10, 5]
     assert [x["new_patterns"] for x in b] == [1, 1, 0]
     assert b[2]["partial"] is True
-    assert rep["item3"]["before_first_session"] == 0
+    assert rep["item3"]["before_first_instance"] == 0
 
 
-def test_incident_before_first_session_is_counted_before():
+def test_incident_before_first_instance_is_counted_before():
     inc = incident("I1", "p.a", detected=-100, commit="c")
     rep = m(sessions(3), register(inc))
-    assert rep["item3"]["before_first_session"] == 1
+    assert rep["item3"]["before_first_instance"] == 1
 
 
 # ------------------------------------------------------------------ item 4
@@ -211,7 +211,8 @@ def test_unknown_session_incident_counts_toward_K_and_G_but_not_item4():
     assert rep["item1"]["K"] == 1 and rep["item1"]["G"] == 1
     w = rep["item4"]["windows"][0]
     assert (w["n"], w["Q1"], w["Q2"]) == (120, 0, 0)
-    assert any("no known session" in e["reason"] for e in rep["item4"]["observations_excluded"])
+    assert any("no known agent instance" in e["reason"]
+               for e in rep["item4"]["observations_excluded"])
 
 
 def test_known_session_incident_counts_in_item4():
@@ -261,7 +262,7 @@ def test_sessions_without_versions_are_not_agent_sessions():
     """No versions field means no client name, so the session cannot be shown to be an agent
     session: it is not counted, and the report says so."""
     rows = sessions(3, versions=None)
-    rep = m(rows)
+    rep = m(rows, instance_map={})      # mapped, a call is an instance by construction
     assert rep["item4"]["windows"] == []
     assert {"count": 3, "reason": "client unknown (no versions field)"} in \
         rep["inputs"]["sessions_not_counted"]
@@ -300,15 +301,16 @@ def test_a_refusal_from_a_non_agent_session_is_not_an_observation():
     hook_refusal = refusal(1, session="h1", versions=dict(VERS, client_name="hooks"))
     rep = m(sessions(2) + [hook_refusal])
     assert rep["inputs"]["policy_refusal_observations"] == 0
-    assert any("outside an agent session" in s["reason"] for s in rep["skipped"])
+    assert any("outside an agent client" in s["reason"] for s in rep["skipped"])
 
 
 def test_no_declared_agent_clients_means_no_session_counts():
     """Undeclared is unknown, never 'all of them'."""
-    from guard_coverage.core import measure
+    from helpers import measure
     from helpers import manifest, register
     man = manifest()
     del man["agent_clients"]
+    del man["instance_source"]          # it must name a declared agent client
     rep = measure(sessions(4), register(), man)
     assert rep["item4"]["windows"] == [] and rep["inputs"]["agent_clients"] is None
     assert any(s["reason"] == "agent_clients not declared" for s in rep["inputs"]["sessions_not_counted"])

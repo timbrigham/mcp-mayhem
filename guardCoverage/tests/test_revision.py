@@ -6,7 +6,8 @@ import random
 
 import pytest
 
-from guard_coverage import measure, synthetic
+from guard_coverage import synthetic
+from helpers import measure
 from guard_coverage.inputs import InputError
 from helpers import guard, incident, manifest, refusal, register, sessions, ts
 

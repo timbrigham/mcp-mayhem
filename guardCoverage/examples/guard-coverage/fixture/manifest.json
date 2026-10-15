@@ -1,7 +1,13 @@
 {
   "manifest_version": "1",
-  "agent_clients": ["claude-code"],
-  "_agent_clients": "MCP clients whose sessions are agent sessions, the metric's unit. Other clients (for example a commit hook calling the guard layer) and sessions with no recorded client are not counted, and the report lists them.",
+  "agent_clients": [
+    "claude-code"
+  ],
+  "_agent_clients": "MCP clients whose calls can come from agents. Other clients (for example a commit hook calling the guard layer) and calls with no recorded client are not counted, and the report lists them.",
+  "instance_source": {
+    "client": "claude-code"
+  },
+  "_instance_source": "The unit is an agent instance: one agent context, such as a subagent. For this client a call is tied to an instance by its client_call_id (Claude Code's params._meta[\"claudecode/toolUseId\"]): the instance is the one Claude Code transcript file, a main conversation or a subagent, that holds that id as a tool_use id. An id found in no transcript, or in more than one, maps to no instance and is counted, not guessed.",
   "_about": "Declared guard set for Incident-Driven Guard Coverage. Each guard's version and version_at are used to restart item-4 windows. regression_test maps every pattern the guard covers to the first commit at which both the guard and a regression test replaying the observed action through this entry point are in place, or to null when no such test exists yet.",
   "guards": [
     {
@@ -15,7 +21,8 @@
       "_version_provenance": "the gitrobot_commit on the first audit row carrying a versions field; version_at is when it was first observed there, not when it was installed",
       "pattern_ids": [
         "git.reset.work-destroying",
-        "gitrobot.push.refspec-force"
+        "gitrobot.push.refspec-force",
+        "gitrobot.worktree-target.any"
       ],
       "regression_test": {
         "git.reset.work-destroying": {
@@ -27,8 +34,14 @@
           "test": "gitRobot/tests/test_push_refspec_is_not_a_force_flag.py::test_refspec_syntax_is_refused_and_the_remote_commit_survives",
           "guard_commit": "77c6d094cbde1cd4b47cc7780d944d660746ff43",
           "guarded_at": "2026-10-10T02:12:12+00:00"
+        },
+        "gitrobot.worktree-target.any": {
+          "test": "gitRobot/tests/test_worktree_target.py::test_a_path_git_does_not_list_is_refused",
+          "guard_commit": "c46a0c5f3dea13071662d94ef40b3bfa081949b1",
+          "guarded_at": "2026-09-03T16:54:35+00:00"
         }
-      }
+      },
+      "_regression_test_note": "gitrobot.worktree-target.any: every worktree= tool (read, stage, unstage, commit) calls the same _target, which refuses on one condition, a resolved path that `git worktree list` does not list, and never inspects the calling tool; the test drives that branch with an existing path, the policy class, as the observed refusal had. The test predates the first observation (2026-10-14)."
     },
     {
       "id": "zp-block-git-gh",

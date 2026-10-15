@@ -10,18 +10,28 @@ def _pct(x):
 def render(report: dict) -> str:
     L = []
     a = L.append
-    a("Incident-Driven Guard Coverage (rule %s), as of %s" % (report["rule"], report["as_of"]))
+    a("Incident-Driven Guard Coverage (rule %s), as of %s; unit: %s"
+      % (report["rule"], report["as_of"], report["unit"]))
     i = report["inputs"]
-    a("inputs: %d audit rows, %d register entries, %d declared guards; "
-      "%d policy-refusal observations, %d incident observations, %d agent sessions"
-      % (i["audit_rows"], i["register_entries"], i["manifest_guards"],
-         i["policy_refusal_observations"], i["incident_observations"], i["agent_sessions"]))
+    a("inputs: %d audit rows, %d call rows, %d instance-map entries, %d register entries, "
+      "%d declared guards"
+      % (i["audit_rows"], i["call_rows"], i["instance_map_entries"], i["register_entries"],
+         i["manifest_guards"]))
+    a("observations: %d policy refusals, %d incidents; %d agent instances (in %d agent "
+      "sessions, context only)"
+      % (i["policy_refusal_observations"], i["incident_observations"], i["agent_instances"],
+         i["agent_sessions"]))
     if report["skipped"]:
-        a("skipped audit rows:")
+        a("skipped rows:")
         for s in report["skipped"]:
             a("  %6d  %s" % (s["count"], s["reason"]))
-    a("agent clients declared: %s" % (", ".join(i["agent_clients"]) if i["agent_clients"]
-                                        else "none (no session counts as an agent session)"))
+    a("agent clients declared: %s; instances from: %s"
+      % (", ".join(i["agent_clients"]) if i["agent_clients"] else "none (no row is an agent's)",
+         i["instance_client"] or "nothing declared (no row has an instance)"))
+    if i["agent_rows_without_instance"]:
+        a("agent rows not placed in an instance:")
+        for s in i["agent_rows_without_instance"]:
+            a("  %6d  %s" % (s["count"], s["reason"]))
     if i["sessions_not_counted"]:
         a("sessions not counted as agent sessions:")
         for s in i["sessions_not_counted"]:
@@ -69,12 +79,12 @@ def render(report: dict) -> str:
 
     three = report["item3"]
     a("")
-    a("3. discovery trend: new patterns per batch of %d sessions (%d sessions)"
-      % (three["batch_size"], three["sessions"]))
-    a("   before the first logged session: %d" % three["before_first_session"])
+    a("3. discovery trend: new patterns per batch of %d agent instances (%d instances)"
+      % (three["batch_size"], three["instances"]))
+    a("   before the first logged instance: %d" % three["before_first_instance"])
     for b in three["batches"]:
-        a("   batch %d (%d sessions%s, from %s): %d new"
-          % (b["batch"], b["sessions"], ", partial" if b["partial"] else "", b["start"],
+        a("   batch %d (%d instances%s, from %s): %d new"
+          % (b["batch"], b["instances"], ", partial" if b["partial"] else "", b["start"],
              b["new_patterns"]))
 
     four = report["item4"]
@@ -89,7 +99,7 @@ def render(report: dict) -> str:
             a(head + "; U_hat withheld (%s)" % w["withheld"])
         else:
             a(head + "; U_hat = Q1/n = %.4f" % w["U_hat"])
-    a("   sessions in no window: %d" % four["sessions_in_no_window"])
+    a("   instances in no window: %d" % four["instances_in_no_window"])
     for k, c in four["rows_not_placed_in_a_window"].items():
         a("   rows not placed in a window (%s): %d" % (k, c))
     for e in four["observations_excluded"]:

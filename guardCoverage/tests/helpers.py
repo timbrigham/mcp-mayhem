@@ -1,8 +1,15 @@
-"""Small hand-built inputs for the tests."""
+"""Small hand-built inputs for the tests.
+
+The unit is an agent instance. Helper rows carry a client call id "<session>#<n>", and
+`instance_map` maps each one back to its session, so in these tests one session is one instance
+unless a test builds its own map. `measure` here supplies that map when a test gives none."""
 
 from __future__ import annotations
 
+import itertools
 from datetime import datetime, timedelta, timezone
+
+from guard_coverage.core import measure as _measure
 
 T0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -20,10 +27,26 @@ def row(h, op="status", decision="allowed", *, session="s1", surface="mcp",
     r = {"ts": ts(h), "op": op, "decision": decision, "args": args or {}}
     if legacy:
         return r
-    r.update(surface=surface, session=session, refusal_class=refusal_class)
+    r.update(surface=surface, session=session, refusal_class=refusal_class,
+             client_call_id=None if session is None else "%s#%d" % (session, next(_N)))
     if versions is not None:
         r["versions"] = dict(versions)
     return r
+
+
+_N = itertools.count()
+
+
+def instance_map(rows):
+    """Each helper call id -> the session it was made in (one session, one instance)."""
+    return {r["client_call_id"]: r["client_call_id"].split("#")[0] for r in rows
+            if r.get("client_call_id")}
+
+
+def measure(rows, register, manifest, rule="1", **kw):
+    if "instance_map" not in kw:
+        kw["instance_map"] = instance_map(list(rows) + list(kw.get("calls", ())))
+    return _measure(rows, register, manifest, rule, **kw)
 
 
 def refusal(h, session="s1", sub="reset", op="read", cls="policy", **kw):
@@ -40,7 +63,8 @@ def incident(iid, pattern, *, tool="gitRobot push (MCP and CLI)", session=None,
              guarded=10):
     return {"id": iid, "pattern_id": pattern, "status": status,
             "observed_at": None if observed is None else ts(observed),
-            "detected_at": ts(detected), "session": session, "tool": tool,
+            "detected_at": ts(detected), "session": session, "instance": session,
+            "tool": tool,
             "guard_commit": commit if status == "guarded" else None,
             "regression_test": test if status == "guarded" else None,
             "guarded_at": ts(guarded) if status == "guarded" else None,
@@ -67,4 +91,5 @@ def manifest(*guards):
     if not any(g["id"] == "gitrobot" for g in gs):
         gs.insert(0, guard("gitrobot", "gitrobot-mcp/cli", {}, version_at=-1000))
     # "cc" is the client name helper rows carry (VERS), declared as the agent client
-    return {"manifest_version": "1", "guards": gs, "agent_clients": ["cc"]}
+    return {"manifest_version": "1", "guards": gs, "agent_clients": ["cc"],
+            "instance_source": {"client": "cc"}}

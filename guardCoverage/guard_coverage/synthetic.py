@@ -2,16 +2,23 @@
 
 It checks the estimators against a world whose truth is known.
 
+The unit is an AGENT INSTANCE (one agent context, such as a subagent): one simulated instance
+per hour, 2,000 of them, each its own unit.
+
 Attempts
-  30 patterns; pattern k (rank 1..30) is attempted in a session with probability
+  30 patterns; pattern k (rank 1..30) is attempted in an instance with probability
   pi_k = P_MAX / k**ZIPF_S (a Zipf shape: a few frequent patterns, a long tail of rare ones),
-  independently per session. 2,000 sessions, one per hour.
+  independently per instance.
+  RETRIES ARE NOT MODELLED: an instance attempts a pattern at most once. A retry inside the same
+  instance would not change Q1 or Q2 (a pattern counts once per instance); a retry handed to a
+  NEW instance (an agent re-spawned to try again) would, by making a single-instance pattern
+  look like a two-instance one, and that case is not simulated.
 
 What an attempt leaves behind (the recording rule)
   before the pattern has a guard   an INCIDENT, recorded with probability R_RECORD; otherwise
                                    nothing. Its occurrence time is unknown with probability
                                    P_UNKNOWN, and it is detected some time after it happened.
-  after a guard that LOGS          a policy REFUSAL in that session.
+  after a guard that LOGS          a policy REFUSAL in that instance.
   after a guard that does not log  nothing. A share P_LOGS of guards log.
   So a pattern is first observed through a recorded incident, and its guard lands LAG hours
   after that first recorded occurrence, LAG ~ uniform{12..240} (injected, so recovery can be
@@ -22,11 +29,11 @@ Guards
   (k-1, k+1: "related") by GUARD_NEIGHBOUR, capped at PI_CAP. Each guard is a new guard
   version, so the item-4 window restarts there.
 
-Targets for U_hat = Q1/n, in a window with n >= 100. omega_k is the per-session probability
+Targets for U_hat = Q1/n, in a window with n >= 100. omega_k is the per-instance probability
 that pattern k is OBSERVED (pi_k times R_RECORD, 1 or 0 by guard state), in force in the window:
-  U_n (in-window)          sum of omega_k over patterns absent from the window's sessions:
+  U_n (in-window)          sum of omega_k over patterns absent from the window's instances:
                            the expected number of patterns absent from the window that appear
-                           in the next session. This is what item 4 defines U_hat to estimate.
+                           in the next instance. This is what item 4 defines U_hat to estimate.
   never observed at all    sum of omega_k over patterns never observed by the window end. A
                            secondary comparison: patterns seen only in earlier windows count
                            as absent in U_n, so U_hat errs high against this one.
@@ -49,7 +56,7 @@ from datetime import datetime, timedelta, timezone
 from . import core
 
 N_PATTERNS = 30
-N_SESSIONS = 2000
+N_INSTANCES = 2000
 ZIPF_S = 1.5
 P_MAX = 0.30
 LAG_HOURS = (12, 240)
@@ -68,7 +75,7 @@ UNGUARDED, LOGGING, SILENT = 0, 1, 2
 
 
 def _geom(rng, start, p):
-    """First session >= start with an attempt, attempts i.i.d. Bernoulli(p) per session."""
+    """First instance >= start with an attempt, attempts i.i.d. Bernoulli(p) per instance."""
     u = rng.random()
     return start + int(math.log(1.0 - u) / math.log(1.0 - p))
 
@@ -79,17 +86,17 @@ def simulate(rng, r_record=R_RECORD, p_logs=P_LOGS):
     logs = [rng.random() < p_logs for _ in range(N_PATTERNS)]
     state = [UNGUARDED] * N_PATTERNS
     ver = [0] * N_PATTERNS
-    incidents = [[] for _ in range(N_PATTERNS)]     # (session, occurrence_known, delay_s)
-    refusals = [[] for _ in range(N_PATTERNS)]      # session
-    first = [None] * N_PATTERNS                     # first RECORDED occurrence (session)
+    incidents = [[] for _ in range(N_PATTERNS)]     # (instance, occurrence_known, delay_s)
+    refusals = [[] for _ in range(N_PATTERNS)]      # instance
+    first = [None] * N_PATTERNS                     # first RECORDED occurrence (instance)
     guard_at = [None] * N_PATTERNS
     snapshots = {0: (list(pi), list(state))}        # window start -> (pi, state) in force
     att = [(_geom(rng, 0, pi[k]), k, 0) for k in range(N_PATTERNS)]
     heapq.heapify(att)
     guards = []
     while True:
-        t = att[0][0] if att else N_SESSIONS
-        if guards and guards[0][0] <= t and guards[0][0] < N_SESSIONS:
+        t = att[0][0] if att else N_INSTANCES
+        if guards and guards[0][0] <= t and guards[0][0] < N_INSTANCES:
             gs, k = heapq.heappop(guards)
             guard_at[k] = gs
             state[k] = LOGGING if logs[k] else SILENT
@@ -100,7 +107,7 @@ def simulate(rng, r_record=R_RECORD, p_logs=P_LOGS):
                     heapq.heappush(att, (_geom(rng, gs, pi[j]), j, ver[j]))
             snapshots[gs] = (list(pi), list(state))
             continue
-        if t >= N_SESSIONS:
+        if t >= N_INSTANCES:
             break
         t, k, v = heapq.heappop(att)
         if v != ver[k]:
@@ -125,7 +132,7 @@ def simulate(rng, r_record=R_RECORD, p_logs=P_LOGS):
 
 def _windows(sim):
     starts = sorted(sim["snapshots"])
-    return [(b, (starts[i + 1] if i + 1 < len(starts) else N_SESSIONS))
+    return [(b, (starts[i + 1] if i + 1 < len(starts) else N_INSTANCES))
             for i, b in enumerate(starts)]
 
 
@@ -134,13 +141,13 @@ def _omega(sim, pi, state):
     return [pi[k] * f[state[k]] for k in range(N_PATTERNS)]
 
 
-def _obs_sessions(sim, k):
+def _obs_instances(sim, k):
     return [t for t, _, _ in sim["incidents"][k]] + sim["refusals"][k]
 
 
 def score_windows(sim):
     out = []
-    obs = [_obs_sessions(sim, k) for k in range(N_PATTERNS)]
+    obs = [_obs_instances(sim, k) for k in range(N_PATTERNS)]
     for b, e in _windows(sim):
         omega = _omega(sim, *sim["snapshots"][b])
         counts = {}
@@ -188,21 +195,27 @@ def _pid(k):
 
 
 def materialise(sim):
-    """Replicate as audit rows, register and manifest, in the real input formats."""
+    """Replicate as audit rows, register, manifest and instance map, in the real input
+    formats. Each simulated instance logs its calls under its own session too, so instances
+    and sessions coincide here; the measurement counts the instances."""
     vers = {"gitrobot_commit": "synthetic", "gitrobot_dirty": False,
             "client_name": "synthetic", "client_version": "1", "consumer_hook_commit": None}
-    by_session = {}
+    by_instance = {}
     for k in range(N_PATTERNS):
         for t in sim["refusals"][k]:
-            by_session.setdefault(t, []).append(k)
-    rows = []
-    for t in range(N_SESSIONS):
+            by_instance.setdefault(t, []).append(k)
+    rows, imap = [], {}
+    for t in range(N_INSTANCES):
         ts = (T0 + t * HOUR).isoformat()
         base = {"ts": ts, "surface": "mcp", "session": "s%05d" % t, "versions": vers}
-        rows.append(dict(base, op="status", decision="allowed", refusal_class=None, args={}))
-        for k in by_session.get(t, ()):
-            rows.append(dict(base, op="read", decision="refused", refusal_class="policy",
-                             args={"op": "synth-p%02d" % (k + 1)}))
+        calls = [dict(base, op="status", decision="allowed", refusal_class=None, args={})]
+        for k in by_instance.get(t, ()):
+            calls.append(dict(base, op="read", decision="refused", refusal_class="policy",
+                              args={"op": "synth-p%02d" % (k + 1)}))
+        for j, c in enumerate(calls):
+            c["client_call_id"] = "c%05d-%d" % (t, j)
+            imap[c["client_call_id"]] = "i%05d" % t
+            rows.append(c)
     entries, guards = [], [{"id": "gitrobot", "repo": "synthetic",
                             "entry_point": "gitrobot-mcp/cli", "logs_refusals": True,
                             "version": "synthetic-base", "version_at": T0.isoformat(),
@@ -225,19 +238,21 @@ def materialise(sim):
                 "status": "guarded" if g is not None else "open",
                 "observed_at": occ.isoformat() if known else None,
                 "detected_at": (occ + timedelta(seconds=delay)).isoformat(),
-                "session": "s%05d" % t, "tool": "synthetic:gitrobot",
+                "session": "s%05d" % t, "instance": "i%05d" % t,
+                "tool": "synthetic:gitrobot",
                 "guard_commit": None if g is None else "c%02d" % (k + 1),
                 "regression_test": None if g is None else "synthetic",
                 "guarded_at": gts})
     register = {"collections": {"incidents": {"schema_version": "1", "pattern_rule": "1",
                                               "entries": entries}}}
-    manifest = {"manifest_version": "1", "guards": guards, "agent_clients": ["synthetic"]}
-    return rows, register, manifest
+    manifest = {"manifest_version": "1", "guards": guards, "agent_clients": ["synthetic"],
+                "instance_source": {"client": "synthetic"}}
+    return rows, register, manifest, imap
 
 
 def end_to_end(sim):
-    rows, register, manifest = materialise(sim)
-    rep = core.measure(rows, register, manifest, "1")
+    rows, register, manifest, imap = materialise(sim)
+    rep = core.measure(rows, register, manifest, "1", instance_map=imap)
     fast_w = [(w["n"], w["Q1"], w["Q2"], w["U_hat"]) for w in score_windows(sim)]
     slow_w = [(w["n"], w["Q1"], w["Q2"], w["U_hat"]) for w in rep["item4"]["windows"]]
     vals, _, _ = score_ttg(sim)
@@ -295,7 +310,7 @@ def _summarise(per_rep, rng):
 
 
 def run(seed: int, replicates: int, r_record: float = R_RECORD, p_logs: float = P_LOGS) -> dict:
-    win_all = win_rep = sess_withheld = 0
+    win_all = win_rep = inst_withheld = 0
     lengths, uhat = [], []
     per = {"U_n_in_window": [], "never_observed": []}
     n_exact, shortfall, med_diff, injected_all = 0, [], [], []
@@ -308,7 +323,7 @@ def run(seed: int, replicates: int, r_record: float = R_RECORD, p_logs: float = 
             win_all += 1
             lengths.append(w["n"])
             if w["U_hat"] is None:
-                sess_withheld += w["n"]
+                inst_withheld += w["n"]
                 continue
             win_rep += 1
             uhat.append(w["U_hat"])
@@ -341,15 +356,16 @@ def run(seed: int, replicates: int, r_record: float = R_RECORD, p_logs: float = 
     targets = {k: _summarise(v, boot) for k, v in per.items()}
     return {
         "synthetic": True, "seed": seed, "replicates": replicates,
-        "params": {"patterns": N_PATTERNS, "sessions": N_SESSIONS, "zipf_s": ZIPF_S,
+        "unit": "agent instance", "retries_modelled": False,
+        "params": {"patterns": N_PATTERNS, "instances": N_INSTANCES, "zipf_s": ZIPF_S,
                    "p_max": P_MAX, "lag_hours": list(LAG_HOURS), "r_record": r_record,
                    "p_logs": p_logs, "p_unknown": P_UNKNOWN,
                    "guard_self": GUARD_SELF, "guard_neighbour": GUARD_NEIGHBOUR,
                    "bootstrap": BOOTSTRAP},
         "windows": {"total": win_all, "withheld": win_all - win_rep,
                     "withhold_rate": (win_all - win_rep) / win_all,
-                    "sessions_in_withheld_windows": sess_withheld / (replicates * N_SESSIONS),
-                    "median_window_sessions": statistics.median(lengths),
+                    "instances_in_withheld_windows": inst_withheld / (replicates * N_INSTANCES),
+                    "median_window_instances": statistics.median(lengths),
                     "reported": win_rep, "mean_U_hat": _mean(uhat)},
         "targets": targets,
         "time_to_guard": {"exact": n_exact,
@@ -372,9 +388,11 @@ def render(res: dict) -> str:
     e = res["end_to_end_replicate_0"]
     L = [
         "SYNTHETIC REPLAY: simulated data, not observations",
-        "seed %d, %d replicates; %d patterns, %d sessions, Zipf s=%.1f, p_max=%.2f"
-        % (res["seed"], res["replicates"], p["patterns"], p["sessions"], p["zipf_s"],
+        "seed %d, %d replicates; %d patterns, %d agent instances, Zipf s=%.1f, p_max=%.2f"
+        % (res["seed"], res["replicates"], p["patterns"], p["instances"], p["zipf_s"],
            p["p_max"]),
+        "unit: agent instance; retries are not modelled (an instance attempts a pattern at "
+        "most once)",
         "recording: before a guard, an attempt is a recorded incident with r=%.2f "
         "(occurrence time unknown for %.0f%%);" % (p["r_record"], 100 * p["p_unknown"]),
         "  after a logging guard (%.0f%% of guards) it is a policy refusal; "
@@ -384,11 +402,11 @@ def render(res: dict) -> str:
         % (p["lag_hours"][0], p["lag_hours"][1], p["guard_self"], p["guard_neighbour"]),
         "",
         "SYNTHETIC item 4, unseen-pattern estimate U_hat = Q1/n:",
-        "  windows %d; withheld at n < 100: %d = %.1f%% of windows, %.1f%% of sessions"
+        "  windows %d; withheld at n < 100: %d = %.1f%% of windows, %.1f%% of instances"
         % (w["total"], w["withheld"], 100 * w["withhold_rate"],
-           100 * w["sessions_in_withheld_windows"]),
-        "  why withheld: a window ends at every guard change (median %d sessions); on Zipf data"
-        % w["median_window_sessions"],
+           100 * w["instances_in_withheld_windows"]),
+        "  why withheld: a window ends at every guard change (median %d instances); on Zipf data"
+        % w["median_window_instances"],
         "  the frequent patterns are seen and guarded early, so only later, quieter stretches"
         " reach n >= 100",
         "  reported %d windows (n >= 100 only), mean U_hat %s; 95%% CIs: cluster bootstrap over"

@@ -79,6 +79,57 @@ def load_audit(path) -> list:
     return rows
 
 
+def load_calls(paths) -> list:
+    """Call rows (gitRobot's tool_calls.jsonl, or rows backfilled into that shape) from one or
+    more JSONL files. An empty set is refused: the unit is counted from these rows."""
+    rows = []
+    for path in paths:
+        for i, line in enumerate(_read(path).decode("utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise InputError("call log %s line %d is not JSON: %s"
+                                 % (Path(path).name, i, e.msg)) from None
+            validate_call(row, "call log %s line %d" % (Path(path).name, i))
+            rows.append(row)
+    if not rows:
+        raise InputError("call logs have no rows")
+    return rows
+
+
+def validate_call(row, where):
+    if not isinstance(row, dict):
+        raise InputError("%s: not an object" % where)
+    for k in ("ts", "surface", "session", "client_call_id"):
+        if k not in row:
+            raise InputError("%s: missing %r" % (where, k))
+    if "versions" in row and not isinstance(row["versions"], dict):
+        raise InputError("%s: versions must be an object" % where)
+    return parse_ts(row["ts"], where)
+
+
+def load_instance_map(path):
+    """{"map": {client_call_id: instance}, "ambiguous": [client_call_id, ...]}: which agent
+    instance made each call, and the ids found in several transcripts (optional list).
+    Returns (map, frozenset of ambiguous ids)."""
+    return validate_instance_map(load_json(path, "instance map"))
+
+
+def validate_instance_map(doc):
+    m = doc.get("map") if isinstance(doc, dict) else None
+    if not isinstance(m, dict) or not all(isinstance(k, str) and k and isinstance(v, str) and v
+                                          for k, v in m.items()):
+        raise InputError("instance map needs a 'map' object of call id -> instance id strings")
+    amb = doc.get("ambiguous", [])
+    if not isinstance(amb, list) or not all(isinstance(x, str) and x for x in amb):
+        raise InputError("instance map 'ambiguous' must be a list of call id strings")
+    if set(amb) & set(m):
+        raise InputError("instance map lists an id as both mapped and ambiguous")
+    return m, frozenset(amb)
+
+
 def validate_row(row, where):
     if not isinstance(row, dict):
         raise InputError("%s: not an object" % where)
@@ -141,11 +192,20 @@ def validate_register(doc) -> dict:
             "observed_at": parse_opt_ts(e["observed_at"], where),
             "detected_at": parse_ts(e["detected_at"], where),
             "session": e["session"],
+            # OPTIONAL: the agent instance the incident happened in. Without it the incident
+            # counts toward items 1 and 2 but stays out of item 4.
+            "instance": _opt_str(e.get("instance"), where, "instance"),
             "entry_point": entry_point_of(e["tool"]),
             "guard_commit": e["guard_commit"], "has_regression_test": has_test,
             "guarded_at": parse_opt_ts(e["guarded_at"], where),
         })
     return {"pattern_rule": rule, "entries": out}
+
+
+def _opt_str(value, where, name):
+    if value is not None and (not isinstance(value, str) or not value):
+        raise InputError("%s: %s must be a non-empty string or null" % (where, name))
+    return value
 
 
 def validate_manifest(doc) -> dict:
@@ -215,7 +275,18 @@ def validate_manifest(doc) -> dict:
     if agents is not None and (not isinstance(agents, list)
                                or not all(isinstance(a, str) and a for a in agents)):
         raise InputError("manifest agent_clients must be a list of client names")
-    return {"guards": out, "agent_clients": None if agents is None else set(agents)}
+    # The unit is an AGENT INSTANCE (one agent context, such as a subagent), and how a call is
+    # tied to one is declared, never assumed: which client's call ids the instance map covers.
+    # Absent means no call can be placed in an instance, and then nothing counts toward n.
+    src = doc.get("instance_source")
+    if src is not None:
+        if not isinstance(src, dict) or not isinstance(src.get("client"), str) or not src["client"]:
+            raise InputError("manifest instance_source needs a 'client' name")
+        if agents is None or src["client"] not in agents:
+            raise InputError("manifest instance_source client %r is not a declared agent client"
+                             % src["client"])
+    return {"guards": out, "agent_clients": None if agents is None else set(agents),
+            "instance_client": None if src is None else src["client"]}
 
 
 def load_windows(path) -> list:

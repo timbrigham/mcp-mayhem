@@ -1,4 +1,6 @@
 {
+  "call_id_hash": "first 16 hex digits of sha256(salt + ':call:' + id)",
+  "instance_hash": "first 16 hex digits of sha256(salt + ':instance:' + id)",
   "kept_audit_fields": [
     "ts",
     "op",
@@ -6,9 +8,19 @@
     "refusal_class",
     "surface",
     "session (hashed)",
+    "client_call_id (hashed)",
     "versions",
     "args (refused read: op; refused push: refspec shape)"
   ],
+  "kept_call_fields": [
+    "ts",
+    "surface",
+    "session (hashed)",
+    "client_call_id (hashed)",
+    "versions",
+    "source (on backfilled rows)"
+  ],
+  "kept_instance_map": "client_call_id (hashed) -> instance (hashed); ambiguous: call ids found in several transcripts (hashed)",
   "kept_register_fields": [
     "id",
     "pattern_id",
@@ -21,13 +33,17 @@
     "tool (entry point)",
     "session_known",
     "session (hashed)",
+    "instance (hashed, when present)",
     "guard_history[].entry_point"
   ],
   "rule": "1",
   "salt": "59b0c10188647a6969de9d84c24a2c20",
-  "salt_note": "The salt is published so the hashing is reproducible. It is safe here because the only hashed values are session ids, which are random MCP connection ids and cannot be guessed. Test names are not hashed: the register extract keeps only has_regression_test.",
+  "salt_note": "The salt is published so the hashing is reproducible. Audit and call row sessions are random MCP connection ids. A register entry's session is whatever the register recorded: for an incident in an agent shell it is the agent's conversation id, not an MCP id. Call ids are random Claude Code tool_use ids. Instance ids are transcript file names built from random conversation and agent ids. None can be guessed, and the three kinds are hashed in separate namespaces, so equal hashes never join different kinds of id. Test names are not hashed: the register extract keeps only has_regression_test.",
   "session_hash": "first 16 hex digits of sha256(salt + ':' + id)",
-  "source_audit_rows": 6126,
+  "source_audit_rows": 9164,
+  "source_call_rows": 3812,
+  "source_instance_map_entries": 1839,
   "source_register_entries": 5,
+  "unit": "agent instance",
   "what": "Redacted public extract of a private gitRobot audit log and incident register, for Incident-Driven Guard Coverage. Real data, reduced."
 }

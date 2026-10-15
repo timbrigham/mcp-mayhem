@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-10-13T18:00:12.751574+00:00",
+  "as_of": "2026-10-15T18:02:28.922379+00:00",
   "caveats": [
     "guard zp-block-git-gh (agent-shell) does not log refusals: it contributes no refusal observations",
     "guard zp-dc71-dotnet-relative-write (agent-shell) does not log refusals: it contributes no refusal observations"
@@ -8,27 +8,54 @@
     "agent_clients": [
       "claude-code"
     ],
-    "agent_sessions": 1,
+    "agent_instances": 404,
+    "agent_rows_without_instance": [
+      {
+        "count": 480,
+        "reason": "audit rows lacking client_call_id (before it existed): no instance"
+      },
+      {
+        "count": 1,
+        "reason": "call rows whose call id is in no transcript: no instance"
+      },
+      {
+        "count": 3,
+        "reason": "call rows whose call id is in several transcripts (a forked subagent's copy of its parent's history): no instance"
+      }
+    ],
+    "agent_sessions": 4,
+    "ambiguous_call_ids": 3,
     "audit_guard": "gitrobot",
-    "audit_rows": 6126,
+    "audit_rows": 9164,
+    "call_rows": 3812,
     "incident_observations": 5,
+    "instance_client": "claude-code",
+    "instance_map_entries": 1839,
     "manifest_guards": 3,
-    "policy_refusal_observations": 0,
+    "policy_refusal_observations": 1,
     "register_entries": 5,
     "sessions_not_counted": [
       {
-        "count": 14,
+        "count": 9,
+        "reason": "client not recorded"
+      },
+      {
+        "count": 29,
         "reason": "client unknown (no versions field)"
       },
       {
-        "count": 2,
+        "count": 75,
         "reason": "client zp-hooks-attest not declared as an agent"
+      },
+      {
+        "count": 2446,
+        "reason": "client zp-record not declared as an agent"
       }
     ]
   },
   "item1": {
-    "G": 3,
-    "K": 3,
+    "G": 4,
+    "K": 4,
     "patterns": [
       {
         "entry_points": [
@@ -47,6 +74,15 @@
         "in_G": true,
         "occurrence_known": false,
         "pattern_id": "gitrobot.push.refspec-force"
+      },
+      {
+        "entry_points": [
+          "gitrobot-mcp/cli"
+        ],
+        "first_evidence": "2026-10-14T22:31:23.768266+00:00",
+        "in_G": true,
+        "occurrence_known": true,
+        "pattern_id": "gitrobot.worktree-target.any"
       },
       {
         "entry_points": [
@@ -87,6 +123,16 @@
         "seconds": 0.0
       },
       {
+        "days": -41.23,
+        "detected_at_fix_time": false,
+        "guarded_at": "2026-09-03T16:54:35+00:00",
+        "guarded_before_first_observation": true,
+        "lower_bound": false,
+        "measured_from": "occurrence",
+        "pattern_id": "gitrobot.worktree-target.any",
+        "seconds": -3562608.768266
+      },
+      {
         "days": 8.67,
         "detected_at_fix_time": false,
         "guarded_at": "2026-10-13T12:33:42+00:00",
@@ -97,60 +143,337 @@
         "seconds": 749242.0
       }
     ],
-    "withheld": "every value (3) is a lower bound: no occurrence time is known, so a median would describe detection, not occurrence"
+    "withheld": "none of the 4 value(s) is exact: each is a lower bound or guarded before first observation"
   },
   "item3": {
     "batch_size": 10,
     "batches": [
       {
         "batch": 1,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T17:19:30+00:00"
+      },
+      {
+        "batch": 2,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T21:53:41+00:00"
+      },
+      {
+        "batch": 3,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T22:10:44+00:00"
+      },
+      {
+        "batch": 4,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T22:17:23+00:00"
+      },
+      {
+        "batch": 5,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T22:19:21+00:00"
+      },
+      {
+        "batch": 6,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T22:34:57+00:00"
+      },
+      {
+        "batch": 7,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-09T22:38:21+00:00"
+      },
+      {
+        "batch": 8,
+        "instances": 10,
+        "new_patterns": 1,
+        "partial": false,
+        "start": "2026-10-09T22:44:47+00:00"
+      },
+      {
+        "batch": 9,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T12:06:24+00:00"
+      },
+      {
+        "batch": 10,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T12:27:31+00:00"
+      },
+      {
+        "batch": 11,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T12:45:10+00:00"
+      },
+      {
+        "batch": 12,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T22:41:41+00:00"
+      },
+      {
+        "batch": 13,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T23:14:16+00:00"
+      },
+      {
+        "batch": 14,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-13T23:41:04+00:00"
+      },
+      {
+        "batch": 15,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:04:07+00:00"
+      },
+      {
+        "batch": 16,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:08:22+00:00"
+      },
+      {
+        "batch": 17,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:14:34+00:00"
+      },
+      {
+        "batch": 18,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:16:01+00:00"
+      },
+      {
+        "batch": 19,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:21:47+00:00"
+      },
+      {
+        "batch": 20,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:24:37+00:00"
+      },
+      {
+        "batch": 21,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:34:23+00:00"
+      },
+      {
+        "batch": 22,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:36:20+00:00"
+      },
+      {
+        "batch": 23,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:38:23+00:00"
+      },
+      {
+        "batch": 24,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:41:39+00:00"
+      },
+      {
+        "batch": 25,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T00:58:47+00:00"
+      },
+      {
+        "batch": 26,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T01:26:54+00:00"
+      },
+      {
+        "batch": 27,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T01:43:06+00:00"
+      },
+      {
+        "batch": 28,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T02:07:34+00:00"
+      },
+      {
+        "batch": 29,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T02:18:41+00:00"
+      },
+      {
+        "batch": 30,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T02:50:48+00:00"
+      },
+      {
+        "batch": 31,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T11:30:03+00:00"
+      },
+      {
+        "batch": 32,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T12:08:50+00:00"
+      },
+      {
+        "batch": 33,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T14:25:54+00:00"
+      },
+      {
+        "batch": 34,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T17:34:50+00:00"
+      },
+      {
+        "batch": 35,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T18:01:48+00:00"
+      },
+      {
+        "batch": 36,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T18:13:13+00:00"
+      },
+      {
+        "batch": 37,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T19:23:47+00:00"
+      },
+      {
+        "batch": 38,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-14T19:25:28+00:00"
+      },
+      {
+        "batch": 39,
+        "instances": 10,
+        "new_patterns": 1,
+        "partial": false,
+        "start": "2026-10-14T21:03:58+00:00"
+      },
+      {
+        "batch": 40,
+        "instances": 10,
+        "new_patterns": 0,
+        "partial": false,
+        "start": "2026-10-15T11:22:37+00:00"
+      },
+      {
+        "batch": 41,
+        "instances": 4,
         "new_patterns": 0,
         "partial": true,
-        "sessions": 1,
-        "start": "2026-10-13T15:02:32.376569+00:00"
+        "start": "2026-10-15T13:16:30+00:00"
       }
     ],
-    "before_first_session": 3,
-    "note": "a pattern is placed by its first evidence time (occurrence if known, else detection) into the batch whose session interval contains it",
-    "sessions": 1
+    "before_first_instance": 2,
+    "instances": 404,
+    "note": "a pattern is placed by its first evidence time (occurrence if known, else detection) into the batch whose instance interval contains it; an instance starts at its first logged call"
   },
   "item4": {
     "current": {
-      "Q1": 0,
+      "Q1": 1,
       "Q2": 0,
-      "U_hat": null,
-      "end": "2026-10-13T18:00:12.751574+00:00",
-      "n": 1,
-      "start": "2026-10-13T15:02:32.376569+00:00",
+      "U_hat": 0.0033222591362126247,
+      "end": "2026-10-15T14:19:44+00:00",
+      "n": 301,
+      "start": "2026-10-13T15:02:31+00:00",
       "window": "W1",
-      "withheld": "n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
+      "withheld": null
     },
-    "min_sessions": 100,
+    "instances_in_no_window": 103,
+    "min_instances": 100,
     "observations_excluded": [
       {
-        "count": 1,
-        "reason": "incident observation(s) whose session is in no window"
-      },
-      {
-        "count": 4,
-        "reason": "incident observation(s) with no known session"
+        "count": 5,
+        "reason": "incident observation(s) with no known agent instance"
       }
     ],
     "rows_not_placed_in_a_window": {
-      "no versions field: before it existed": 6099
+      "no versions field (before it existed)": 6099,
+      "no versions field (before it existed, or backfilled outside a known server process)": 548
     },
-    "sessions_in_no_window": 0,
     "window_source": "derived from versions fields and manifest guard versions",
     "windows": [
       {
-        "Q1": 0,
+        "Q1": 1,
         "Q2": 0,
-        "U_hat": null,
-        "end": "2026-10-13T18:00:12.751574+00:00",
-        "n": 1,
-        "start": "2026-10-13T15:02:32.376569+00:00",
+        "U_hat": 0.0033222591362126247,
+        "end": "2026-10-15T14:19:44+00:00",
+        "n": 301,
+        "start": "2026-10-13T15:02:31+00:00",
         "window": "W1",
-        "withheld": "n = 1 sessions in this window; U_hat needs n >= 100 (sessions with no observation count toward n)"
+        "withheld": null
       }
     ]
   },
@@ -158,12 +481,28 @@
   "rule": "1",
   "skipped": [
     {
-      "count": 2,
-      "reason": "mcp rows from a client not declared as an agent: not agent sessions"
+      "count": 2521,
+      "reason": "audit rows from a client not declared as an agent"
     },
     {
       "count": 54,
-      "reason": "mcp rows without a versions field (before it existed): client unknown, not counted as agent sessions"
+      "reason": "audit rows from mcp without a versions field (before it existed): client unknown, not agent rows"
+    },
+    {
+      "count": 5935,
+      "reason": "audit rows lacking the surface/session fields (before they existed): cannot be agent rows"
+    },
+    {
+      "count": 1927,
+      "reason": "call rows from a client not declared as an agent"
+    },
+    {
+      "count": 33,
+      "reason": "call rows from mcp without a versions field (before it existed, or backfilled outside a known server process): client unknown, not agent rows"
+    },
+    {
+      "count": 9,
+      "reason": "call rows with no recorded client: not agent rows"
     },
     {
       "count": 177,
@@ -171,11 +510,16 @@
     },
     {
       "count": 3,
-      "reason": "refused rows with refusal_class operational: not policy refusals"
+      "reason": "refused rows with refusal_class allowlist: not policy refusals"
     },
     {
-      "count": 5935,
-      "reason": "rows lacking the surface/session fields (before they existed): cannot be sessions"
+      "count": 2,
+      "reason": "refused rows with refusal_class gate: not policy refusals"
+    },
+    {
+      "count": 4,
+      "reason": "refused rows with refusal_class operational: not policy refusals"
     }
-  ]
+  ],
+  "unit": "agent instance"
 }
