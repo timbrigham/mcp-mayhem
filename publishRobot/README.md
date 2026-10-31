@@ -16,8 +16,8 @@ scaling. This server is the sanctioned route.
     queue(action, repo, ..., body | body_file, reason)   any agent. Stores payload + sha256.
                                                          POSTS NOTHING.
     pending()                                            every queued entry, full payload.
-    approve(id, action, repo, ...every field...)         posts, if every field equals the
-                                                         queued copy. Once.
+    approve(id, action, repo, ...every field...)         publishApprove only. Posts, if every
+                                                         field equals the queued copy. Once.
     withdraw(id, reason)                                 a queued entry can never be approved.
     history(limit)                                       one audit row per attempt.
 
@@ -30,14 +30,28 @@ Actions: `issue_create`, `issue_comment`, `issue_close`, `issue_label`, `discuss
 `discussion_comment`. That is the complete list; there are no repo-level writes (commits,
 branches, PRs, merges, releases) and a test fails if a verb is added.
 
+## Two servers, one queue
+
+    publishRobot     :8012   queue, pending, withdraw, history   registered DEVICE-WIDE
+    publishApprove   :8013   approve                             registered for ONE instance
+
+Approval lives on its own server so that drafting sessions simply do not have it. The first
+version served `approve` from the shared server and relied on a `deny` rule in every drafting
+session; a fence that each other session must remember to put up is one that gets forgotten.
+
+Both read the same `PUBLISHROBOT_*` environment, so they share one queue directory, and every
+queue read-decide-write runs under an OS file lock (`queue.lock`) so a withdraw cannot race an
+approve across the two processes.
+
 ## What makes approval hold — and it is not in this repository
 
-`approve` is only as strong as the client permission rules around it:
-
-- **an `ask` rule** for `mcp__publishRobot__approve` in the session where the human approves.
+- **registration scope:** `claude mcp add --transport http --scope local publishApprove
+  http://127.0.0.1:8013/mcp`, run from the approving instance's project only.
+- **an `ask` rule** for `mcp__publishApprove__approve` there, so every call prompts the human.
   Measured 2026-10-31: an ask rule still prompts while that session is in auto mode.
-- **a `deny` rule** for it in every session that drafts posts. Without that, a drafting agent
-  can approve its own queue.
+
+HTTP rather than stdio, deliberately: stdio has been unreliable here. The port is reachable by
+local processes, which this fleet's threat model does not defend against.
 
 ## Fails closed
 
@@ -56,7 +70,8 @@ close did not).
     PUBLISHROBOT_TRACKER   the outreach tracker; one line is appended per post. Required.
     PUBLISHROBOT_DATA      queue.jsonl + audit.jsonl (default ./data, gitignored)
     PUBLISHROBOT_CONFIG    the allow-list (default ./config/publish.v1.json)
-    PUBLISHROBOT_PORT      default 8012
+    PUBLISHROBOT_PORT      default 8012 (publishRobot)
+    PUBLISHAPPROVE_PORT    default 8013 (publishApprove)
 
 Posts go through `gh api` as the account `gh` is logged in as, with the request body sent
 from a file so the stored bytes are the bytes sent.

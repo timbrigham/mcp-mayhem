@@ -130,6 +130,36 @@
         "processName": "python*.exe",
         "cmdlineMatch": "publishrobot_server.server"
       }
+    },
+    {
+      "_comment": "publishApprove: the ONE tool that sends a queued publishRobot post. Same PUBLISHROBOT_* env as publishRobot so both read one queue. Register it in Claude with --scope local from the approving project only, plus an `ask` rule on its approve tool; drafting sessions must not have it registered at all.",
+      "name": "publishApprove",
+      "host": "127.0.0.1",
+      "port": 8013,
+      "healthPath": "/mcp",
+      "kind": "process",
+      "start": {
+        "exe": "python",
+        "args": [
+          "-m",
+          "publishapprove_server.server"
+        ],
+        "workingDir": "${McpRoot}\\..\\publishRobot",
+        "env": {
+          "PYTHONPATH": "${McpRoot}\\..\\publishRobot",
+          "PUBLISHROBOT_DATA": "${McpRoot}\\..\\publishRobot\\data",
+          "PUBLISHROBOT_TRACKER": "${McpRoot}\\..\\publishRobot\\data\\tracker.md",
+          "PUBLISHROBOT_ACTOR": "mcp",
+          "PUBLISHAPPROVE_HOST": "127.0.0.1",
+          "PUBLISHAPPROVE_PORT": "8013"
+        }
+      },
+      "requiredEnv": [],
+      "identity": {
+        "_comment": "cmdlineMatch MUST be unique across servers; 'publishrobot_server.server' is NOT a substring of this one, or a publishRobot repair would kill it.",
+        "processName": "python*.exe",
+        "cmdlineMatch": "publishapprove_server.server"
+      }
     }
   ]
 }

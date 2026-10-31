@@ -12,9 +12,13 @@ THE WHOLE CONTROL IS TWO TOOLS AND ONE PERMISSION RULE:
     approve   restates the ENTIRE payload as arguments, so the permission prompt Tim sees shows
               exactly what will be posted. The server compares every field with the queued
               copy and refuses on any difference, then posts the stored bytes.
-              ⛔ Its protection is NOT in this file. It is an `ask` rule in the approving
-              session and a `deny` in every drafting session. Measured 2026-10-31: an ask rule
-              still pops a prompt for Tim while the session is in auto mode.
+              ⛔ Its protection is NOT in this file. `approve` is served by a SEPARATE server,
+              publishApprove, registered `--scope local` for the approving instance only, so a
+              drafting session has no such tool at all; and an `ask` rule there makes every call
+              prompt Tim. Measured 2026-10-31: an ask rule still prompts in auto mode.
+              ⚠ First built on the shared server with "deny it in the drafting sessions". Tim,
+              2026-10-31, asked why it was registered device-wide at all: a fence that needs a
+              deny rule in every other session is one someone forgets to put up.
 
 ⚠ WHY approve TAKES THE PAYLOAD AND NOT JUST THE ID. A prompt that reads `approve(id='q-3f…')`
 asks Tim to approve an opaque handle. Taking every field makes the prompt the review surface, and
@@ -32,18 +36,25 @@ Adversarial review stays a process rule (his global CLAUDE.md), not a server gat
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from publish_core.errors import ConfigError, RefusalError, UsageError
+from publish_core.errors import ConfigError, RefusalError, UnavailableError, UsageError
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 # action -> (fields it REQUIRES, fields it may carry). Every other payload field must be None.
 # The complete verb list: a verb absent from this table cannot be queued, approved or posted.
@@ -62,7 +73,10 @@ STATE_REASONS = ("completed", "not_planned")
 MAX_BODY = 65536
 TRACKER_HEADING = "## Posted via publishRobot"
 
-_LOCK = threading.Lock()
+# ⛔ TWO PROCESSES SHARE THE QUEUE: publishRobot writes `queued`/`withdrawn`, publishApprove
+# writes `posting`/`posted`/`failed`. A thread lock covers neither the other process nor a
+# withdraw racing an approve, so every read-decide-write runs under an OS file lock as well.
+_THREAD_LOCK = threading.Lock()
 
 
 def _now() -> str:
@@ -123,6 +137,43 @@ class Publisher:
         return self.tracker
 
     # -- storage ------------------------------------------------------------------------------
+
+    # Long enough to wait out an approve that is mid-post (several `gh` calls of up to 60s).
+    lock_timeout: float = 180.0
+
+    @contextlib.contextmanager
+    def _locked(self):
+        self.data.mkdir(parents=True, exist_ok=True)
+        with _THREAD_LOCK:
+            fh = open(self.data / "queue.lock", "a+b")
+            try:
+                deadline = time.monotonic() + self.lock_timeout
+                while True:
+                    try:
+                        fh.seek(0)
+                        if os.name == "nt":
+                            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                        else:
+                            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() > deadline:
+                            raise UnavailableError(
+                                f"the queue has been locked by another process for over "
+                                f"{self.lock_timeout:.0f}s",
+                                "retry: the other server is most likely mid-post. If it "
+                                "persists, check which process holds queue.lock")
+                        time.sleep(0.05)
+                try:
+                    yield
+                finally:
+                    fh.seek(0)
+                    if os.name == "nt":
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            finally:
+                fh.close()
 
     def _append(self, path: Path, row: dict) -> None:
         self.data.mkdir(parents=True, exist_ok=True)
@@ -232,7 +283,7 @@ class Publisher:
                              "pass reason: why this post is being made")
         payload = self._build_payload(action, repo, number, title, body, body_file, labels,
                                       remove_labels, category, reply_to, state_reason)
-        with _LOCK:
+        with self._locked():
             self._check_repo("queue", repo, action=action)
             sha = digest(payload)
             qid = "q-" + sha[:16]
@@ -263,7 +314,7 @@ class Publisher:
         shown = {"action": action, "repo": repo, "number": number, "title": title, "body": body,
                  "labels": labels, "remove_labels": remove_labels, "category": category,
                  "reply_to": reply_to, "state_reason": state_reason}
-        with _LOCK:
+        with self._locked():
             entry = self._entries().get(id)
             if entry is None:
                 self._audit("approve", "refused", refusal_class="operational", id=id,
@@ -319,7 +370,7 @@ class Publisher:
     def withdraw(self, id: str, reason: str) -> dict:
         if not (isinstance(reason, str) and reason.strip()):
             raise UsageError("withdraw requires a reason", "pass reason: why it is withdrawn")
-        with _LOCK:
+        with self._locked():
             entry = self._entries().get(id)
             if entry is None or entry["state"] != "queued":
                 state = entry["state"] if entry else "unknown"

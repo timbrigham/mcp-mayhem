@@ -12,13 +12,14 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 publishrobot-mcp = "publishrobot_server.server:main"
+publishapprove-mcp = "publishapprove_server.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["publish_core", "publishrobot_server"]
+packages = ["publish_core", "publishrobot_server", "publishapprove_server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

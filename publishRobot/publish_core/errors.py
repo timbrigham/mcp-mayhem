@@ -49,6 +49,12 @@ class ConfigError(PublishError):
     error_type = _kind("config")
 
 
+class UnavailableError(PublishError):
+    """The queue is locked by the other process. Transient: retrying is correct."""
+
+    error_type = _kind("unavailable")
+
+
 class RefusalError(PublishError):
     """A rule stopped the call: a repo off the allow-list, approved bytes that differ from the
     queued bytes, an entry already posted."""

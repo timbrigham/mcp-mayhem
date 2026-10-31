@@ -289,6 +289,58 @@ def test_body_file_is_read_as_utf8_without_bom(env):
     assert q["payload"]["body"] == TRICKY
 
 
+# -- the queue is shared by two processes -----------------------------------------------------
+
+_HOLDER = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from publish_core.engine import Publisher
+p = Publisher(sys.argv[2], sys.argv[3])
+with p._locked():
+    Path(sys.argv[4]).write_text("held")
+    time.sleep(float(sys.argv[5]))
+"""
+
+
+def _hold_lock(env, seconds):
+    import subprocess
+    import time
+    flag = env.tmp / "held.flag"
+    child = subprocess.Popen([sys.executable, "-c", _HOLDER, str(Path(__file__).parents[1]),
+                              str(env.pub.data), str(env.cfg), str(flag), str(seconds)])
+    deadline = time.monotonic() + 20
+    while not flag.exists():
+        assert child.poll() is None and time.monotonic() < deadline, "holder never locked"
+        time.sleep(0.02)
+    return child
+
+
+def test_another_process_holding_the_queue_blocks_a_write(env):
+    from publish_core.errors import UnavailableError
+    q = _comment(env.pub)
+    child = _hold_lock(env, 5)
+    try:
+        env.pub.lock_timeout = 0.5
+        with pytest.raises(UnavailableError):
+            env.pub.withdraw(q["id"], "racing")
+        with pytest.raises(UnavailableError):
+            _approve(env.pub, q)
+    finally:
+        child.wait()
+    assert env.calls() == [] and _state(env.pub, q["id"]) == "queued"
+
+
+def test_a_write_waits_for_the_other_process_then_proceeds(env):
+    q = _comment(env.pub)
+    child = _hold_lock(env, 1)
+    try:
+        env.pub.lock_timeout = 20
+        assert _approve(env.pub, q)["decision"] == "allowed"
+    finally:
+        child.wait()
+
+
 # -- audit ------------------------------------------------------------------------------------
 
 def test_every_attempt_is_audited(env):
