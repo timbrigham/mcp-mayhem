@@ -100,6 +100,36 @@
         "processName": "python*.exe",
         "cmdlineMatch": "ledger_server.server"
       }
+    },
+    {
+      "_comment": "publishRobot: public GitHub posts, queued by an agent and sent only when a human approves the exact bytes. PUBLISHROBOT_TRACKER is the file one line per post is appended to; set it to your own tracker. The approve tool is protected by client permission rules (an `ask` where you approve, a `deny` where agents draft), not by anything here.",
+      "name": "publishRobot",
+      "host": "127.0.0.1",
+      "port": 8012,
+      "healthPath": "/mcp",
+      "kind": "process",
+      "start": {
+        "exe": "python",
+        "args": [
+          "-m",
+          "publishrobot_server.server"
+        ],
+        "workingDir": "${McpRoot}\\..\\publishRobot",
+        "env": {
+          "PYTHONPATH": "${McpRoot}\\..\\publishRobot",
+          "PUBLISHROBOT_DATA": "${McpRoot}\\..\\publishRobot\\data",
+          "PUBLISHROBOT_TRACKER": "${McpRoot}\\..\\publishRobot\\data\\tracker.md",
+          "PUBLISHROBOT_HOST": "127.0.0.1",
+          "PUBLISHROBOT_PORT": "8012",
+          "PUBLISHROBOT_ACTOR": "mcp"
+        }
+      },
+      "requiredEnv": [],
+      "identity": {
+        "_comment": "cmdlineMatch MUST be unique across servers; see the gitRobot entry.",
+        "processName": "python*.exe",
+        "cmdlineMatch": "publishrobot_server.server"
+      }
     }
   ]
 }

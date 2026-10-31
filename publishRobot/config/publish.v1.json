@@ -1,0 +1,4 @@
+{
+  "_comment": "Repositories publishRobot may post to, as owner/name. Absent, unreadable or empty refuses every queue and approve. Adding one is the owner's decision: posts go out as their account.",
+  "repos": ["timbrigham/ZeroParadox"]
+}

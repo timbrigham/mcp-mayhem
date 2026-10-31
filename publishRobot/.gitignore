@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# WHITELIST, as in gitRobot: the queue holds unposted drafts and the audit holds reasons, and
+# this repo is public.
+data/*
+!data/.gitkeep

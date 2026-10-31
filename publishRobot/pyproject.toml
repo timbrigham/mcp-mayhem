@@ -1,0 +1,24 @@
+[project]
+name = "publishrobot"
+version = "0.1.0"
+description = "Public GitHub posts on allow-listed repositories, queued by an agent and sent only when a human approves the exact bytes."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+publishrobot-mcp = "publishrobot_server.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["publish_core", "publishrobot_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
