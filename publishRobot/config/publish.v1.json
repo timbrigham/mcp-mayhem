@@ -1,5 +1,5 @@
 {
   "_comment": "Repositories publishRobot may post to, as owner/name. Absent, unreadable or empty refuses every queue and approve. Adding one is the owner's decision: posts go out as their account.",
-  "_repos_reason": "leanprover/reservoir added 2026-11-04 on Tim's ruling, for manual package-registration requests on issue #109.",
-  "repos": ["timbrigham/ZeroParadox", "leanprover/reservoir"]
+  "_repos_reason": "leanprover/reservoir added 2026-11-04 on Tim's ruling, for manual package-registration requests on issue #109. chrisflav/bruhat-tits (issue #2), GuardianEngineAI/corpus (PR #8) and MaxWellApexLab/OrdinalAnalysis (PR #2) added 2026-11-04 on Tim's ruling: threads he opened that await the owner, so follow-up comments go through the same approval.",
+  "repos": ["timbrigham/ZeroParadox", "leanprover/reservoir", "chrisflav/bruhat-tits", "GuardianEngineAI/corpus", "MaxWellApexLab/OrdinalAnalysis"]
 }
