@@ -1,4 +1,5 @@
 {
   "_comment": "Repositories publishRobot may post to, as owner/name. Absent, unreadable or empty refuses every queue and approve. Adding one is the owner's decision: posts go out as their account.",
-  "repos": ["timbrigham/ZeroParadox"]
+  "_repos_reason": "leanprover/reservoir added 2026-11-04 on Tim's ruling, for manual package-registration requests on issue #109.",
+  "repos": ["timbrigham/ZeroParadox", "leanprover/reservoir"]
 }
