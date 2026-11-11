@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 import sys as _sys
@@ -71,6 +72,18 @@ def _refusal_class(decision: str, refusal_class):
     if refusal_class is not None:
         raise AssertionError("refusal_class is only for refused rows, not %r" % decision)
     return None
+
+
+
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    """One lock per audit file for the life of the process. See `append` for the race it closes."""
+    key = os.path.normcase(str(Path(path).resolve()))
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.Lock())
 
 
 
@@ -169,8 +182,19 @@ class AuditLog:
             **_callctx.current(),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        # ⛔⛔ ONE WRITER AT A TIME, PER FILE, PER PROCESS. Measured 2026-11-11 14:32:09 UTC: two
+        # `ledger_subjects` calls 2 ms apart each opened this file in append mode and both wrote
+        # at the SAME end offset. On Windows, "a" is seek-to-end-then-write, which is not atomic
+        # across separate handles. The 850-byte row overwrote the 854-byte row and left its last 4
+        # bytes, `}}\r\n`, as a line of their own. One row was lost, and because `read()` parses
+        # every line, preflight_status, history, commit and status.in_flight all raised until the
+        # fragment was removed by hand (#sudo, Tim, same day).
+        # ⚠ The lock is MODULE-level, keyed by resolved path: the engine (and so this AuditLog) is
+        # built per call, so an instance lock would protect nothing.
+        with _lock_for(self.path):
+            with open(self.path, "a", encoding="utf-8") as fh:
+                fh.write(line)
         return record
 
     def read(self, limit: Optional[int] = None) -> list[dict]:
