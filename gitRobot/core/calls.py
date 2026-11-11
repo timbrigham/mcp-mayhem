@@ -51,12 +51,12 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from pathlib import Path
 from typing import Optional
 
 from core import callctx as _callctx
-from core.audit import _now_iso
+from core.audit import _now_iso  # also puts the repo root (mcpcommon) on sys.path
+from mcpcommon.appendlog import append_line as _append_line
 
 # The `_meta` keys a client's per-call id may arrive under, first match wins. Recorded as given;
 # a key not listed here is a client this log cannot attribute, which reads as null, not as an error.
@@ -80,8 +80,6 @@ CALL_OUTCOMES = {
 # A client controls this value. Anything longer is not an id we know how to read, and is
 # recorded as null rather than written at whatever size the client chose.
 MAX_CALL_ID = 256
-
-_LOCK = threading.Lock()
 
 
 def client_call_id(meta) -> tuple:
@@ -132,10 +130,7 @@ def append(path, *, tool: str, call_id: Optional[str], call_id_state: str, outco
         "versions": caller["versions"],
         "pid": os.getpid(),
     }
-    path = Path(path)
-    line = json.dumps(row, ensure_ascii=False) + "\n"
-    with _LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write(line)
+    # Through the fleet's one append gate (mcpcommon/appendlog.py). This file had its own lock;
+    # the audit log beside it did not, and that is the one that broke on 2026-11-11.
+    _append_line(Path(path), json.dumps(row, ensure_ascii=False) + "\n")
     return row

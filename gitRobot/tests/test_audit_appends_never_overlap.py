@@ -15,8 +15,8 @@ import json
 import threading
 import time
 
-import core.audit as audit_mod
 from core.audit import AuditLog
+import mcpcommon.appendlog as audit_mod  # the gate AuditLog writes through
 
 
 def _row(log: AuditLog, i: int) -> None:

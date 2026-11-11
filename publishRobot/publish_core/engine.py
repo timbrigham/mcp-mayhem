@@ -50,6 +50,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from publish_core.errors import ConfigError, RefusalError, UnavailableError, UsageError
+# errors.py above puts the repo root on sys.path, so mcpcommon resolves.
+from mcpcommon.appendlog import append_line as _append_line, lock_for as _append_lock
 
 if os.name == "nt":
     import msvcrt
@@ -176,9 +178,8 @@ class Publisher:
                 fh.close()
 
     def _append(self, path: Path, row: dict) -> None:
-        self.data.mkdir(parents=True, exist_ok=True)
-        with path.open("ab") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n")
+        # Through the fleet's one append gate (mcpcommon/appendlog.py). Same bytes as before.
+        _append_line(path, json.dumps(row, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n")
 
     def _rows(self, path: Path) -> list:
         if not path.is_file():
@@ -533,12 +534,14 @@ class Publisher:
         line = (f"- {_now()} {p['action']} {p['repo']}#{result.get('number')}: "
                 f"{result.get('url')} (publishRobot {qid})\n")
         try:
-            text = tracker.read_bytes().decode("utf-8")
-            add = ""
-            if TRACKER_HEADING not in text:
-                add += ("" if text.endswith("\n") else "\n") + f"\n{TRACKER_HEADING}\n\n"
-            with tracker.open("ab") as fh:
-                fh.write((add + line).encode("utf-8"))
+            # The heading check reads, then appends, so the gate's lock is held across both:
+            # otherwise two posts could each see no heading and each write one.
+            with _append_lock(tracker):
+                text = tracker.read_bytes().decode("utf-8")
+                add = ""
+                if TRACKER_HEADING not in text:
+                    add += ("" if text.endswith("\n") else "\n") + f"\n{TRACKER_HEADING}\n\n"
+                _append_line(tracker, (add + line).encode("utf-8"), _locked=True)
         except (OSError, UnicodeDecodeError) as exc:
             self._audit("track", "failed", id=qid, detail=str(exc), line=line)
             return {"written": False, "error": str(exc), "line": line}

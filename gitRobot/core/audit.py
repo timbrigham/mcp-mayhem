@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 import sys as _sys
@@ -30,6 +29,7 @@ if str(_root) not in _sys.path:
     _sys.path.insert(0, str(_root))
 from mcpcommon.vocabulary import DECISIONS as _DECISIONS
 from mcpcommon.vocabulary import REFUSAL_CLASSES as _REFUSAL_CLASSES
+from mcpcommon.appendlog import append_line as _append_line
 from core import callctx as _callctx
 
 from typing import Any, Optional
@@ -72,18 +72,6 @@ def _refusal_class(decision: str, refusal_class):
     if refusal_class is not None:
         raise AssertionError("refusal_class is only for refused rows, not %r" % decision)
     return None
-
-
-
-_LOCKS: dict[str, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
-
-
-def _lock_for(path: Path) -> threading.Lock:
-    """One lock per audit file for the life of the process. See `append` for the race it closes."""
-    key = os.path.normcase(str(Path(path).resolve()))
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
 
 
 
@@ -181,20 +169,12 @@ class AuditLog:
             # Always present, null when unknown: see core/callctx.py.
             **_callctx.current(),
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-        # ⛔⛔ ONE WRITER AT A TIME, PER FILE, PER PROCESS. Measured 2026-11-11 14:32:09 UTC: two
-        # `ledger_subjects` calls 2 ms apart each opened this file in append mode and both wrote
-        # at the SAME end offset. On Windows, "a" is seek-to-end-then-write, which is not atomic
-        # across separate handles. The 850-byte row overwrote the 854-byte row and left its last 4
-        # bytes, `}}\r\n`, as a line of their own. One row was lost, and because `read()` parses
-        # every line, preflight_status, history, commit and status.in_flight all raised until the
-        # fragment was removed by hand (#sudo, Tim, same day).
-        # ⚠ The lock is MODULE-level, keyed by resolved path: the engine (and so this AuditLog) is
-        # built per call, so an instance lock would protect nothing.
-        with _lock_for(self.path):
-            with open(self.path, "a", encoding="utf-8") as fh:
-                fh.write(line)
+        # ⛔⛔ THROUGH THE FLEET'S ONE APPEND GATE. Measured 2026-11-11 14:32:09 UTC: two
+        # `ledger_subjects` calls 2 ms apart both wrote at the SAME end offset of this file, one
+        # row was lost, and a `}}` fragment made every full read raise. See mcpcommon/appendlog.py.
+        # ⚠ New rows end in LF. Rows before 2026-11-11 end in CRLF (text mode on Windows);
+        # `read()` strips both.
+        _append_line(self.path, json.dumps(record, ensure_ascii=False) + "\n")
         return record
 
     def read(self, limit: Optional[int] = None) -> list[dict]:

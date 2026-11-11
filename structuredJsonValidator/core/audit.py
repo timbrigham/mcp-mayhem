@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from core.errors import IntegrityError
+from core.errors import IntegrityError  # also puts the repo root (mcpcommon) on sys.path
+from mcpcommon.appendlog import append_line as _append_line
 from core.store import hash_file
 
 
@@ -67,10 +68,11 @@ def append_record(
         "entries_touched": list(entries_touched),
         "resulting_sha256": resulting_sha256,
     }
-    path = Path(audit_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False, sort_keys=False) + "\n")
+    # Through the fleet's one append gate (mcpcommon/appendlog.py): a bare append here could
+    # interleave with a concurrent one, as gitRobot's audit did on 2026-11-11.
+    # ⚠ New rows end in LF; older rows written in text mode on Windows end in CRLF.
+    _append_line(Path(audit_path),
+                 json.dumps(record, ensure_ascii=False, sort_keys=False) + "\n")
     return record
 
 

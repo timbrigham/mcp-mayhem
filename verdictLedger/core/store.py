@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from core import schema
-from core.errors import Unavailable, UsageError
+from core.errors import Unavailable, UsageError  # also puts the repo root (mcpcommon) on sys.path
+from mcpcommon.appendlog import append_line as _append_line
 
 GENESIS_STEP = "genesis"
 
@@ -501,10 +502,9 @@ class Store:
             # edit would have been erased by the next append — a detector that forgets.
             pre = self._integrity_precheck()
             line = schema.serialise(record) + "\n"
-            with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
-                fh.write(line)
-                fh.flush()
-                os.fsync(fh.fileno())
+            # Through the fleet's one append gate (mcpcommon/appendlog.py), under the writer lock
+            # above as well. Same bytes as before: LF, utf-8, flushed and fsynced.
+            _append_line(self.path, line, fsync=True)
             self._stamp_after_write(pre, line.encode("utf-8"))
         except OSError as exc:
             raise Unavailable(f"could not append to {self.path}: {exc}") from exc
