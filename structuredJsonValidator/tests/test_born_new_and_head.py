@@ -218,6 +218,8 @@ def test_remove_rolls_back_when_it_would_break_a_proved_claim(tmp_path):
     eid = _born(s, "ZP.witness")
     s.apply("claims", "add_claim", {"claim_id": "C1", "statement": "x", "status": "conj"})
     s.apply("declarations", "link_claim", {"id": eid, "claim": "C1"})
+    # add_new no longer defaults sorry_free to True (2026-11-15); report it, as the build would.
+    s.apply("declarations", "set_verify", {"id": eid, "sorry_free": True})
     s.apply("claims", "set_status", {"claim_id": "C1", "status": "proved"})
     with pytest.raises(ValidationError):
         s.apply("declarations", "remove", {"ids": [eid], "reason": "cleanup"})

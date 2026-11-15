@@ -20,8 +20,11 @@ def _store(tmp_path):
 
 
 def _scan(n):
+    # sorry_free is REPORTED here, explicitly. Until 2026-11-15 these fixtures omitted it and
+    # every declaration was live by default -- the exact defect `reported_sorry_free` removed.
+    # An unreported value is now UNKNOWN and witnesses nothing (test_affirmative_only.py).
     return [{"qualified": f"A.d{i}", "short": f"d{i}", "kind": "def",
-             "file": "f.lean", "line": i, "prefix": "A"} for i in range(n)]
+             "file": "f.lean", "line": i, "prefix": "A", "sorry_free": True} for i in range(n)]
 
 
 def _found(s, n=3):

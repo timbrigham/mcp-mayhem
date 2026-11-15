@@ -19,6 +19,28 @@ from core.errors import OperationError, ValidationError
 
 # -- structure helpers --------------------------------------------------------
 
+def reported_sorry_free(value) -> Optional[bool]:
+    """The ``verify.sorry_free`` to STORE for a value somebody did or did not report.
+
+    ⛔ AN UNREPORTED VALUE IS STORED AS ``None`` (UNKNOWN), NEVER AS ``True``. Tim, 2026-11-15:
+    *"you can only sign off on what people have actually stated themselves"* — a record may carry
+    only what was affirmatively reported, like a signature on a petition.
+
+    ⚠⚠ Measured that day from ``registry.json.audit.jsonl``: three write paths defaulted this
+    to ``True`` (import, ``add_new``, store ``migrate_batch``), and NO import or batch in the
+    whole audit ever carried the key — 0 of 2,741 inline ``add_new`` items, 0 of 36 inline
+    scanner items, 0 in every import file still on disk. Only 104 of 4,092 declarations ever had
+    it reported (``set_verify``, all ``True``). The other 3,988 read "proof is live" because
+    nobody said otherwise. And every one of the 15 ``proved``/``deep`` claims rested ONLY on
+    defaulted witnesses — 30 witnesses, 0 reported — while ``witness_invariant`` read a MISSING
+    key as ``False``. The reader failed toward noticing; the writers made sure it never could.
+
+    ``None`` is falsy everywhere this is read (``witness_invariant``, ``claims.views``, and
+    ZeroParadox's ``tools/render/web_data.py``), so an unknown witness is not a live one.
+    """
+    return None if value is None else bool(value)
+
+
 def _mint_id() -> str:
     """Mint an opaque, permanent surrogate id (interop issue #5, Decision A).
 
@@ -196,7 +218,7 @@ def _pending_entry_from_scan(item: dict) -> dict:
             "citations": list(item.get("citations", [])),
         },
         "verify": {
-            "sorry_free": bool(item.get("sorry_free", True)),
+            "sorry_free": reported_sorry_free(item.get("sorry_free")),
             "axioms": item.get("axioms"),
         },
     }
@@ -589,7 +611,7 @@ def reopen(document, *, id: str, reason: str) -> tuple[dict, list[str]]:
 
 def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
             witness_of: Optional[list[str]] = None, citations: Optional[list[str]] = None,
-            sorry_free: bool = True, axioms=None) -> tuple[dict, list[str]]:
+            sorry_free: Optional[bool] = None, axioms=None) -> tuple[dict, list[str]]:
     doc = _require_doc(document)
     nq = new.get("qualified")
     if not nq:
@@ -614,7 +636,7 @@ def add_new(document, *, new: dict, reason: str, id: Optional[str] = None,
         "reason": reason,
         "ontology": {"object": [], "domain": [], "role": []},
         "claims": {"witness_of": list(witness_of or []), "citations": list(citations or [])},
-        "verify": {"sorry_free": bool(sorry_free), "axioms": axioms},
+        "verify": {"sorry_free": reported_sorry_free(sorry_free), "axioms": axioms},
     }
     doc.setdefault("entries", []).append(entry)
     _sync_counts(doc)

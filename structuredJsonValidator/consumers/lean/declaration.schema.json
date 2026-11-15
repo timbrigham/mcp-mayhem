@@ -118,7 +118,7 @@
           "additionalProperties": false,
           "required": ["sorry_free", "axioms"],
           "properties": {
-            "sorry_free": { "type": "boolean" },
+            "sorry_free": { "type": ["boolean", "null"] },
             "axioms": { "type": ["string", "array", "null"] }
           }
         }

@@ -78,26 +78,38 @@ def witness_invariant(store_doc: dict) -> list[str]:
     claim_ids = {c.get("claim_id") for c in claim_entries if c.get("claim_id") is not None}
 
     live_witnessed: set[str] = set()
+    # ⚠ UNKNOWN AND FALSE ARE DIFFERENT FACTS WITH DIFFERENT REMEDIES, so they are collected
+    # apart. `False` says the build reported a `sorry`: fix the proof. `None` says nobody ever
+    # reported anything: run the build and record what it says. Both refuse; only the message
+    # differs, and it must, because a reader cannot act on "no live witness" without knowing
+    # which. (2026-11-15: all 30 witnesses behind the 15 proved/deep claims were unreported.)
+    unknown_witnesses: dict[str, list[str]] = {}
     out: list[str] = []
     for d in decls:
-        sorry_free = bool((d.get("verify") or {}).get("sorry_free", False))
+        sorry_free = (d.get("verify") or {}).get("sorry_free")
         for cid in (d.get("claims") or {}).get("witness_of") or []:
             if cid not in claim_ids:
                 out.append(
                     f"[declarations] {d.get('id')!r}: claims.witness_of references "
                     f"unknown claim_id {cid!r} (dangling link)"
                 )
-            if sorry_free:
+            if sorry_free is True:
                 live_witnessed.add(cid)
+            elif sorry_free is None:
+                unknown_witnesses.setdefault(cid, []).append(str(d.get("id")))
 
     for c in claim_entries:
         cid = c.get("claim_id")
         status = c.get("status")
         if status in _LIVE_STATUSES and cid not in live_witnessed:
+            unknown = unknown_witnesses.get(cid) or []
+            hint = (f"; {len(unknown)} witness(es) have sorry_free UNKNOWN (never reported): "
+                    f"{sorted(unknown)} — satisfied when set_verify records the build's "
+                    f"sorry_free=true for one of them") if unknown else ""
             out.append(
                 f"[claims] {cid!r}: status {status!r} requires ≥1 declaration with "
                 f"claims.witness_of containing {cid!r} AND verify.sorry_free=true "
-                f"(no live witness found)"
+                f"(no live witness found){hint}"
             )
     return out
 
@@ -425,7 +437,9 @@ def _new_head_entry(item: dict, *, default_reason) -> dict:
         "ontology": {"object": [], "domain": [], "role": []},
         "claims": {"witness_of": list(item.get("witness_of", [])),
                    "citations": list(item.get("citations", []))},
-        "verify": {"sorry_free": bool(item.get("sorry_free", True)), "axioms": item.get("axioms")},
+        # Unreported -> None (unknown), never True. See `reported_sorry_free`.
+        "verify": {"sorry_free": decl_ops.reported_sorry_free(item.get("sorry_free")),
+                   "axioms": item.get("axioms")},
     }
 
 
