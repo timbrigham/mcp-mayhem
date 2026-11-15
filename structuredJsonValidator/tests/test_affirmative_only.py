@@ -181,3 +181,39 @@ def test_the_mcp_tool_carries_the_four_flat_params_into_evidence(tmp_path, monke
     # One flat param alone is passed through and REFUSED, not silently dropped.
     r = server.set_verify(id=eid, sorry_free=True, probe="lean #print axioms")
     assert r["ok"] is False and "git_blob_id" in str(r)
+
+
+# -- mark_unreported: the migration op -------------------------------------------
+
+def test_mark_unreported_sets_unknown_and_keeps_axioms(tmp_path):
+    s = _store(tmp_path)
+    scan = _unreported_scan(2)
+    for it in scan:
+        it["sorry_free"] = True            # the old default, as it sits in the live store
+    s.apply("declarations", "import_baseline", {"scanner_output": scan, "anchor": ANCHOR})
+    a, b = [e["id"] for e in s.find("declarations")]
+    s.apply("declarations", "set_verify", {"id": b, "axioms": ["propext"]})
+    s.apply("declarations", "mark_unreported", {"ids": [a, b], "reason": "default, never reported"})
+    assert s.get("declarations", a)["verify"]["sorry_free"] is None
+    assert s.get("declarations", b)["verify"] == {"sorry_free": None, "axioms": ["propext"],
+                                                  "evidence": None}
+
+
+def test_mark_unreported_refuses_an_evidenced_value(tmp_path):
+    from core.errors import OperationError
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    s.apply("declarations", "set_verify", {"id": eid, "sorry_free": True, "evidence": _EVIDENCE})
+    with pytest.raises(OperationError) as exc:
+        s.apply("declarations", "mark_unreported", {"ids": [eid], "reason": "x"})
+    assert exc.value.satisfied_when
+    assert s.get("declarations", eid)["verify"]["sorry_free"] is True
+
+
+def test_mark_unreported_cannot_strand_a_proved_claim(tmp_path):
+    s = _store(tmp_path)
+    eid = _claim_with_one_witness(s, sorry_free=True)   # reported, but without evidence
+    s.apply("claims", "set_status", {"claim_id": "T", "status": "proved"})
+    with pytest.raises(ValidationError):
+        s.apply("declarations", "mark_unreported", {"ids": [eid], "reason": "x"})
+    assert s.get("declarations", eid)["verify"]["sorry_free"] is True

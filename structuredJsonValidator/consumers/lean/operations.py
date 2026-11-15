@@ -1003,7 +1003,44 @@ def set_vocab(document, *, vocab) -> tuple[dict, list[str]]:
     return doc, []
 
 
+def mark_unreported(document, *, ids, reason: str) -> tuple[dict, list[str]]:
+    """Retract a ``verify.sorry_free`` nobody reported: set it to ``None`` (unknown).
+
+    The inverse of the default that ``reported_sorry_free`` removed. Written 2026-11-15 to
+    migrate the 3,958 declarations whose ``true`` came only from that default, and kept as a
+    permanent op because the same repair recurs whenever a value is found to have no source.
+
+    ⚠ An entry carrying ``verify.evidence`` is REFUSED. Evidence means somebody measured it
+    and said which bytes, so it is reported by definition; retracting it is a different claim
+    ("that measurement was wrong") and belongs in ``set_verify`` with new evidence. ``axioms``
+    is left alone: it is a separate field and was reported on its own when present.
+
+    Retracting the last live witness of a proved/deep claim fails the whole-store
+    postcondition and rolls back, so this cannot strand a claim silently.
+    """
+    doc = _require_doc(document)
+    if isinstance(ids, str):
+        ids = [ids]
+    if not ids:
+        raise OperationError("mark_unreported needs at least one id",
+                             satisfied_when="ids names one or more declaration ids")
+    if not (isinstance(reason, str) and reason.strip()):
+        raise OperationError("mark_unreported needs a reason",
+                             satisfied_when="reason says why these values had no source")
+    evidenced = [i for i in ids if (_find(doc, i)["verify"].get("evidence"))]
+    if evidenced:
+        raise OperationError(
+            f"{len(evidenced)} id(s) carry verify.evidence and are reported, not defaulted: "
+            f"{evidenced[:10]}",
+            satisfied_when="ids lists only declarations with no verify.evidence; correct a "
+                           "measured value with set_verify and new evidence instead")
+    for i in ids:
+        _find(doc, i)["verify"]["sorry_free"] = None
+    return doc, list(ids)
+
+
 OPERATIONS = {
+    "mark_unreported": mark_unreported,
     "import_baseline": import_baseline,
     "reconcile": reconcile,
     "mark_present": mark_present,
