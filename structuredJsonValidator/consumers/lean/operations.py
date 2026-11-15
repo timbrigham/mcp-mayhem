@@ -878,19 +878,41 @@ def add_citation(document, *, id: str, target: str) -> tuple[dict, list[str]]:
 _UNSET = object()
 
 
-def set_verify(document, *, id: str, sorry_free=None, axioms=_UNSET) -> tuple[dict, list[str]]:
+_EVIDENCE_KEYS = ("probe", "commit", "path", "git_blob_id")
+
+
+def set_verify(document, *, id: str, sorry_free=None, axioms=_UNSET,
+               evidence=None) -> tuple[dict, list[str]]:
     """Record the build-derived verification state on a declaration. ``sorry_free``
     is the honest 'is the proof live' flag (ZP re-derives it from the build, not
     the stored value). Flipping it to ``false`` on the sole live witness of a
     ``proved``/``deep`` claim fails the store invariant — a broken proof cannot
     leave a proved claim standing (interop #12 T4). Metadata-only (no disposition
-    change), so no terminal guard applies."""
+    change), so no terminal guard applies.
+
+    ``evidence`` = ``{probe, commit, path, git_blob_id}``: what measured the values and
+    against which bytes. ⚠ IT IS REPLACED ON EVERY WRITE, including with ``None`` when
+    omitted. Evidence left over from an earlier write would describe a measurement the
+    current values did not come from — a true record read against the wrong object.
+    All four keys or none: a probe without its blob cannot be re-checked.
+    """
     doc = _require_doc(document)
     entry = _find(doc, id)
+    if evidence is not None:
+        missing = [k for k in _EVIDENCE_KEYS if not (isinstance(evidence, dict) and evidence.get(k))]
+        if missing:
+            raise OperationError(
+                f"set_verify evidence is missing {missing}",
+                satisfied_when="evidence carries all of probe (what measured it, e.g. "
+                               "'lean #print axioms'), commit (the 40-hex commit built), path "
+                               "(the .lean file) and git_blob_id (that file's blob at the commit) "
+                               "— or evidence is omitted entirely")
+        evidence = {k: evidence[k] for k in _EVIDENCE_KEYS}
     if sorry_free is not None:
         entry["verify"]["sorry_free"] = bool(sorry_free)
     if axioms is not _UNSET:
         entry["verify"]["axioms"] = axioms
+    entry["verify"]["evidence"] = evidence
     return doc, [id]
 
 

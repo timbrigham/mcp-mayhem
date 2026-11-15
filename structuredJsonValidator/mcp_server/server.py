@@ -579,15 +579,29 @@ def add_citation(id: str, target: str) -> WriteResult:
 
 @mcp.tool(title='Set verification state',
           annotations=ToolAnnotations(title='Set verification state', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-def set_verify(id: str, sorry_free: Optional[bool] = None, axioms=None) -> WriteResult:
+def set_verify(id: str, sorry_free: Optional[bool] = None, axioms=None,
+               probe: Optional[str] = None, commit: Optional[str] = None,
+               path: Optional[str] = None, git_blob_id: Optional[str] = None) -> WriteResult:
     """Record the build-derived verification state on a declaration. Flipping
     sorry_free to false on the sole live witness of a proved/deep claim is refused
-    (a broken proof cannot leave a proved claim standing)."""
+    (a broken proof cannot leave a proved claim standing).
+
+    PROVENANCE: pass `probe` (what measured it, e.g. 'lean #print axioms'), `commit` (the
+    commit built), `path` (the .lean file) and `git_blob_id` (that file's blob at the commit)
+    — all four or none. They are stored as verify.evidence and REPLACED on every call, so a
+    call without them clears earlier evidence rather than leaving it beside new values.
+    An unreported sorry_free is null (unknown), and only an explicit true makes a witness live."""
     params: dict[str, Any] = {"id": id}
     if sorry_free is not None:
         params["sorry_free"] = sorry_free
     if axioms is not None:
         params["axioms"] = axioms
+    given = {k: v for k, v in (("probe", probe), ("commit", commit), ("path", path),
+                               ("git_blob_id", git_blob_id)) if v is not None}
+    if given:
+        # Partial evidence is passed through so the op refuses it with satisfied_when,
+        # rather than this wrapper silently dropping it.
+        params["evidence"] = given
     return _write("declarations", "set_verify", params)
 
 

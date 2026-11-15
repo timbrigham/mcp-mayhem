@@ -106,3 +106,78 @@ def test_a_false_witness_refuses_without_the_unknown_hint(tmp_path):
     with pytest.raises(ValidationError) as exc:
         s.apply("claims", "set_status", {"claim_id": "T", "status": "proved"})
     assert "UNKNOWN" not in str(exc.value)
+
+
+# -- provenance on verify ------------------------------------------------------
+
+_SHA = "a" * 40
+_BLOB = "b" * 40
+_EVIDENCE = {"probe": "lean #print axioms", "commit": _SHA, "path": "f.lean", "git_blob_id": _BLOB}
+
+
+def _one_decl(s):
+    s.apply("declarations", "import_baseline",
+            {"scanner_output": _unreported_scan(1), "anchor": ANCHOR})
+    return s.find("declarations")[0]["id"]
+
+
+def test_set_verify_records_evidence_beside_the_value(tmp_path):
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    s.apply("declarations", "set_verify",
+            {"id": eid, "sorry_free": True, "axioms": ["propext"], "evidence": _EVIDENCE})
+    v = s.get("declarations", eid)["verify"]
+    assert v["sorry_free"] is True and v["evidence"] == _EVIDENCE
+
+
+def test_a_later_write_without_evidence_clears_it(tmp_path):
+    # Evidence left beside values it did not produce is the wrong-object defect.
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    s.apply("declarations", "set_verify", {"id": eid, "sorry_free": True, "evidence": _EVIDENCE})
+    s.apply("declarations", "set_verify", {"id": eid, "sorry_free": False})
+    v = s.get("declarations", eid)["verify"]
+    assert v["sorry_free"] is False and v["evidence"] is None
+
+
+def test_partial_evidence_is_refused_with_its_success_condition(tmp_path):
+    from core.errors import OperationError
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    with pytest.raises(OperationError) as exc:
+        s.apply("declarations", "set_verify",
+                {"id": eid, "sorry_free": True, "evidence": {"probe": "lean #print axioms"}})
+    assert "git_blob_id" in str(exc.value) and exc.value.satisfied_when
+    assert s.get("declarations", eid)["verify"]["sorry_free"] is None   # nothing written
+
+
+def test_evidence_beside_an_unknown_value_is_a_violation(tmp_path):
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    # Axioms only: sorry_free stays unknown, so evidence would describe nothing recorded.
+    with pytest.raises(ValidationError) as exc:
+        s.apply("declarations", "set_verify", {"id": eid, "axioms": [], "evidence": _EVIDENCE})
+    assert "evidence" in str(exc.value)
+
+
+def test_evidence_hashes_must_be_hex_object_ids(tmp_path):
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    bad = dict(_EVIDENCE, git_blob_id="HEAD:f.lean")
+    with pytest.raises(ValidationError):
+        s.apply("declarations", "set_verify", {"id": eid, "sorry_free": True, "evidence": bad})
+
+
+def test_the_mcp_tool_carries_the_four_flat_params_into_evidence(tmp_path, monkeypatch):
+    # The wrapper is a second place the evidence can be dropped, so it is tested on its own.
+    from mcp_server import server
+    s = _store(tmp_path)
+    eid = _one_decl(s)
+    monkeypatch.setattr(server, "_store", lambda: s)
+    r = server.set_verify(id=eid, sorry_free=True, probe=_EVIDENCE["probe"],
+                          commit=_SHA, path="f.lean", git_blob_id=_BLOB)
+    assert r["ok"] is True
+    assert s.get("declarations", eid)["verify"]["evidence"] == _EVIDENCE
+    # One flat param alone is passed through and REFUSED, not silently dropped.
+    r = server.set_verify(id=eid, sorry_free=True, probe="lean #print axioms")
+    assert r["ok"] is False and "git_blob_id" in str(r)

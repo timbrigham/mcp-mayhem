@@ -208,6 +208,16 @@ def validate(document: dict) -> list[str]:
                     f"{eid}: disposition '{disposition}' requires a non-empty reason"
                 )
 
+        # Evidence for a measurement nobody recorded is evidence for nothing. A null
+        # sorry_free means UNKNOWN (see operations.reported_sorry_free); provenance
+        # beside it would read as a measured value that is not there.
+        verify = entry.get("verify") or {}
+        if verify.get("evidence") and verify.get("sorry_free") is None:
+            violations.append(
+                f"{eid}: verify.evidence is set but verify.sorry_free is null (unknown) — "
+                f"evidence must describe a recorded value"
+            )
+
     violations.extend(_effective_name_collisions(entries))
     violations.extend(_vocab_violations(document, entries))
     return violations

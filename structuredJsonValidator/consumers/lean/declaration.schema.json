@@ -119,7 +119,19 @@
           "required": ["sorry_free", "axioms"],
           "properties": {
             "sorry_free": { "type": ["boolean", "null"] },
-            "axioms": { "type": ["string", "array", "null"] }
+            "axioms": { "type": ["string", "array", "null"] },
+            "evidence": {
+              "$comment": "HOW and AGAINST WHICH BYTES verify was measured (2026-11-15). Absent or null = no recorded provenance. Replaced on every set_verify write, so it always describes the values beside it.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["probe", "commit", "path", "git_blob_id"],
+              "properties": {
+                "probe": { "type": "string", "minLength": 1 },
+                "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+                "path": { "type": "string", "minLength": 1 },
+                "git_blob_id": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" }
+              }
+            }
           }
         }
       }
