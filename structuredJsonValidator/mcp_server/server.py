@@ -45,7 +45,8 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from mcp_server.results import (  # noqa: E402
     CheckHeadResult, ExportResult, FindResult, GetResult, HistoryResult,
-    ReconstructCoverageResult, ReconstructVerdictResult, ValidateResult, VerifyIntegrityResult, ViewResult,
+    ReconstructCoverageResult, ReconstructRunRecordsResult, ReconstructVerdictResult,
+    ValidateResult, VerifyIntegrityResult, ViewResult,
     VocabularyResult, WriteResult)
 
 from consumers.store import build_store, head_correspondence, require_source_root
@@ -799,6 +800,34 @@ def reconstruct_verdict(path: str, git_blob_id: str, root: str,
         commit = resolve_commit(root_path, ref)
         out = verdict_for(doc, path, git_blob_id,
                           current_briefs=briefs_at(root_path, commit, doc))
+        out["judged_at"] = commit
+        return out
+    except OperationError as exc:
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        if getattr(exc, "satisfied_when", None):
+            refusal["satisfied_when"] = exc.satisfied_when
+        return refusal
+
+
+@mcp.tool(title='Reconstruct records for a run',
+          annotations=ToolAnnotations(title='Reconstruct records for a run', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def reconstruct_run_records(run_id: str, root: str, ref: str = "HEAD") -> ReconstructRunRecordsResult:
+    """Split-round ledger record bodies for every (path, blob) one indexed run examined:
+    ONE PASS over the files whose DIFF-1 items are all decided (carried items unioned
+    into `outstanding`, each with its `path`), ONE FAIL over the files with an open or
+    applied item (`failing` names exactly those files, and only they are its subjects),
+    and `exceptions` for any file that gets neither (brief_moved / never_run), so
+    nothing is dropped silently. Each file is judged exactly as reconstruct_verdict
+    judges it, at `ref` (default HEAD), with only current-brief runs deciding.
+    `state`: recorded | no_records | unknown_run. Append each body UNCHANGED, adding
+    only basis, run and revision; this tool never writes to the ledger."""
+    from consumers.readings.coverage import briefs_at, resolve_commit
+    from consumers.readings.views import run_records
+    try:
+        root_path = require_source_root(root)
+        doc = _store().load().get("collections", {}).get("blind_readings") or {}
+        commit = resolve_commit(root_path, ref)
+        out = run_records(doc, run_id, briefs_at(root_path, commit, doc))
         out["judged_at"] = commit
         return out
     except OperationError as exc:

@@ -450,3 +450,75 @@ def test_coverage_honours_scope_exclude(tmp_path):
                    scope_exclude=["Z/Vendored/*"])
     assert cov["counts"]["total"] == 1 and cov["files"]["never_run"] == ["Z/a.lean"]
     assert coverage(doc, root=repo, ref="HEAD", scope=["Z/*.lean"])["counts"]["total"] == 2
+
+
+# -- per-run split-round records, for the burn-down (2026-11-16) ------------------
+
+from consumers.readings.views import run_records  # noqa: E402
+
+D = "d" * 40
+
+
+def _three_file_run(s, tmp_path, *, brief=BRIEF):
+    """A.lean: one carried + one rejected. CLAIMS.md: one open. D.lean: no items."""
+    ex = [{"path": "A.lean", "git_blob_id": A}, {"path": "CLAIMS.md", "git_blob_id": B},
+          {"path": "D.lean", "git_blob_id": D}]
+    rows = [_run(diff1_count=3, examined=ex, brief_blob=brief),
+            _diff(1, path="A.lean", git_blob_id=A, kind_detail="prose says every X"),
+            _diff(2, path="A.lean", git_blob_id=A),
+            _diff(3),
+            _disp(1, "carried"), _disp(2, "rejected")]
+    _ingest(s, _write(tmp_path, rows))
+
+
+def test_one_pass_over_decided_files_and_one_fail_over_open_ones(tmp_path):
+    s = _store(tmp_path)
+    _three_file_run(s, tmp_path)
+    out = run_records(_doc(s), RUN, {_BRIEF_PATH: BRIEF})
+    assert (out["files"], out["passed"], out["failed"], out["exceptions"]) == (3, 2, 1, [])
+    p, f = out["records"]
+    assert p["verdict"] == "PASS"
+    assert [x["path"] for x in p["subjects"]] == ["A.lean", "D.lean"]
+    assert f["verdict"] == "FAIL" and f["failing"] == ["CLAIMS.md"]
+    # the FAIL's subjects are exactly what it indicts; decided bytes are not swept in
+    assert [x["path"] for x in f["subjects"]] == ["CLAIMS.md"]
+    assert f"{RUN}#2" in p["reason"]                               # rejected: reason only
+
+
+def test_outstanding_carries_path_and_describes_the_finding(tmp_path):
+    s = _store(tmp_path)
+    _three_file_run(s, tmp_path)
+    (o,) = run_records(_doc(s), RUN, {_BRIEF_PATH: BRIEF})["records"][0]["outstanding"]
+    assert o == {"severity": "ordinary", "path": "A.lean",
+                 "note": f"{RUN}#1 L11 scope_widened: prose says every X"}
+
+
+def test_a_note_with_no_kind_detail_falls_back_to_the_signature(tmp_path):
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, _base(s) + [_disp(1, "carried"), _disp(2, "carried")]))
+    v = verdict_for(_doc(s), "CLAIMS.md", B, current_briefs={_BRIEF_PATH: BRIEF})
+    assert all(o["note"].endswith("signature: says less") for o in v["record"]["outstanding"])
+
+
+def test_each_file_reads_the_same_grouped_as_alone(tmp_path):
+    s = _store(tmp_path)
+    _three_file_run(s, tmp_path)
+    cur = {_BRIEF_PATH: BRIEF}
+    out = run_records(_doc(s), RUN, cur)
+    for rec in out["records"]:
+        for sub in rec["subjects"]:
+            alone = verdict_for(_doc(s), sub["path"], sub["git_blob_id"], current_briefs=cur)
+            assert alone["record"]["verdict"] == rec["verdict"]
+
+
+def test_an_old_brief_run_yields_exceptions_and_no_records(tmp_path):
+    s = _store(tmp_path)
+    _three_file_run(s, tmp_path)
+    out = run_records(_doc(s), RUN, {_BRIEF_PATH: "0" * 40})
+    assert out["records"] == [] and out["state"] == "no_records"
+    assert [x["state"] for x in out["exceptions"]] == ["brief_moved"] * 3
+
+
+def test_an_unknown_run_says_so(tmp_path):
+    s = _store(tmp_path)
+    assert run_records(_doc(s), "nope", {})["state"] == "unknown_run"

@@ -179,3 +179,19 @@ class ReconstructCoverageResult(TypedDict, total=False):
     files: dict[str, list[str]]
     truncated: dict[str, bool]
     means: str
+
+
+class ReconstructRunRecordsResult(TypedDict, total=False):
+    """Split-round record bodies for one run: at most one PASS (decided files) and one FAIL
+    (files with open/applied items), plus `exceptions` naming every examined file that got
+    neither. `passed` + `failed` + len(`exceptions`) == `files`. No `ok` on success, like
+    every sjv read."""
+    state: str
+    run_id: str
+    files: int
+    passed: int
+    failed: int
+    exceptions: list[dict[str, Any]]
+    records: list[dict[str, Any]]
+    judged_at: str
+    means: str
