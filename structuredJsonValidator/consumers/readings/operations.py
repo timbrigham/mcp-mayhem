@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 from core.errors import OperationError
@@ -42,11 +43,11 @@ def _line_sha(obj: dict) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
-def _refuse(lineno: int, what: str, satisfied_when: str):
-    raise OperationError(f"line {lineno}: {what}", satisfied_when=satisfied_when)
+def _refuse(where: str, what: str, satisfied_when: str):
+    raise OperationError(f"{where}: {what}", satisfied_when=satisfied_when)
 
 
-def _need(row: dict, lineno: int, *keys: str) -> None:
+def _need(row: dict, lineno: str, *keys: str) -> None:
     missing = [k for k in keys if k not in row]
     if missing:
         _refuse(lineno, f"{row.get('type')!r} line is missing {missing}",
@@ -54,24 +55,46 @@ def _need(row: dict, lineno: int, *keys: str) -> None:
                 f"where the schema allows it; an absent key is not)")
 
 
-def _read_jsonl(path: str) -> list[tuple[int, dict]]:
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = f.read().splitlines()
-    except FileNotFoundError as exc:
+def _files(path: str) -> list[Path]:
+    """A file, or every top-level ``*.jsonl`` in a directory, in name order.
+
+    ⭐ THE DIRECTORY FORM EXISTS FOR THE BURN-DOWN (2026-11-16): one run per Lean file
+    over ~268 files is one call, and still ONE transaction — a bad line anywhere refuses
+    the whole batch and names its file, so the store never holds half a burn-down
+    presented as a whole one. Non-recursive on purpose: the consumer keeps prompt copies
+    in a ``prompts/`` subfolder, and nothing below the top level is a run file."""
+    p = Path(path)
+    if p.is_dir():
+        files = sorted(x for x in p.glob("*.jsonl") if x.is_file())
+        if not files:
+            raise OperationError(f"no *.jsonl files in directory {path}",
+                                 satisfied_when="the directory holds at least one run file")
+        return files
+    if not p.is_file():
         raise OperationError(f"reconstruct JSONL not found: {path}",
-                             satisfied_when="path names an existing JSONL file") from exc
-    rows: list[tuple[int, dict]] = []
-    for n, text in enumerate(raw, start=1):
-        if not text.strip():
-            continue
-        try:
-            obj = json.loads(text)
-        except json.JSONDecodeError as exc:
-            _refuse(n, f"not valid JSON ({exc})", "every non-blank line is one JSON object")
-        if not isinstance(obj, dict):
-            _refuse(n, "is not a JSON object", "every non-blank line is one JSON object")
-        rows.append((n, obj))
+                             satisfied_when="path names an existing JSONL file or a "
+                                            "directory of them")
+    return [p]
+
+
+def _read_jsonl(path: str) -> list[tuple[str, dict]]:
+    files = _files(path)
+    many = len(files) > 1 or Path(path).is_dir()
+    rows: list[tuple[str, dict]] = []
+    for f in files:
+        raw = f.read_bytes().decode("utf-8").splitlines()
+        for n, text in enumerate(raw, start=1):
+            if not text.strip():
+                continue
+            where = f"{f.name} line {n}" if many else f"line {n}"
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError as exc:
+                _refuse(where, f"not valid JSON ({exc})",
+                        "every non-blank line is one JSON object")
+            if not isinstance(obj, dict):
+                _refuse(where, "is not a JSON object", "every non-blank line is one JSON object")
+            rows.append((where, obj))
     if not rows:
         raise OperationError(f"reconstruct JSONL is empty: {path}",
                              satisfied_when="the file holds at least one RUN line")
@@ -84,7 +107,7 @@ def _event(row: dict, sha: str) -> dict:
             "line_sha256": sha}
 
 
-def _run_entry(row: dict, n: int, sha: str, skipped: list) -> dict:
+def _run_entry(row: dict, n: str, sha: str, skipped: list) -> dict:
     _need(row, n, "run_id", "commit", "brief_path", "brief_blob", "reader_prompt_blob",
           "reader_model", "started_utc", "finished_utc", "diff1_count", "examined")
     prompt_path = row.get("reader_prompt_store") or row.get("reader_prompt_path")
@@ -106,7 +129,7 @@ def _run_entry(row: dict, n: int, sha: str, skipped: list) -> dict:
     }
 
 
-def _common(row: dict, n: int) -> dict:
+def _common(row: dict, n: str) -> dict:
     _need(row, n, "run_id", "path", "git_blob_id", "decl", "key_kind", "registry_id")
     return {"run_id": row["run_id"], "path": row["path"], "git_blob_id": row["git_blob_id"],
             "line": row.get("line"), "key_kind": row["key_kind"],
@@ -115,7 +138,7 @@ def _common(row: dict, n: int) -> dict:
             "decl": row["decl"]}
 
 
-def _reading_entry(row: dict, n: int, sha: str) -> dict:
+def _reading_entry(row: dict, n: str, sha: str) -> dict:
     e = _common(row, n)
     _need(row, n, "is_example", "elaborated_type", "blind_reading")
     rid = uuid.uuid5(_READING_NS, "\x1f".join(
@@ -125,7 +148,7 @@ def _reading_entry(row: dict, n: int, sha: str) -> dict:
             "blind_reading": row["blind_reading"], "line_sha256": sha}
 
 
-def _diff1_entry(row: dict, n: int, sha: str) -> dict:
+def _diff1_entry(row: dict, n: str, sha: str) -> dict:
     e = _common(row, n)
     _need(row, n, "item_id", "prose", "signature", "kind", "disposition")
     return {"id": row["item_id"], "kind": "diff1", **e,
@@ -136,18 +159,19 @@ def _diff1_entry(row: dict, n: int, sha: str) -> dict:
 
 
 def ingest_reconstruct(document: Optional[dict], *, path: str) -> tuple[dict, list[str], dict]:
-    """Index one reconstruct JSONL file. Returns ``(doc, touched, counts)``."""
+    """Index one reconstruct JSONL file, or every top-level ``*.jsonl`` in a directory,
+    as ONE transaction. Returns ``(doc, touched, {lines, files})``."""
     doc = document if document is not None else {"schema_version": "1", "runs": [], "entries": []}
     doc.setdefault("runs", [])
     doc.setdefault("entries", [])
     rows = _read_jsonl(path)
 
     counts = {t: 0 for t in LINE_TYPES}
-    run_rows: dict[str, tuple[int, dict, str]] = {}
+    run_rows: dict[str, tuple[str, dict, str]] = {}
     skipped: dict[str, list] = {}
     readings: list[dict] = []
     items: list[dict] = []
-    events: dict[str, list[tuple[int, dict]]] = {}
+    events: dict[str, list[tuple[str, dict]]] = {}
 
     for n, row in rows:
         t = row.get("type")
@@ -230,7 +254,7 @@ def ingest_reconstruct(document: Optional[dict], *, path: str) -> tuple[dict, li
                 old["dispositions"] = want
                 touched.append(e["id"])
 
-    return doc, touched, {"lines": counts}
+    return doc, touched, {"lines": counts, "files": len(_files(path))}
 
 
 OPERATIONS = {

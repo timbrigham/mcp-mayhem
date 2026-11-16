@@ -45,7 +45,7 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from mcp_server.results import (  # noqa: E402
     CheckHeadResult, ExportResult, FindResult, GetResult, HistoryResult,
-    ReconstructVerdictResult, ValidateResult, VerifyIntegrityResult, ViewResult,
+    ReconstructCoverageResult, ReconstructVerdictResult, ValidateResult, VerifyIntegrityResult, ViewResult,
     VocabularyResult, WriteResult)
 
 from consumers.store import build_store, head_correspondence, require_source_root
@@ -788,6 +788,32 @@ def reconstruct_verdict(path: str, git_blob_id: str) -> ReconstructVerdictResult
     from consumers.readings.views import verdict_for
     doc = _store().load().get("collections", {}).get("blind_readings") or {}
     return verdict_for(doc, path, git_blob_id)
+
+
+@mcp.tool(title='Reconstruct coverage over a tree',
+          annotations=ToolAnnotations(title='Reconstruct coverage over a tree', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def reconstruct_coverage(root: str, scope: list[str], ref: str = "HEAD",
+                         limit: int = 50) -> ReconstructCoverageResult:
+    """Burn-down counter: every file in the tree of `ref` (default HEAD, what a push
+    publishes) matching `scope`, at the blob that ref carries, classified as
+    never_run / brief_moved / fail / pass, with counts that always add up to total.
+
+    `scope` HAS NO DEFAULT: pass the registry's scope for the reconstruct step (e.g.
+    ['ZeroParadox/*.lean']); matching is fnmatch, the ledger's matcher, so `*` crosses
+    `/`. `root` is the consumer's git checkout. brief_moved = every run on these bytes
+    used a brief that is not the brief at `ref`, which the ledger stales on arrival.
+    Lists are capped at `limit` per state (see `truncated`). A `pass` is sjv's
+    derivation; whether the record was appended and accepted is can_push's answer."""
+    from consumers.readings.coverage import coverage
+    try:
+        root_path = require_source_root(root)
+        doc = _store().load().get("collections", {}).get("blind_readings") or {}
+        return coverage(doc, root=root_path, ref=ref, scope=scope, limit=limit)
+    except OperationError as exc:
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        if getattr(exc, "satisfied_when", None):
+            refusal["satisfied_when"] = exc.satisfied_when
+        return refusal
 
 
 # -- publication + generic escape hatch ---------------------------------------

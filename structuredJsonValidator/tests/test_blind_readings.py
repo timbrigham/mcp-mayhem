@@ -296,3 +296,112 @@ def test_the_mcp_tools_ingest_and_answer(tmp_path, monkeypatch):
     assert server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=C)["state"] == "never_run"
     bad = server.ingest_reconstruct(path=str(tmp_path / "missing.jsonl"))
     assert bad["ok"] is False and bad["satisfied_when"]
+
+
+# -- burn-down: directory ingest (2026-11-16) -------------------------------------
+
+def test_a_directory_is_one_transaction_over_every_run_file(tmp_path):
+    s = _store(tmp_path)
+    d = tmp_path / "runs"
+    d.mkdir()
+    (d / "prompts").mkdir()                          # ignored: not top level
+    (d / "prompts" / "x.jsonl").write_bytes(b"{not json\n")
+    _write(d, _base(s), "a.jsonl")
+    _write(d, [_run(run_id="r2", diff1_count=0,
+                    examined=[{"path": "A.lean", "git_blob_id": A}])], "b.jsonl")
+    r = _ingest(s, str(d))
+    assert r["files"] == 2 and r["lines"]["run"] == 2
+    assert {x["run_id"] for x in _doc(s)["runs"]} == {RUN, "r2"}
+
+
+def test_a_bad_line_in_any_file_refuses_the_whole_directory_and_names_it(tmp_path):
+    s = _store(tmp_path)
+    d = tmp_path / "runs"
+    d.mkdir()
+    _write(d, _base(s), "a.jsonl")
+    (d / "b.jsonl").write_bytes(b"{not json\n")
+    with pytest.raises(OperationError, match="b.jsonl line 1"):
+        _ingest(s, str(d))
+    assert (s.load()["collections"].get("blind_readings") or {}).get("runs", []) == []
+
+
+# -- burn-down: coverage over a real tree ------------------------------------------
+
+import subprocess  # noqa: E402
+
+from consumers.readings.coverage import coverage  # noqa: E402
+
+_BRIEF_PATH = ".claude/commands/reconstruct.md"
+
+
+def _git(repo, *a):
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.email=e@e.invalid",
+                           "-c", "user.name=e", *a], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+def _repo(tmp_path, files):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    for rel, text in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(text.encode())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "x")
+    return repo, {rel: _git(repo, "rev-parse", f"HEAD:{rel}") for rel in files}
+
+
+def test_coverage_partitions_every_in_scope_file_into_four_states(tmp_path):
+    repo, blob = _repo(tmp_path, {"Z/a.lean": "a\n", "Z/sub/b.lean": "b\n",
+                                  "Z/c.lean": "c\n", "Z/d.lean": "d\n",
+                                  "Z/notes.md": "n\n", _BRIEF_PATH: "brief\n"})
+    cur, old = blob[_BRIEF_PATH], "9" * 40
+    s = _store(tmp_path)
+
+    def run(rid, brief, path, items=()):
+        rows = [_run(run_id=rid, brief_blob=brief, diff1_count=len(items),
+                     examined=[{"path": path, "git_blob_id": blob[path]}])]
+        for n, d in enumerate(items, 1):
+            rows.append(_diff(n, run_id=rid, item_id=f"{rid}#{n}", path=path,
+                              git_blob_id=blob[path]))
+            if d != "open":
+                rows.append(_disp(n, d, run_id=rid, item_id=f"{rid}#{n}"))
+        return rows
+
+    rows = (run("pass", cur, "Z/a.lean", ["rejected"])
+            + run("fail", cur, "Z/sub/b.lean", ["open"])
+            + run("stale", old, "Z/c.lean"))
+    d = tmp_path / "runs"
+    d.mkdir()
+    _write(d, rows, "all.jsonl")
+    _ingest(s, str(d))
+    cov = coverage(_doc(s), root=repo, ref="HEAD", scope=["Z/*.lean"])
+    assert cov["counts"] == {"never_run": 1, "brief_moved": 1, "fail": 1, "pass": 1,
+                             "total": 4}
+    assert cov["files"]["fail"] == ["Z/sub/b.lean"]      # `*` crosses `/`, like the ledger
+    assert cov["files"]["brief_moved"] == ["Z/c.lean"]
+    assert cov["files"]["never_run"] == ["Z/d.lean"]
+    assert cov["commit"] == _git(repo, "rev-parse", "HEAD")
+
+
+def test_an_old_brief_run_cannot_decide_a_file_a_current_one_read(tmp_path):
+    repo, blob = _repo(tmp_path, {"Z/a.lean": "a\n", _BRIEF_PATH: "brief\n"})
+    s = _store(tmp_path)
+    ex = [{"path": "Z/a.lean", "git_blob_id": blob["Z/a.lean"]}]
+    rows = [_run(run_id="old", brief_blob="9" * 40, diff1_count=1, examined=ex),
+            _diff(1, run_id="old", item_id="old#1", path="Z/a.lean",
+                  git_blob_id=blob["Z/a.lean"]),
+            _run(run_id="new", brief_blob=blob[_BRIEF_PATH], diff1_count=0, examined=ex)]
+    _ingest(s, _write(tmp_path, rows))
+    assert coverage(_doc(s), root=repo, ref="HEAD", scope=["Z/*.lean"])["counts"]["pass"] == 1
+
+
+def test_coverage_refuses_an_empty_scope_and_a_bad_ref(tmp_path):
+    repo, _ = _repo(tmp_path, {"Z/a.lean": "a\n"})
+    doc = {"runs": [], "entries": []}
+    with pytest.raises(OperationError, match="scope is empty"):
+        coverage(doc, root=repo, ref="HEAD", scope=[])
+    with pytest.raises(OperationError, match="failed"):
+        coverage(doc, root=repo, ref="no-such-ref", scope=["Z/*.lean"])

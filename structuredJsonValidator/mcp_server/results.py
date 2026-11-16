@@ -49,6 +49,7 @@ class WriteResult(TypedDict, total=False):
     # ingest_reconstruct: lines read from the JSONL, by line type (all of them, including
     # lines that changed nothing on a re-ingest). `touched_count` says what was NEW.
     lines: dict[str, int]
+    files: int          # ingest_reconstruct: how many JSONL files the call read
 
 
 class GetResult(TypedDict, total=False):
@@ -157,4 +158,21 @@ class ReconstructVerdictResult(TypedDict, total=False):
     items: int
     dispositions: dict[str, int]
     record: dict[str, Any] | None
+    means: str
+
+
+class ReconstructCoverageResult(TypedDict, total=False):
+    """Reconstruct coverage over every in-scope file at a ref, for the burn-down.
+
+    ⚠ `object` NAMES WHAT WAS MEASURED: the tree of `ref` at a resolved commit, never the
+    working tree or index. `counts` partitions `total` into never_run / brief_moved / fail /
+    pass and always adds up. A `pass` is sjv's derivation; the ledger's acceptance of the
+    appended record is can_push's answer, not this one."""
+    object: str
+    commit: str
+    scope: list[str]
+    briefs_at_ref: dict[str, Any]
+    counts: dict[str, int]
+    files: dict[str, list[str]]
+    truncated: dict[str, bool]
     means: str
