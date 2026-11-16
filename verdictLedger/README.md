@@ -77,6 +77,7 @@ phases:
 |---|---|---|
 | commit | the staged tree sha (`git write-tree`) | ⚠ the commit sha does **not** exist yet — checks run before the object does |
 | push / tag | the commit sha, or the range | the range is real by then |
+| a declared subset of one tree (`kind: scope`) | `<tree sha>/<run id>` | for MANY disjoint rounds over ONE tree (a burn-down): each round needs its own revision slot, and `revision` is for regrades. The files are the record's subjects. Defined 2026-11-16; any other value shape is refused. |
 
 Verified: `write-tree` before any commit == `rev-parse HEAD^{tree}` after it,
 deterministic, and content-addressed — revert to content that previously passed and

@@ -9,6 +9,8 @@ the rule named, and the caller treats that as UNDECIDED.
 
 from __future__ import annotations
 
+import re
+
 from typing import Optional
 
 from core import schema
@@ -16,6 +18,9 @@ from core.config import Config
 
 SIGNABLE_EXEMPT_FAMILIES = ()      # reserved: classes that may never be signed away
 
+
+
+_SCOPE_BASIS = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?/[A-Za-z0-9._:-]+$")
 
 def structural(record: dict) -> list[str]:
     """Shape before rules. A rule cannot judge a record it cannot read."""
@@ -46,6 +51,28 @@ def structural(record: dict) -> list[str]:
             out.append(f"basis.kind must be one of {schema.BASIS_KINDS}")
         if not basis.get("value"):
             out.append("basis.value must be set")
+        # ⭐ `scope` = A DECLARED SUBSET OF ONE TREE, defined 2026-11-16. The kind sat in
+        # BASIS_KINDS from the first commit (6599499) with no stated meaning and zero uses in
+        # ~25,700 records. It got one when the consumer's reconstruct burn-down hit V13:
+        # 41 batches, each judging DIFFERENT files of the SAME tree (c824c3c3), all keyed
+        # (step, tree) — so disjoint batches were spending the revision chain that exists
+        # for REGRADES, and the sixth batch was refused at max_depth 5. Coverage was never
+        # at risk (it keys on (step, path, blob)); the slot identity was.
+        #
+        # ⚠ WHY NOT A BARE RUN ID, which was the first proposal: it drops the one claim a
+        # basis exists to make, WHICH CONTENT WAS JUDGED, and keeps only who ran it. The
+        # value therefore carries BOTH: `<tree sha>/<run id>`. The tree half says what was
+        # read; the run half names the subset, whose exact files are the record's subjects.
+        # ⛔ Constrained rather than free-form so the kind cannot drift into a junk drawer:
+        # an undefined kind gets its meaning from whoever uses it first, and that is how a
+        # field ends up meaning three things.
+        if basis.get("kind") == "scope" and basis.get("value") and not _SCOPE_BASIS.match(
+                str(basis.get("value"))):
+            out.append(
+                f"basis kind 'scope' is a declared subset of one tree; value "
+                f"{basis.get('value')!r} is not '<tree sha>/<run id>'. SATISFIED WHEN: value "
+                f"is the 40- or 64-hex tree that was read, a '/', then the run id naming the "
+                f"subset (letters, digits, . _ : -), e.g. 'c824c3c3…/bd-B05-2026-11-16'.")
 
     # ⚠⚠ `failing` IS ONLY MEANINGFUL ON A BLOCKING VERDICT, AND A MISPLACED ONE IS THE
     # WORST SHAPE AVAILABLE: the resolver reads it only where it blocks, so a `failing` list
