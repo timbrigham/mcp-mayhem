@@ -160,6 +160,9 @@ class ReconstructVerdictResult(TypedDict, total=False):
     record: dict[str, Any] | None
     means: str
     superseded_runs: list[str]   # brief_moved: the runs made under a brief no longer current
+    ranges: list[list[int]]      # partial: the line ranges the part-runs read
+    gaps: list[list[int]] | None # partial: uncovered spans; None = line count unknown
+    line_count: int | None       # partial: N measured from the blob itself
     judged_at: str               # the commit `ref` resolved to
 
 

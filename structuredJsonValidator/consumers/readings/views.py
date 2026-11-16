@@ -22,7 +22,8 @@ How each current disposition lands on the verdict for its own (path, blob):
 
 from __future__ import annotations
 
-from typing import Optional
+import fnmatch
+from typing import Callable, Optional
 
 STEP = "reconstruct"
 BLOCKING = ("open", "applied")
@@ -48,8 +49,25 @@ def _outstanding(e: dict) -> dict:
             "note": f"{e['id']} L{e.get('line')} {e.get('diff_kind')}: {detail}"}
 
 
+def _range_gaps(ranges: list, n: Optional[int]) -> Optional[list]:
+    """Line spans of 1..n that no range covers, or None if n is unknown. A range ending
+    past n is reported as a gap of its own: it was read against different bytes."""
+    if n is None:
+        return None
+    gaps, upto = [], 0
+    for s, e in sorted(ranges):
+        if s > upto + 1:
+            gaps.append([upto + 1, s - 1])
+        upto = max(upto, e)
+    if upto < n:
+        gaps.append([upto + 1, n])
+    gaps += [[s, e] for s, e in ranges if e > n]
+    return gaps
+
+
 def verdict_for(document: dict, path: str, git_blob_id: str,
-                current_briefs: Optional[dict] = None) -> dict:
+                current_briefs: Optional[dict] = None,
+                line_counter: Optional[Callable[[str], Optional[int]]] = None) -> dict:
     """The record body for one (path, blob).
 
     ``current_briefs`` maps a brief path to its blob at the ref being judged. When it
@@ -82,6 +100,25 @@ def verdict_for(document: dict, path: str, git_blob_id: str,
                     "means": "every run on these bytes used a brief that is not the brief at "
                              "the judged ref; the ledger would stale such a record on "
                              "arrival. A run under the current brief is owed."}
+    # ⛔ PART-RUNS DECIDE NOTHING UNTIL THEY COVER THE FILE. The consumer's report,
+    # 2026-11-16: Die.lean is read by three readers on line ranges, and with one part
+    # ingested the union of runs read PASS for a file read one-third. A true value (no
+    # open item in the lines read) on the wrong object (the file). A whole-file run
+    # (no line_range) covers it outright; otherwise the ranges must cover 1..N, with N
+    # measured from the blob itself, and an UNKNOWN N fails closed.
+    if all("line_range" in r for r in runs):
+        ranges = [r["line_range"] for r in runs]
+        n = line_counter(git_blob_id) if line_counter else None
+        gaps = _range_gaps(ranges, n)
+        if gaps is None or gaps:
+            return {"state": "partial", "path": path, "git_blob_id": git_blob_id,
+                    "record": None, "runs": sorted(r["run_id"] for r in runs),
+                    "ranges": sorted(ranges), "line_count": n, "gaps": gaps,
+                    "means": ("part-runs cover only some lines of this file; it is decided "
+                              "when ranges cover 1..line_count with no gap"
+                              if gaps else
+                              "part-runs read these bytes but the file's line count could "
+                              "not be measured, so completeness is unknown; not a pass")}
     run_ids = sorted(r["run_id"] for r in runs)
     items = sorted((e for e in document.get("entries", [])
                     if e.get("kind") == "diff1" and e.get("path") == path
@@ -127,7 +164,10 @@ def verdict_for(document: dict, path: str, git_blob_id: str,
             "record": record}
 
 
-def run_records(document: dict, run_id: str, current_briefs: dict) -> dict:
+def run_records(document: dict, run_id: str, current_briefs: dict,
+                line_counter: Optional[Callable[[str], Optional[int]]] = None,
+                scope: Optional[list] = None,
+                scope_exclude: Optional[list] = None) -> dict:
     """Split-round record bodies for every (path, blob) one run examined: ONE PASS over
     the files whose items are all decided, ONE FAIL over the files with an open or
     applied item, and every file that gets neither named as an exception.
@@ -143,7 +183,10 @@ def run_records(document: dict, run_id: str, current_briefs: dict) -> dict:
     over bytes nobody indicted is the over-reach `failing` exists to prevent.
     ⚠ NOTHING IS DROPPED SILENTLY. A file that is `never_run` (impossible for its own
     run unless the store is inconsistent) or `brief_moved` (the run's brief is not the
-    one at the judged ref) is listed under `exceptions` and gets no record."""
+    one at the judged ref), `partial` (part-runs not yet covering the file), or
+    `out_of_scope` (outside the step's `scope`, or inside `scope_exclude`, when the caller
+    passes them: a record on a path the step does not own decides nothing at the gate and
+    sits in the stream to be misread) is listed under `exceptions` and gets no record."""
     run = next((r for r in document.get("runs", []) if r.get("run_id") == run_id), None)
     if run is None:
         return {"state": "unknown_run", "run_id": run_id, "files": 0, "passed": 0,
@@ -151,11 +194,19 @@ def run_records(document: dict, run_id: str, current_briefs: dict) -> dict:
                 "means": "no indexed run has this run_id; ingest it first"}
     decided, failed, exceptions, evidence = [], [], [], []
     for x in sorted(run.get("examined", []), key=lambda x: (x["path"], x["git_blob_id"])):
-        v = verdict_for(document, x["path"], x["git_blob_id"], current_briefs=current_briefs)
+        if scope is not None and not (
+                any(fnmatch.fnmatch(x["path"], g) for g in scope)
+                and not any(fnmatch.fnmatch(x["path"], g) for g in (scope_exclude or []))):
+            exceptions.append({"path": x["path"], "git_blob_id": x["git_blob_id"],
+                               "state": "out_of_scope"})
+            continue
+        v = verdict_for(document, x["path"], x["git_blob_id"], current_briefs=current_briefs,
+                        line_counter=line_counter)
         if v["record"] is None:
             exc = {"path": x["path"], "git_blob_id": x["git_blob_id"], "state": v["state"]}
-            if "superseded_runs" in v:
-                exc["superseded_runs"] = v["superseded_runs"]
+            for k in ("superseded_runs", "ranges", "gaps", "line_count"):
+                if k in v:
+                    exc[k] = v[k]
             exceptions.append(exc)
             continue
         for ev in v["record"]["evidence"]:

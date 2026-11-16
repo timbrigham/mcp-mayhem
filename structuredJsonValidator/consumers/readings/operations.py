@@ -115,7 +115,14 @@ def _run_entry(row: dict, n: str, sha: str, skipped: list) -> dict:
         _refuse(n, "RUN names no reader prompt path",
                 "RUN carries reader_prompt_store (preferred) or reader_prompt_path beside "
                 "reader_prompt_blob")
-    return {
+    lr = row.get("line_range")
+    if lr is not None and not (isinstance(lr, list) and len(lr) == 2
+                               and all(isinstance(x, int) and not isinstance(x, bool)
+                                       and x >= 1 for x in lr) and lr[0] <= lr[1]):
+        _refuse(n, f"line_range {lr!r} is not [start, end] with 1 <= start <= end",
+                "a part-run's RUN carries line_range as two positive integers, start <= end, "
+                "inclusive, 1-based")
+    out = {
         "run_id": row["run_id"], "commit": row["commit"],
         "brief": {"path": row["brief_path"], "git_blob_id": row["brief_blob"]},
         "reader_prompt": {"path": prompt_path, "git_blob_id": row["reader_prompt_blob"]},
@@ -127,6 +134,11 @@ def _run_entry(row: dict, n: str, sha: str, skipped: list) -> dict:
         "skipped": skipped,
         "line_sha256": sha,
     }
+    # ⚠ The key is written ONLY when the line carried it, so every run ingested before
+    # this field existed re-ingests byte-identical (a changed stored run refuses).
+    if lr is not None:
+        out["line_range"] = list(lr)
+    return out
 
 
 def _common(row: dict, n: str) -> dict:

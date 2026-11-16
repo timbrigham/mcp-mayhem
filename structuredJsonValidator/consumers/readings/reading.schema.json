@@ -55,7 +55,12 @@
             }
           }
         },
-        "line_sha256": { "$ref": "#/$defs/sha256" }
+        "line_sha256": { "$ref": "#/$defs/sha256" },
+        "line_range": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "items": { "type": "integer", "minimum": 1 },
+          "$comment": "Optional. A PART-run that read only lines [start, end] of its ONE examined file (2026-11-16: Die.lean, 659 declarations, split across three readers). A file whose current-brief runs are all ranged is decided only when the ranges cover 1..N with no gap; until then it is `partial`. Absent = the run read the whole file."
+        }
       }
     },
     "disposition_event": {

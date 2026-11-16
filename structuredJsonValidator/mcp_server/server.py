@@ -792,14 +792,15 @@ def reconstruct_verdict(path: str, git_blob_id: str, root: str,
     items named in the reason. Delegated, tier A, evidence = the deciding runs' brief
     and reader prompt blobs. Your emitter adds the basis and appends it UNCHANGED;
     this tool never writes to the ledger."""
-    from consumers.readings.coverage import briefs_at, resolve_commit
+    from consumers.readings.coverage import briefs_at, line_counter, resolve_commit
     from consumers.readings.views import verdict_for
     try:
         root_path = require_source_root(root)
         doc = _store().load().get("collections", {}).get("blind_readings") or {}
         commit = resolve_commit(root_path, ref)
         out = verdict_for(doc, path, git_blob_id,
-                          current_briefs=briefs_at(root_path, commit, doc))
+                          current_briefs=briefs_at(root_path, commit, doc),
+                          line_counter=line_counter(root_path))
         out["judged_at"] = commit
         return out
     except OperationError as exc:
@@ -811,7 +812,9 @@ def reconstruct_verdict(path: str, git_blob_id: str, root: str,
 
 @mcp.tool(title='Reconstruct records for a run',
           annotations=ToolAnnotations(title='Reconstruct records for a run', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-def reconstruct_run_records(run_id: str, root: str, ref: str = "HEAD") -> ReconstructRunRecordsResult:
+def reconstruct_run_records(run_id: str, root: str, ref: str = "HEAD",
+                            scope: Optional[list[str]] = None,
+                            scope_exclude: Optional[list[str]] = None) -> ReconstructRunRecordsResult:
     """Split-round ledger record bodies for every (path, blob) one indexed run examined:
     ONE PASS over the files whose DIFF-1 items are all decided (carried items unioned
     into `outstanding`, each with its `path`), ONE FAIL over the files with an open or
@@ -819,15 +822,21 @@ def reconstruct_run_records(run_id: str, root: str, ref: str = "HEAD") -> Recons
     and `exceptions` for any file that gets neither (brief_moved / never_run), so
     nothing is dropped silently. Each file is judged exactly as reconstruct_verdict
     judges it, at `ref` (default HEAD), with only current-brief runs deciding.
+    Pass the registry's `scope` and `scope_exclude`: files outside them land in
+    `exceptions` as out_of_scope rather than getting a record that decides nothing.
+    A file read only by part-runs (`line_range`) whose ranges do not yet cover every
+    line is `partial` in `exceptions`, with its gaps.
     `state`: recorded | no_records | unknown_run. Append each body UNCHANGED, adding
     only basis, run and revision; this tool never writes to the ledger."""
-    from consumers.readings.coverage import briefs_at, resolve_commit
+    from consumers.readings.coverage import briefs_at, line_counter, resolve_commit
     from consumers.readings.views import run_records
     try:
         root_path = require_source_root(root)
         doc = _store().load().get("collections", {}).get("blind_readings") or {}
         commit = resolve_commit(root_path, ref)
-        out = run_records(doc, run_id, briefs_at(root_path, commit, doc))
+        out = run_records(doc, run_id, briefs_at(root_path, commit, doc),
+                          line_counter=line_counter(root_path), scope=scope,
+                          scope_exclude=scope_exclude)
         out["judged_at"] = commit
         return out
     except OperationError as exc:

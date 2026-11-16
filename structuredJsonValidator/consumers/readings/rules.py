@@ -42,6 +42,10 @@ def validate(document: dict) -> list[str]:
         if rid in by_run:
             out.append(f"runs[{i}]: duplicate run_id {rid!r}")
         by_run[rid] = r
+        if "line_range" in r and len(r.get("examined", [])) != 1:
+            out.append(f"runs[{i}] ({rid!r}): a line_range run must examine exactly ONE file; "
+                       f"a range is lines of a file, and it names "
+                       f"{len(r.get('examined', []))}")
     seen: dict = {}
     diff1_per_run: dict = {}
     for i, e in enumerate(document.get("entries", [])):

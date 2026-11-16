@@ -384,8 +384,8 @@ def test_coverage_partitions_every_in_scope_file_into_four_states(tmp_path):
     _write(d, rows, "all.jsonl")
     _ingest(s, str(d))
     cov = coverage(_doc(s), root=repo, ref="HEAD", scope=["Z/*.lean"])
-    assert cov["counts"] == {"never_run": 1, "brief_moved": 1, "fail": 1, "pass": 1,
-                             "total": 4}
+    assert cov["counts"] == {"never_run": 1, "brief_moved": 1, "partial": 0, "fail": 1,
+                             "pass": 1, "total": 4}
     assert cov["files"]["fail"] == ["Z/sub/b.lean"]      # `*` crosses `/`, like the ledger
     assert cov["files"]["brief_moved"] == ["Z/c.lean"]
     assert cov["files"]["never_run"] == ["Z/d.lean"]
@@ -522,3 +522,113 @@ def test_an_old_brief_run_yields_exceptions_and_no_records(tmp_path):
 def test_an_unknown_run_says_so(tmp_path):
     s = _store(tmp_path)
     assert run_records(_doc(s), "nope", {})["state"] == "unknown_run"
+
+
+# -- part-runs (line_range) decide only when they cover the file (2026-11-16) -------
+
+def _part(rid, lr, path="A.lean", blob=A, **over):
+    return _run(run_id=rid, line_range=lr, diff1_count=0,
+                examined=[{"path": path, "git_blob_id": blob}], **over)
+
+
+def _count(n):
+    return lambda blob: n
+
+
+def test_one_part_of_three_is_partial_not_a_pass(tmp_path):
+    """⛔ The consumer's report: with one of Die.lean's three parts ingested, the union of
+    runs read PASS for a file read one-third."""
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 100])]))
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                    line_counter=_count(300))
+    assert v["state"] == "partial" and v["record"] is None
+    assert v["gaps"] == [[101, 300]]
+
+
+def test_parts_that_cover_every_line_decide(tmp_path):
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 100]), _part("p2", [101, 220]),
+                                 _part("p3", [200, 300])]))
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                    line_counter=_count(300))
+    assert v["state"] == "recorded" and v["record"]["verdict"] == "PASS"
+
+
+def test_a_gap_in_the_middle_is_named(tmp_path):
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 100]), _part("p3", [201, 300])]))
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                    line_counter=_count(300))
+    assert v["state"] == "partial" and v["gaps"] == [[101, 200]]
+
+
+def test_an_unknown_line_count_fails_closed(tmp_path):
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 300])]))
+    for counter in (None, _count(None)):
+        v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                        line_counter=counter)
+        assert v["state"] == "partial" and v["gaps"] is None
+
+
+def test_a_range_past_the_end_is_not_coverage(tmp_path):
+    """A range ending past N was read against different bytes."""
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 400])]))
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                    line_counter=_count(300))
+    assert v["state"] == "partial" and [1, 400] in v["gaps"]
+
+
+def test_a_whole_file_run_covers_it_outright(tmp_path):
+    s = _store(tmp_path)
+    whole = _run(run_id="w", diff1_count=0, examined=[{"path": "A.lean", "git_blob_id": A}])
+    _ingest(s, _write(tmp_path, [_part("p1", [1, 10]), whole]))
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs={_BRIEF_PATH: BRIEF},
+                    line_counter=_count(300))
+    assert v["state"] == "recorded"
+
+
+def test_a_ranged_run_must_examine_one_file(tmp_path):
+    s = _store(tmp_path)
+    with pytest.raises(ValidationError, match="exactly ONE file"):
+        _ingest(s, _write(tmp_path, [_run(line_range=[1, 5], diff1_count=0)]))
+
+
+def test_a_malformed_line_range_refuses(tmp_path):
+    s = _store(tmp_path)
+    with pytest.raises(OperationError, match="line_range"):
+        _ingest(s, _write(tmp_path, [_part("p1", [9, 3])]))
+
+
+def test_runs_without_line_range_reingest_unchanged(tmp_path):
+    """The key is written only when present, so a run stored before the field existed
+    still compares equal on re-ingest."""
+    s = _store(tmp_path)
+    p = _write(tmp_path, _base(s))
+    _ingest(s, p)
+    assert "line_range" not in _doc(s)["runs"][0]
+    assert _ingest(s, p)["touched_count"] == 0
+
+
+def test_the_git_counter_measures_the_blob(tmp_path):
+    from consumers.readings.coverage import line_counter
+    repo, blob = _repo(tmp_path, {"Z/a.lean": "1\n2\n3\n", "Z/b.lean": "1\n2"})
+    c = line_counter(repo)
+    assert (c(blob["Z/a.lean"]), c(blob["Z/b.lean"]), c("0" * 40)) == (3, 2, None)
+
+
+def test_run_records_reports_partial_and_out_of_scope_as_exceptions(tmp_path):
+    s = _store(tmp_path)
+    _three_file_run(s, tmp_path)
+    out = run_records(_doc(s), RUN, {_BRIEF_PATH: BRIEF}, scope=["*.lean"])
+    assert {(x["path"], x["state"]) for x in out["exceptions"]} == {("CLAIMS.md", "out_of_scope")}
+    assert [r["verdict"] for r in out["records"]] == ["PASS"]          # no FAIL on CLAIMS.md
+    excl = run_records(_doc(s), RUN, {_BRIEF_PATH: BRIEF}, scope=["*.lean"],
+                       scope_exclude=["D.lean"])
+    assert {x["path"] for x in excl["exceptions"]} == {"CLAIMS.md", "D.lean"}
+    s2 = _store(tmp_path / "two")
+    _ingest(s2, _write(tmp_path, [_part("p1", [1, 100])], "part.jsonl"))
+    part = run_records(_doc(s2), "p1", {_BRIEF_PATH: BRIEF}, line_counter=_count(300))
+    assert part["exceptions"][0]["state"] == "partial" and part["records"] == []

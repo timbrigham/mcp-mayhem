@@ -38,7 +38,7 @@ from typing import Optional
 from consumers.readings.views import verdict_for
 from core.errors import OperationError
 
-STATES = ("never_run", "brief_moved", "fail", "pass")
+STATES = ("never_run", "brief_moved", "partial", "fail", "pass")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -66,6 +66,25 @@ def briefs_at(root: Path, commit: str, document: dict) -> dict:
     return out
 
 
+def line_counter(root: Path):
+    """A memoised blob -> line count reader over ``root``'s object store. Counts lines the
+    way an editor numbers them: a final line without a newline still counts. None if the
+    blob is not in the repository, which makes a ranged file `partial`, never decided."""
+    memo: dict = {}
+
+    def count(blob: str) -> Optional[int]:
+        if blob not in memo:
+            r = subprocess.run(["git", "-C", str(root), "cat-file", "blob", blob],
+                               capture_output=True)
+            if r.returncode != 0:
+                memo[blob] = None
+            else:
+                b = r.stdout
+                memo[blob] = b.count(b"\n") + (1 if b and not b.endswith(b"\n") else 0)
+        return memo[blob]
+    return count
+
+
 def coverage(document: dict, *, root: Path, ref: str, scope: list,
              scope_exclude: Optional[list] = None, limit: int = 50) -> dict:
     if not scope or not all(isinstance(g, str) and g for g in scope):
@@ -85,10 +104,11 @@ def coverage(document: dict, *, root: Path, ref: str, scope: list,
     files.sort()
 
     current = briefs_at(root, commit, document)
+    counter = line_counter(root)
     buckets: dict = {s: [] for s in STATES}
     for path, blob in files:
-        v = verdict_for(document, path, blob, current_briefs=current)
-        if v["state"] in ("never_run", "brief_moved"):
+        v = verdict_for(document, path, blob, current_briefs=current, line_counter=counter)
+        if v["state"] in ("never_run", "brief_moved", "partial"):
             buckets[v["state"]].append(path)
         else:
             buckets["pass" if v["record"]["verdict"] == "PASS" else "fail"].append(path)
