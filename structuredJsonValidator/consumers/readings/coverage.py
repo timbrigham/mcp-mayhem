@@ -33,6 +33,7 @@ from __future__ import annotations
 import fnmatch
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 from consumers.readings.views import verdict_for
 from core.errors import OperationError
@@ -50,50 +51,47 @@ def _git(root: Path, *args: str) -> str:
     return r.stdout
 
 
+def resolve_commit(root: Path, ref: str) -> str:
+    return _git(root, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+
+
+def briefs_at(root: Path, commit: str, document: dict) -> dict:
+    """Every brief path any indexed run names, mapped to its blob at ``commit`` (None if
+    the path does not exist there, which matches no run and so decides nothing)."""
+    out: dict = {}
+    for p in sorted({r["brief"]["path"] for r in document.get("runs", [])}):
+        r = subprocess.run(["git", "-C", str(root), "rev-parse", f"{commit}:{p}"],
+                           capture_output=True, text=True)
+        out[p] = r.stdout.strip() if r.returncode == 0 else None
+    return out
+
+
 def coverage(document: dict, *, root: Path, ref: str, scope: list,
-             limit: int = 50) -> dict:
+             scope_exclude: Optional[list] = None, limit: int = 50) -> dict:
     if not scope or not all(isinstance(g, str) and g for g in scope):
         raise OperationError(
             "scope is empty",
             satisfied_when="pass the registry's `scope` for the reconstruct step, e.g. "
                            "['ZeroParadox/*.lean']; an empty scope would report 0 of 0 as done")
-    commit = _git(root, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+    commit = resolve_commit(root, ref)
     files: list[tuple[str, str]] = []
     for line in _git(root, "ls-tree", "-r", commit).splitlines():
         meta, _, path = line.partition("\t")
         parts = meta.split()
         if len(parts) == 3 and parts[1] == "blob" and any(
-                fnmatch.fnmatch(path, g) for g in scope):
+                fnmatch.fnmatch(path, g) for g in scope) and not any(
+                fnmatch.fnmatch(path, g) for g in (scope_exclude or [])):
             files.append((path, parts[2]))
     files.sort()
 
-    brief_at_ref: dict = {}
-
-    def _brief_current(run: dict) -> bool:
-        p = run["brief"]["path"]
-        if p not in brief_at_ref:
-            out = subprocess.run(["git", "-C", str(root), "rev-parse", f"{commit}:{p}"],
-                                 capture_output=True, text=True)
-            brief_at_ref[p] = out.stdout.strip() if out.returncode == 0 else None
-        return brief_at_ref[p] == run["brief"]["git_blob_id"]
-
-    runs_by_id = {r["run_id"]: r for r in document.get("runs", [])}
+    current = briefs_at(root, commit, document)
     buckets: dict = {s: [] for s in STATES}
     for path, blob in files:
-        v = verdict_for(document, path, blob)
-        if v["state"] == "never_run":
-            buckets["never_run"].append(path)
-            continue
-        current = [rid for rid in v["runs"] if _brief_current(runs_by_id[rid])]
-        if not current:
-            buckets["brief_moved"].append(path)
-            continue
-        # Re-derive over CURRENT-brief runs only, so an old-brief run's items cannot
-        # decide a file the current brief has also read.
-        sub = {"runs": [runs_by_id[r] for r in current],
-               "entries": document.get("entries", [])}
-        verdict = verdict_for(sub, path, blob)["record"]["verdict"]
-        buckets["pass" if verdict == "PASS" else "fail"].append(path)
+        v = verdict_for(document, path, blob, current_briefs=current)
+        if v["state"] in ("never_run", "brief_moved"):
+            buckets[v["state"]].append(path)
+        else:
+            buckets["pass" if v["record"]["verdict"] == "PASS" else "fail"].append(path)
 
     counts = {s: len(buckets[s]) for s in STATES}
     counts["total"] = len(files)
@@ -104,7 +102,8 @@ def coverage(document: dict, *, root: Path, ref: str, scope: list,
         "object": f"tree of {ref} at commit {commit}",
         "commit": commit,
         "scope": list(scope),
-        "briefs_at_ref": brief_at_ref,
+        "scope_exclude": list(scope_exclude or []),
+        "briefs_at_ref": current,
         "counts": counts,
         "files": {s: buckets[s][:limit] for s in STATES},
         "truncated": {s: len(buckets[s]) > limit for s in STATES},

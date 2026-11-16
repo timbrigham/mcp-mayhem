@@ -33,7 +33,22 @@ def _current(item: dict) -> Optional[str]:
     return evs[-1].get("disposition") if evs else None
 
 
-def verdict_for(document: dict, path: str, git_blob_id: str) -> dict:
+def verdict_for(document: dict, path: str, git_blob_id: str,
+                current_briefs: Optional[dict] = None) -> dict:
+    """The record body for one (path, blob).
+
+    ``current_briefs`` maps a brief path to its blob at the ref being judged. When it
+    is given, ONLY runs made under the current brief decide, and only they appear in
+    `evidence`. ⛔ Measured 2026-11-16 by the consumer, before this parameter existed:
+    GapDecoder dc77bfe0 had run w8r1 (brief d8d36a3b) and run w10 (brief d3642ae3),
+    and the served record cited BOTH briefs. The ledger stales a delegated record when
+    ANY evidence blob it names is not current, so the old brief would have staled a
+    record the current run had earned. The coverage view already excluded old-brief
+    runs; the verdict did not, so the two answered differently about the same bytes.
+    ⚠ Runs exist but none is current -> ``brief_moved`` with no record: a run under the
+    current brief is owed, which is not a pass and not ``never_run`` either.
+    ``current_briefs=None`` keeps every run (internal callers only; the MCP tool
+    always supplies it)."""
     runs = [r for r in document.get("runs", [])
             if any(x.get("path") == path and x.get("git_blob_id") == git_blob_id
                    for x in r.get("examined", []))]
@@ -42,6 +57,16 @@ def verdict_for(document: dict, path: str, git_blob_id: str) -> dict:
                 "record": None,
                 "means": "no indexed run examined these bytes; a run is owed. This is "
                          "not a pass."}
+    if current_briefs is not None:
+        old = sorted(r["run_id"] for r in runs
+                     if current_briefs.get(r["brief"]["path"]) != r["brief"]["git_blob_id"])
+        runs = [r for r in runs if r["run_id"] not in old]
+        if not runs:
+            return {"state": "brief_moved", "path": path, "git_blob_id": git_blob_id,
+                    "record": None, "superseded_runs": old,
+                    "means": "every run on these bytes used a brief that is not the brief at "
+                             "the judged ref; the ledger would stale such a record on "
+                             "arrival. A run under the current brief is owed."}
     run_ids = sorted(r["run_id"] for r in runs)
     items = sorted((e for e in document.get("entries", [])
                     if e.get("kind") == "diff1" and e.get("path") == path

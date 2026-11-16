@@ -775,24 +775,43 @@ def ingest_reconstruct(path: str) -> WriteResult:
 
 @mcp.tool(title='Reconstruct verdict for a blob',
           annotations=ToolAnnotations(title='Reconstruct verdict for a blob', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-def reconstruct_verdict(path: str, git_blob_id: str) -> ReconstructVerdictResult:
+def reconstruct_verdict(path: str, git_blob_id: str, root: str,
+                        ref: str = "HEAD") -> ReconstructVerdictResult:
     """The ledger `reconstruct` record body for one (path, git_blob_id).
 
-    Read `state` first. `never_run`: no indexed run examined these bytes; `record` is
-    None and a run is owed. That is NOT a pass. `recorded`: any DIFF-1 item still
-    `open`, or `applied` (fixed in a NEWER blob, so these bytes still carry it), makes
-    a FAIL with `failing` naming the path; otherwise a PASS, with `carried` items as
-    ordinary `outstanding` and `rejected` items named in the reason. The record is
-    delegated, tier A, with evidence naming the brief and reader prompt blobs. Your
-    emitter adds the basis and appends it; this tool never writes to the ledger."""
+    `root` is the consumer's git checkout and `ref` the commit being judged (default
+    HEAD): only runs made under the brief that `ref` carries DECIDE, and only they are
+    cited as evidence, because the ledger stales a record naming any brief blob that is
+    not current. Read `state` first. `never_run`: no indexed run examined these bytes.
+    `brief_moved`: runs did, but none under the current brief (`superseded_runs`
+    names them); a run is owed. Neither is a pass, and both carry `record` None.
+    `recorded`: any DIFF-1 item still `open`, or `applied` (fixed in a NEWER blob, so
+    these bytes still carry it), makes a FAIL with `failing` naming the path;
+    otherwise a PASS, with `carried` items as ordinary `outstanding` and `rejected`
+    items named in the reason. Delegated, tier A, evidence = the deciding runs' brief
+    and reader prompt blobs. Your emitter adds the basis and appends it UNCHANGED;
+    this tool never writes to the ledger."""
+    from consumers.readings.coverage import briefs_at, resolve_commit
     from consumers.readings.views import verdict_for
-    doc = _store().load().get("collections", {}).get("blind_readings") or {}
-    return verdict_for(doc, path, git_blob_id)
+    try:
+        root_path = require_source_root(root)
+        doc = _store().load().get("collections", {}).get("blind_readings") or {}
+        commit = resolve_commit(root_path, ref)
+        out = verdict_for(doc, path, git_blob_id,
+                          current_briefs=briefs_at(root_path, commit, doc))
+        out["judged_at"] = commit
+        return out
+    except OperationError as exc:
+        refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
+        if getattr(exc, "satisfied_when", None):
+            refusal["satisfied_when"] = exc.satisfied_when
+        return refusal
 
 
 @mcp.tool(title='Reconstruct coverage over a tree',
           annotations=ToolAnnotations(title='Reconstruct coverage over a tree', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 def reconstruct_coverage(root: str, scope: list[str], ref: str = "HEAD",
+                         scope_exclude: Optional[list[str]] = None,
                          limit: int = 50) -> ReconstructCoverageResult:
     """Burn-down counter: every file in the tree of `ref` (default HEAD, what a push
     publishes) matching `scope`, at the blob that ref carries, classified as
@@ -800,7 +819,8 @@ def reconstruct_coverage(root: str, scope: list[str], ref: str = "HEAD",
 
     `scope` HAS NO DEFAULT: pass the registry's scope for the reconstruct step (e.g.
     ['ZeroParadox/*.lean']); matching is fnmatch, the ledger's matcher, so `*` crosses
-    `/`. `root` is the consumer's git checkout. brief_moved = every run on these bytes
+    `/`. Pass the registry's `scope_exclude` too, or excluded files are counted.
+    `root` is the consumer's git checkout. brief_moved = every run on these bytes
     used a brief that is not the brief at `ref`, which the ledger stales on arrival.
     Lists are capped at `limit` per state (see `truncated`). A `pass` is sjv's
     derivation; whether the record was appended and accepted is can_push's answer."""
@@ -808,7 +828,8 @@ def reconstruct_coverage(root: str, scope: list[str], ref: str = "HEAD",
     try:
         root_path = require_source_root(root)
         doc = _store().load().get("collections", {}).get("blind_readings") or {}
-        return coverage(doc, root=root_path, ref=ref, scope=scope, limit=limit)
+        return coverage(doc, root=root_path, ref=ref, scope=scope,
+                        scope_exclude=scope_exclude, limit=limit)
     except OperationError as exc:
         refusal = {"ok": False, "error_type": OperationError.error_type, "error": str(exc)}
         if getattr(exc, "satisfied_when", None):

@@ -159,6 +159,8 @@ class ReconstructVerdictResult(TypedDict, total=False):
     dispositions: dict[str, int]
     record: dict[str, Any] | None
     means: str
+    superseded_runs: list[str]   # brief_moved: the runs made under a brief no longer current
+    judged_at: str               # the commit `ref` resolved to
 
 
 class ReconstructCoverageResult(TypedDict, total=False):
@@ -171,6 +173,7 @@ class ReconstructCoverageResult(TypedDict, total=False):
     object: str
     commit: str
     scope: list[str]
+    scope_exclude: list[str]
     briefs_at_ref: dict[str, Any]
     counts: dict[str, int]
     files: dict[str, list[str]]

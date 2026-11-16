@@ -291,9 +291,15 @@ def test_the_mcp_tools_ingest_and_answer(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_store", lambda: s)
     r = server.ingest_reconstruct(path=_write(tmp_path, _base(s)))
     assert r["ok"] is True and r["lines"]["diff1"] == 2
-    v = server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=B)
-    assert v["state"] == "recorded" and v["record"]["verdict"] == "FAIL"
-    assert server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=C)["state"] == "never_run"
+    repo, _ = _repo(tmp_path, {_BRIEF_PATH: "brief\n"})
+    # The fixture's brief blob is BRIEF, not this repo's, so the only run is old-brief:
+    v = server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=B, root=str(repo))
+    assert v["state"] == "brief_moved" and v["superseded_runs"] == [RUN]
+    assert server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=C,
+                                      root=str(repo))["state"] == "never_run"
+    bad_root = server.reconstruct_verdict(path="CLAIMS.md", git_blob_id=B,
+                                          root=str(tmp_path / "nowhere"))
+    assert bad_root["ok"] is False and bad_root["satisfied_when"]
     bad = server.ingest_reconstruct(path=str(tmp_path / "missing.jsonl"))
     assert bad["ok"] is False and bad["satisfied_when"]
 
@@ -405,3 +411,42 @@ def test_coverage_refuses_an_empty_scope_and_a_bad_ref(tmp_path):
         coverage(doc, root=repo, ref="HEAD", scope=[])
     with pytest.raises(OperationError, match="failed"):
         coverage(doc, root=repo, ref="no-such-ref", scope=["Z/*.lean"])
+
+
+# -- only current-brief runs decide, and only they are cited (2026-11-16) ---------
+
+def test_the_verdict_cites_only_current_brief_runs(tmp_path):
+    """⛔ The consumer's report: GapDecoder carried an old-brief run and a current one, and
+    the served record cited BOTH briefs, so the ledger would have staled a record the
+    current run had earned."""
+    s = _store(tmp_path)
+    ex = [{"path": "A.lean", "git_blob_id": A}]
+    rows = [_run(run_id="old", brief_blob="9" * 40, reader_prompt_blob="8" * 40,
+                 diff1_count=1, examined=ex),
+            _diff(1, run_id="old", item_id="old#1", path="A.lean", git_blob_id=A),
+            _run(run_id="new", diff1_count=0, examined=ex)]
+    _ingest(s, _write(tmp_path, rows))
+    current = {_BRIEF_PATH: BRIEF}
+    v = verdict_for(_doc(s), "A.lean", A, current_briefs=current)
+    assert v["runs"] == ["new"]
+    assert {e["git_blob_id"] for e in v["record"]["evidence"]} == {BRIEF, PROMPT}
+    assert v["record"]["verdict"] == "PASS"       # the old run's open item decides nothing
+    unfiltered = verdict_for(_doc(s), "A.lean", A)
+    assert unfiltered["record"]["verdict"] == "FAIL"   # the control: it was the filter
+
+
+def test_only_old_brief_runs_is_brief_moved_not_a_record(tmp_path):
+    s = _store(tmp_path)
+    _ingest(s, _write(tmp_path, _base(s)))
+    v = verdict_for(_doc(s), "CLAIMS.md", B, current_briefs={_BRIEF_PATH: "0" * 40})
+    assert v["state"] == "brief_moved" and v["record"] is None
+    assert v["superseded_runs"] == [RUN]
+
+
+def test_coverage_honours_scope_exclude(tmp_path):
+    repo, _ = _repo(tmp_path, {"Z/a.lean": "a\n", "Z/Vendored/v.lean": "v\n"})
+    doc = {"runs": [], "entries": []}
+    cov = coverage(doc, root=repo, ref="HEAD", scope=["Z/*.lean"],
+                   scope_exclude=["Z/Vendored/*"])
+    assert cov["counts"]["total"] == 1 and cov["files"]["never_run"] == ["Z/a.lean"]
+    assert coverage(doc, root=repo, ref="HEAD", scope=["Z/*.lean"])["counts"]["total"] == 2
