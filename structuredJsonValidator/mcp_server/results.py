@@ -46,6 +46,9 @@ class WriteResult(TypedDict, total=False):
     removed: list[str]
     changed: int
     note: str
+    # ingest_reconstruct: lines read from the JSONL, by line type (all of them, including
+    # lines that changed nothing on a re-ingest). `touched_count` says what was NEW.
+    lines: dict[str, int]
 
 
 class GetResult(TypedDict, total=False):
@@ -133,3 +136,25 @@ class VocabularyResult(TypedDict, total=False):
     error_type: str
     error: str
     satisfied_when: str
+
+
+class ReconstructVerdictResult(TypedDict, total=False):
+    """The ledger `reconstruct` step's record body for one (path, blob), derived from the
+    indexed DIFF-1 dispositions.
+
+    ⚠ `state` IS THE FIRST THING TO READ. `never_run` means no indexed run examined these
+    bytes and `record` is None: a run is owed, which is NOT a pass. `recorded` carries a
+    `record` holding step, tier, verdict, reason, subjects, evidence, decided and, where they
+    apply, `failing` (FAIL) or `outstanding` (PASS). The caller's emitter adds the basis and
+    appends it; sjv never writes to the ledger.
+
+    ⚠ NO `ok`, like every sjv read: `state` is the answer, and a call that worked but found
+    no run must not be confused with one that failed."""
+    state: str
+    path: str
+    git_blob_id: str
+    runs: list[str]
+    items: int
+    dispositions: dict[str, int]
+    record: dict[str, Any] | None
+    means: str

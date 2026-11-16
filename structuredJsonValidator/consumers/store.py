@@ -22,6 +22,7 @@ from pathlib import Path
 from consumers import claims as claims_pkg
 from consumers import deps as deps_pkg
 from consumers import lean as lean_pkg
+from consumers import readings as readings_pkg
 from consumers.claims import operations as claim_ops
 from consumers.claims import rules as claim_rules
 from consumers.claims import views as claim_views
@@ -41,6 +42,9 @@ from consumers.lean.operations import (
 )
 from consumers.lean import rules as decl_rules
 from consumers.lean import views as decl_views
+from consumers.readings import operations as reading_ops
+from consumers.readings import rules as reading_rules
+from consumers.readings import views as reading_views
 from consumers.deps.operations import _edge_entry
 from core.engine import CollectionSpec, Store
 from core.errors import OperationError
@@ -153,6 +157,22 @@ def deps_reference_integrity(store_doc: dict) -> list[str]:
                     f"declaration qualified {ref!r} (dangling edge)"
                 )
     return out
+
+
+def readings_reference_integrity(store_doc: dict) -> list[str]:
+    """A blind reading or DIFF-1 item that names a ``registry_id`` must name a
+    declaration that exists. The id is the key that survives renames and moves; a
+    dangling one keys the reading to nothing, which is the defect the key exists to
+    prevent. ``null`` is not checked here — rules.py requires it to carry its reason."""
+    colls = store_doc.get("collections") or {}
+    entries = (colls.get("blind_readings") or {}).get("entries", [])
+    if not entries:
+        return []
+    ids = {d.get("id") for d in (colls.get("declarations") or {}).get("entries", [])}
+    return [f"[blind_readings] {e.get('id')!r}: registry_id {e.get('registry_id')!r} "
+            f"names no declaration"
+            for e in entries
+            if e.get("registry_id") is not None and e.get("registry_id") not in ids]
 
 
 # =============================================================================
@@ -654,10 +674,21 @@ def build_store(data_path, *, audit_path=None, actor: str = "cli") -> Store:
         entries_key="entries",
         id_key="id",
     )
+    blind_readings = CollectionSpec(
+        schema=load_schema(readings_pkg.SCHEMA_PATH),
+        business_validator=reading_rules.validate,
+        operations=reading_ops.OPERATIONS,
+        views=reading_views.VIEWS,
+        empty_doc=readings_pkg.empty_doc,
+        entries_key="entries",
+        id_key="id",
+    )
     return Store(
         data_path=data_path,
-        collections={"declarations": declarations, "claims": claims, "deps": deps},
-        cross_validators=[witness_invariant, deps_reference_integrity],
+        collections={"declarations": declarations, "claims": claims, "deps": deps,
+                     "blind_readings": blind_readings},
+        cross_validators=[witness_invariant, deps_reference_integrity,
+                          readings_reference_integrity],
         store_operations=STORE_OPERATIONS,
         audit_path=audit_path,
         actor=actor,
@@ -674,6 +705,7 @@ def wrap_legacy(bare_declarations_doc: dict) -> dict:
             "declarations": bare_declarations_doc,
             "claims": claims_pkg.empty_doc(),
             "deps": deps_pkg.empty_doc(),
+            "blind_readings": readings_pkg.empty_doc(),
         },
     }
 
@@ -684,7 +716,8 @@ def backfill_missing_collections(store_doc: dict) -> list[str]:
     migrated). PRESERVES every existing collection untouched. Returns the list of
     collection names that were added (empty if nothing was missing)."""
     empties = {"declarations": _declarations_empty_doc,
-               "claims": claims_pkg.empty_doc, "deps": deps_pkg.empty_doc}
+               "claims": claims_pkg.empty_doc, "deps": deps_pkg.empty_doc,
+               "blind_readings": readings_pkg.empty_doc}
     colls = store_doc.setdefault("collections", {})
     added: list[str] = []
     for name, factory in empties.items():

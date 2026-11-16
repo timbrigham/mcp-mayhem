@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SSOT Registry — blind readings (/reconstruct)",
+  "$comment": "Built 2026-11-15 for the consumer's /reconstruct gate. A blind reader restates each declaration from its elaborated signature alone; a DIFF-1 item is a place where the file's prose claims more (or other) than the signature says. The consumer's append-only JSONL is the source of truth for a run; this collection is the queryable index of it, keyed so a verdict can bind (path, git_blob_id). Per-item disposition history is kept here as an append-only list so a re-ingest can prove it only ever EXTENDS what was recorded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "runs", "entries"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
+    "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "blobref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "git_blob_id"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "git_blob_id": { "$ref": "#/$defs/hex" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "commit", "brief", "reader_prompt", "reader_model",
+                   "started_utc", "finished_utc", "diff1_count", "examined", "skipped",
+                   "line_sha256"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "commit": { "$ref": "#/$defs/hex" },
+        "brief": { "$ref": "#/$defs/blobref",
+                   "$comment": "The brief the reader ACTUALLY read. V17/V21 evidence: editing it stales every verdict made under it." },
+        "reader_prompt": { "$ref": "#/$defs/blobref",
+                           "$comment": "The exact prompt bytes handed to the reader, by blob. A scratchpad path alone names nothing that can go stale." },
+        "reader_model": { "type": "string", "minLength": 1 },
+        "started_utc": { "type": "string", "pattern": "\\+00:00$" },
+        "finished_utc": { "type": "string", "pattern": "\\+00:00$" },
+        "diff1_count": { "type": "integer", "minimum": 0 },
+        "examined": {
+          "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/blobref" },
+          "$comment": "Every (path, blob) the run examined, stated by the run. NOT inferred from its readings: a file with no declarations (CLAIMS.md) or a run with zero findings would otherwise leave no trace of having been read. Becomes the ledger record's `subjects`."
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["module", "names", "reason"],
+            "properties": {
+              "module": { "type": "string", "minLength": 1 },
+              "names": { "type": "array", "items": { "type": "string" } },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "line_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "disposition_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "reason", "decided_by", "utc", "line_sha256"],
+      "properties": {
+        "disposition": { "enum": ["open", "carried", "applied", "rejected"] },
+        "reason": { "type": ["string", "null"] },
+        "decided_by": { "type": ["string", "null"] },
+        "utc": { "type": ["string", "null"] },
+        "line_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "run_id", "path", "git_blob_id", "line", "key_kind",
+                   "registry_id", "registry_id_reason", "decl", "line_sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1,
+                "$comment": "A reading: deterministic uuid5 of (run_id, path, blob, decl, line). A DIFF-1 item: the caller's item_id, which later disposition lines reference." },
+        "kind": { "enum": ["reading", "diff1"] },
+        "run_id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "git_blob_id": { "$ref": "#/$defs/hex" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "key_kind": {
+          "enum": ["registry_id", "decl_name", "example_line", "prose_line"],
+          "$comment": "registry_id: keyed on the Lean registry's minted id (survives renames). decl_name: a declaration with NO registry entry; needs registry_id_reason. example_line: an anonymous `example`, keyed on (path, blob, line). prose_line: text that is not a declaration at all (a header, a CLAIMS.md row), keyed on (path, blob, line). Checked against the other fields in rules.py, never trusted."
+        },
+        "registry_id": { "type": ["string", "null"] },
+        "registry_id_reason": { "type": ["string", "null"] },
+        "decl": { "type": "string", "minLength": 1,
+                  "$comment": "The qualified name, or a human label for a prose location. A label, never the key." },
+        "line_sha256": { "$ref": "#/$defs/sha256" },
+        "is_example": { "type": "boolean" },
+        "elaborated_type": { "type": "string" },
+        "blind_reading": { "type": "string" },
+        "prose": { "type": "string" },
+        "signature": { "type": "string" },
+        "diff_kind": { "type": "string", "minLength": 1 },
+        "kind_detail": { "type": ["string", "null"] },
+        "dispositions": {
+          "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/disposition_event" },
+          "$comment": "Append-only. The LAST event is the item's current disposition."
+        }
+      }
+    }
+  }
+}

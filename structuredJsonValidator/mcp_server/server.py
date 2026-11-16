@@ -45,7 +45,8 @@ from mcpcommon.iserror import install as _install_is_error, install_resource_cla
 
 from mcp_server.results import (  # noqa: E402
     CheckHeadResult, ExportResult, FindResult, GetResult, HistoryResult,
-    ValidateResult, VerifyIntegrityResult, ViewResult, VocabularyResult, WriteResult)
+    ReconstructVerdictResult, ValidateResult, VerifyIntegrityResult, ViewResult,
+    VocabularyResult, WriteResult)
 
 from consumers.store import build_store, head_correspondence, require_source_root
 from core.errors import IntegrityError, OperationError, ValidationError
@@ -753,6 +754,40 @@ def import_deps(edges) -> WriteResult:
     imported, deduped, resulting_sha256} — the wholesale swap is derived-data
     semantics (no curation to preserve)."""
     return _write("deps", "import_deps", {"edges": edges})
+
+
+# -- blind_readings (/reconstruct) --------------------------------------------
+
+@mcp.tool(title='Ingest a reconstruct run',
+          annotations=ToolAnnotations(title='Ingest a reconstruct run', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def ingest_reconstruct(path: str) -> WriteResult:
+    """Index one /reconstruct JSONL file (RUN, decl, diff1, skipped and disposition
+    lines, run_id on every line) into the `blind_readings` collection.
+
+    ALL OR NOTHING: a malformed line, an unknown line type, or an absent required key
+    refuses the whole file and names the line. APPEND-ONLY: re-ingesting identical
+    bytes is a no-op (touched_count 0); a line whose bytes changed under an id already
+    indexed is refused, and a disposition history may only be extended. A non-null
+    registry_id must name a real declaration. Receipt carries `lines`, the count read
+    per line type, for comparison against the producer's own count."""
+    return _write("blind_readings", "ingest_reconstruct", {"path": path})
+
+
+@mcp.tool(title='Reconstruct verdict for a blob',
+          annotations=ToolAnnotations(title='Reconstruct verdict for a blob', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def reconstruct_verdict(path: str, git_blob_id: str) -> ReconstructVerdictResult:
+    """The ledger `reconstruct` record body for one (path, git_blob_id).
+
+    Read `state` first. `never_run`: no indexed run examined these bytes; `record` is
+    None and a run is owed. That is NOT a pass. `recorded`: any DIFF-1 item still
+    `open`, or `applied` (fixed in a NEWER blob, so these bytes still carry it), makes
+    a FAIL with `failing` naming the path; otherwise a PASS, with `carried` items as
+    ordinary `outstanding` and `rejected` items named in the reason. The record is
+    delegated, tier A, with evidence naming the brief and reader prompt blobs. Your
+    emitter adds the basis and appends it; this tool never writes to the ledger."""
+    from consumers.readings.views import verdict_for
+    doc = _store().load().get("collections", {}).get("blind_readings") or {}
+    return verdict_for(doc, path, git_blob_id)
 
 
 # -- publication + generic escape hatch ---------------------------------------
