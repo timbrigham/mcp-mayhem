@@ -271,9 +271,15 @@ def check_head(root: str = "", tier: str = "paths", limit: int = 25) -> CheckHea
     catches a live FILE with a dead NAME (a theorem split), heuristic by nature
     (it reads the source, it does not elaborate it).
 
-    Also reports duplicate live names. Read-only; terse (counts + bounded sample).
-    Returns {ok, checked, resolved, unresolvable_files, missing_files[],
-    missing_files_by_file{}, duplicate_live_names, duplicates[]}."""
+    Also reports duplicate live names, and THE REVERSE DIRECTION (2026-11-16):
+    tracked .lean files that declare something but have NO live entry
+    (`unregistered_files`, every tier), and at tier='names' declared names with no entry
+    in their file (`unregistered_names`). Before this, a file missing from the registry
+    entirely passed, because it had no entries to fail to resolve. Read-only; terse
+    (counts + bounded sample). Returns {ok, checked, resolved, unresolvable_files,
+    missing_files[], missing_files_by_file{}, duplicate_live_names, duplicates[],
+    unregistered_file_count, unregistered_files[]} plus, at tier='names',
+    {undeclared_names, undeclared[], unregistered_name_count, unregistered_names[]}."""
     # ⛔⛔ `root` USED TO DEFAULT TO ".", AND THAT IS A CONFIDENT WRONG ANSWER RATHER THAN A
     # MISSING ONE. This is a long-lived SERVER: "." is whatever directory the supervisor
     # happened to launch it from, which is not the source tree the registry describes and is

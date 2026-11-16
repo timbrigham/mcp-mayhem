@@ -106,6 +106,13 @@ class CheckHeadResult(TypedDict, total=False):
     missing_files: list[Any]
     missing_files_by_file: dict[str, Any]
     duplicates: list[Any]
+    # the reverse direction, disk -> registry (2026-11-16)
+    unregistered_file_count: int
+    unregistered_files: list[Any]
+    unregistered_name_count: int
+    unregistered_names: list[Any]
+    undeclared_names: int
+    undeclared: list[Any]
 
 
 class ExportResult(TypedDict, total=False):

@@ -382,7 +382,11 @@ def test_check_head_ignores_anchor_era_and_terminal_entries(tmp_path):
     s.apply("declarations", "drop", {"id": ids[0], "reason": "gone"})
     root = _head_tree(tmp_path, {"ZP/Keep.lean": "def keep := 1\n"})
     report = head_correspondence(s.load(), root=root)
-    assert report["checked"] == 0 and report["ok"] is True
+    assert report["checked"] == 0 and report["unresolvable_files"] == 0
+    # ⚠ `ok` is False here since 2026-11-16, and correctly: ZP/Keep.lean declares `keep`
+    # and NO live entry names it. That is the reverse drift the check now reports; this
+    # test's subject (anchor-era and terminal entries are not forward drift) still holds.
+    assert report["unregistered_files"] == [{"file": "ZP/Keep.lean", "declared": 1}]
 
 
 def test_check_head_names_catches_a_live_file_with_a_dead_name(tmp_path):
@@ -629,3 +633,43 @@ def test_export_full_head_check_carries_no_ok_key_at_all(tmp_path):
         "head_check must not carry `ok`: the outer `ok` is the CALL axis and an inner `ok` is "
         "the FINDING axis, and one key with two axes in one body is the defect cd1c10e fixed")
     assert published["matches"] is False, "the finding must survive the rename, not be dropped"
+
+
+# -- the reverse direction: disk -> registry (2026-11-16) ---------------------------
+
+def test_check_head_reports_a_file_with_no_registry_entries(tmp_path):
+    """⛔ The measured case: ZeroParadox/Miniature.lean declared two dozen names and had
+    ZERO entries, while the forward check passed, since it only asks whether entries
+    resolve and a file with no entries has nothing to resolve."""
+    s = _store(tmp_path)
+    _found(s, 1)
+    _born(s, "ZP.alive", "ZP/Alive.lean")
+    root = _head_tree(tmp_path, {
+        "ZP/Alive.lean": "theorem alive : True := trivial\n",
+        "ZP/Miniature.lean": "def a := 1\ntheorem b : True := trivial\n",
+        # A line STARTING with `theorem` inside a block comment: the phantom-declaration
+        # shape the forward check was bitten by. Must not make this file "declare" anything.
+        "ZP/OnlyComments.lean": "/-\ntheorem ghost : True := trivial\n-/\n-- theorem not_a_decl\n"})
+    report = head_correspondence(s.load(), root=root)
+    assert report["unresolvable_files"] == 0              # the forward half is clean...
+    assert report["unregistered_files"] == [{"file": "ZP/Miniature.lean", "declared": 2}]
+    assert report["ok"] is False                          # ...and the file is still drift
+
+
+def test_check_head_names_reports_an_unregistered_declaration(tmp_path):
+    s = _store(tmp_path)
+    _found(s, 1)
+    _born(s, "ZP.alive", "ZP/Alive.lean")
+    root = _head_tree(tmp_path, {"ZP/Alive.lean": "theorem alive : True := trivial\n"
+                                                  "lemma stray : True := trivial\n"})
+    assert head_correspondence(s.load(), root=root, tier="paths")["ok"] is True
+    full = head_correspondence(s.load(), root=root, tier="names")
+    assert full["unregistered_names"] == [{"file": "ZP/Alive.lean", "short": "stray"}]
+    assert full["ok"] is False
+
+
+def test_check_head_reverse_walk_skips_the_lake_cache(tmp_path):
+    s = _store(tmp_path)
+    _found(s, 1)
+    root = _head_tree(tmp_path, {".lake/packages/mathlib/X.lean": "def x := 1\n"})
+    assert head_correspondence(s.load(), root=root)["unregistered_files"] == []

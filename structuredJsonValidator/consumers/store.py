@@ -357,6 +357,41 @@ def head_correspondence(store_doc: dict, *, root=".", tier: str = "paths",
                 missing_names.append({"id": entry.get("id"), "qualified": qualified,
                                       "file": rel})
 
+    # ⭐⭐ THE REVERSE DIRECTION, added 2026-11-16 on Tim's go. Everything above asks
+    # registry -> disk: does each entry still resolve? Nothing asked disk -> registry: is
+    # each file / declaration on disk REGISTERED at all? Measured that day:
+    # ZeroParadox/Miniature.lean had ZERO entries while declaring two dozen names, and the
+    # reconstruct burn-down found 400+ readings keyed to declarations with no entry, all
+    # while check_head read `matches` with only 5 forward drifts. A one-directional check
+    # passes a file that is missing ENTIRELY, which is the larger drift of the two.
+    # ⚠ The file set is `git ls-files '*.lean'` under root (TRACKED files, which is what the
+    # registry describes), falling back to a walk that skips `.lake` when root is not a git
+    # checkout. The name half is the same comment-stripping HEURISTIC as the forward
+    # `names` tier, so a hit is drift to investigate, not proof.
+    live_files: dict = {}
+    for entry in entries:
+        group, qualified, present = _effective_qualified(entry)
+        if not qualified or not present or group != "new":
+            continue
+        rel = (entry.get("new") or {}).get("file")
+        if rel:
+            short = (entry.get("new") or {}).get("short") or qualified.rsplit(".", 1)[-1]
+            live_files.setdefault(rel, set()).add(short)
+    unregistered_files: list[dict] = []
+    unregistered_names: list[dict] = []
+    for rel in _tracked_lean_files(root):
+        try:
+            declared = _declared_shorts((root / rel).read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if not declared:
+            continue
+        if rel not in live_files:
+            unregistered_files.append({"file": rel, "declared": len(declared)})
+        elif tier == "names":
+            for name in sorted(declared - live_files[rel]):
+                unregistered_names.append({"file": rel, "short": name})
+
     report = {
         "tier": tier,
         "root": str(root),
@@ -364,7 +399,10 @@ def head_correspondence(store_doc: dict, *, root=".", tier: str = "paths",
         "resolved": checked - len(missing_files),
         "unresolvable_files": len(missing_files),
         "duplicate_live_names": len(duplicates),
-        "ok": not missing_files and not duplicates and not missing_names,
+        "unregistered_file_count": len(unregistered_files),
+        "unregistered_files": unregistered_files[:limit],
+        "ok": (not missing_files and not duplicates and not missing_names
+               and not unregistered_files and not unregistered_names),
         "missing_files": missing_files[:limit],
         "missing_files_by_file": dict(sorted(by_file.items())),
         "duplicates": duplicates[:limit],
@@ -372,7 +410,27 @@ def head_correspondence(store_doc: dict, *, root=".", tier: str = "paths",
     if tier == "names":
         report["undeclared_names"] = len(missing_names)
         report["undeclared"] = missing_names[:limit]
+        report["unregistered_name_count"] = len(unregistered_names)
+        report["unregistered_names"] = unregistered_names[:limit]
     return report
+
+
+def _tracked_lean_files(root: Path) -> list:
+    """Repo-relative POSIX paths of tracked .lean files under ``root``."""
+    import subprocess
+    r = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.lean"],
+                       capture_output=True)
+    if r.returncode == 0:
+        return sorted(x.decode("utf-8") for x in r.stdout.split(b"\0") if x)
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*.lean")
+                  if ".lake" not in p.relative_to(root).parts)
+
+
+def _declared_shorts(text: str) -> set:
+    """Last dotted segment of every name declared in one Lean file (comments stripped)."""
+    text = _BLOCK_COMMENT_RE.sub(" ", text)
+    text = _LINE_COMMENT_RE.sub(" ", text)
+    return {t.rsplit(".", 1)[-1] for t in _DECL_RE.findall(text)}
 
 
 # =============================================================================
