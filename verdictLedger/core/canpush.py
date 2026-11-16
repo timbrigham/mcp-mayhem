@@ -1105,6 +1105,13 @@ def check(*, records: list, config, repo: str, rev_range: str, action: str = "pu
         "range": rev_range,
         "commits_in_range": len(rows),
         "blocking_count": len(blocking),
+        # ⚠ HOW MANY OF THOSE WERE NEVER JUDGED AT ALL, as a field rather than only prose.
+        # A commit with admission UNSET/EMPTY blocks, deliberately (nobody declared what gates
+        # it, and absence is never success), but it did not FAIL anything. Reported by the
+        # consumer 2026-11-16: the headline read `REFUSED 1/2 commit(s) short` over one UNSET
+        # intermediate, and "it nearly read as a real block".
+        "blocking_unjudged": sum(1 for r in blocking
+                                 if r.get("admission_state") in ("UNSET", "EMPTY")),
         "push_bar": bar,
         # ⚠ WHERE THE BAR CAME FROM, not just what it is. ZeroParadox could not find the
         # mechanism that produced their refusal because it was a hardcoded default, not a
@@ -1301,6 +1308,17 @@ def render(result: dict) -> str:
     counts = f"{result['blocking_count']}/{result['commits_in_range']} commit(s) short"
     if owed_n:
         counts += f", {owed_n} signature(s) owed on changed bytes"
+    # ⛔ STILL REFUSED, BUT SAID FOR WHAT IT IS. When every short commit is one nobody declared
+    # an admission set for, and nothing is owed or carried, the refusal is "not judged", not
+    # "failed". The headline used to print the bare count, which reads as a real block: the
+    # consumer's report, 2026-11-16. It STAYS a refusal; only the words change, so a caller
+    # learns the remedy (pass commit_admission) instead of hunting for a failure.
+    _unjudged = result.get("blocking_unjudged") or 0
+    if (not result["allowed"] and _unjudged and _unjudged == result["blocking_count"]
+            and not owed_n and not (result.get("ratchet") or {}).get("carried_findings")):
+        counts = (f"NOT JUDGED: {_unjudged} commit(s) have no admission set; nothing judged here "
+                  f"failed. Pass commit_admission (gitRobot admission(action='commit')) to judge "
+                  f"them")
     lines = [f"{'ALLOWED' if result['allowed'] else 'REFUSED'}  push  "
              f"{counts}  @ {result['range']}"]
 
