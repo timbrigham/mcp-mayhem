@@ -23,7 +23,7 @@ def test_every_tool_is_titled_annotated_read_only_and_typed():
         assert a is not None and None not in (a.readOnlyHint, a.destructiveHint,
                                               a.idempotentHint, a.openWorldHint), name
         assert a.readOnlyHint is True and a.destructiveHint is False, name
-        assert a.openWorldHint is False, name
+        assert a.openWorldHint is True, name     # the GitHub source can fetch on any call
         assert t.outputSchema and "ok" in t.outputSchema.get("required", []), name
 
 

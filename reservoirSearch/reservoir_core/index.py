@@ -36,6 +36,7 @@ from typing import Optional
 
 DEFAULT_ROOT = r"C:\Workspace\reservoir-index"
 MAX_ALIAS_HOPS = 8
+KNOWN_SCHEMA = (1, 2)               # reservoir-index schemaVersion 1.2.x, measured 2026-11-22
 
 
 class ReservoirError(Exception):
@@ -74,6 +75,21 @@ def norm_toolchain(tc: Optional[str]) -> Optional[str]:
     if t and t[0].isdigit():
         t = "v" + t
     return t or None
+
+
+def schema_warnings(seen: dict) -> list:
+    """⚠ Loud, not fatal: a schemaVersion this server was not written against. The loader reads
+    fields by name, so a new MAJOR or MINOR may still parse while meaning something else; that is
+    exactly the case that must not pass silently. A patch bump is not reported."""
+    out = []
+    for v, n in sorted(seen.items()):
+        m = re.match(r"^(\d+)\.(\d+)(?:\.\d+)?$", v)
+        if not m:
+            out.append(f"{n} file(s) carry schemaVersion {v!r}, which is not MAJOR.MINOR.PATCH")
+        elif (int(m.group(1)), int(m.group(2))) != KNOWN_SCHEMA:
+            out.append(f"{n} file(s) carry schemaVersion {v!r}; this server was written against "
+                       f"{KNOWN_SCHEMA[0]}.{KNOWN_SCHEMA[1]}.x, so fields may have changed meaning")
+    return out
 
 
 def _read(path: Path):
@@ -116,6 +132,9 @@ class Index:
         self.skipped: list = []           # {"entry", "error"}
         self.dependents: dict = {}        # target key -> [edge]
         self.unresolved_deps = 0
+        self.schema_versions: dict = {}   # schemaVersion string -> files carrying it
+        self.schema_warnings: list = []
+        self.source: dict = {"kind": "local", "path": str(root)}
         self.loaded_at = None
         self.load_seconds = None
         self.fingerprint = None
@@ -146,15 +165,28 @@ class Index:
                 except Exception as exc:                       # one bad entry, never the index
                     idx.skipped.append({"entry": key, "error": f"{type(exc).__name__}: {exc}"})
         idx._link()
+        idx.schema_warnings = schema_warnings(idx.schema_versions)
         idx.loaded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         idx.load_seconds = round(time.perf_counter() - t0, 3)
         return idx
 
     def _add_package(self, key: str, d: Path) -> None:
         meta = _read(d / "metadata.json")
-        versions = _read(d / "versions.json").get("data") or []
+        vdoc = _read(d / "versions.json")
+        versions = vdoc.get("data") or []
         bpath = d / "builds.json"
-        builds = (_read(bpath).get("data") or []) if bpath.exists() else []
+        bdoc = _read(bpath) if bpath.exists() else {}
+        # ⚠ Measured in the OFFICIAL index 2026-11-22: katzenpost/crypt_walker's builds.json is a
+        # bare list, not {"schemaVersion","data"}. Optional data in an old shape must not knock
+        # out a package; it is read, and counted as unversioned so the schema warning names it.
+        if isinstance(bdoc, list):
+            builds, bdoc = bdoc, {"schemaVersion": None}
+        else:
+            builds = bdoc.get("data") or []
+        for doc in (meta, vdoc, bdoc):
+            if doc:
+                v = str(doc.get("schemaVersion"))
+                self.schema_versions[v] = self.schema_versions.get(v, 0) + 1
         latest = versions[0] if versions else {}
         repos = [norm_url(s.get("repoUrl")) for s in meta.get("sources") or []]
         repos += [norm_url(s.get("gitUrl")) for s in meta.get("sources") or []]
@@ -231,33 +263,97 @@ class Index:
 
 def summary(idx: Index) -> dict:
     """What every answer was computed from: an index that is replaced in place must say which."""
-    return {"loaded_at": idx.loaded_at, "packages": len(idx.packages),
-            "aliases": len(idx.aliases), "skipped": len(idx.skipped)}
+    out = {"source": idx.source.get("repo") or idx.source.get("path"),
+           "loaded_at": idx.loaded_at, "packages": len(idx.packages),
+           "aliases": len(idx.aliases), "skipped": len(idx.skipped)}
+    if idx.schema_warnings:
+        out["schema_warnings"] = idx.schema_warnings
+    return out
+
+
+def source_from_env(env=None):
+    """`RESERVOIR_SOURCE` = local | github. Unset: local when RESERVOIR_INDEX is set, otherwise
+    github, so a fresh install answers from the official index with no setup."""
+    from reservoir_core.remote import GitHubSource, default_cache
+    env = os.environ if env is None else env
+    kind = (env.get("RESERVOIR_SOURCE") or ("local" if env.get("RESERVOIR_INDEX") else "github"))
+    kind = kind.strip().lower()
+    if kind == "local":
+        return Path(env.get("RESERVOIR_INDEX") or DEFAULT_ROOT)
+    if kind == "github":
+        return GitHubSource(repo=env.get("RESERVOIR_REPO") or "leanprover/reservoir-index",
+                            cache=Path(env.get("RESERVOIR_CACHE") or default_cache()),
+                            ttl_seconds=float(env.get("RESERVOIR_TTL_HOURS") or 24) * 3600,
+                            token=env.get("GITHUB_TOKEN") or env.get("GH_TOKEN") or None)
+    raise ReservoirError(f"RESERVOIR_SOURCE={kind!r} is not a source",
+                         "set RESERVOIR_SOURCE to 'local' (with RESERVOIR_INDEX) or 'github' "
+                         "(optionally RESERVOIR_REPO, RESERVOIR_CACHE, RESERVOIR_TTL_HOURS)",
+                         error_type="config")
 
 
 class Store:
-    """Holds the current Index, reloading when the directory's fingerprint moves."""
+    """Holds the current Index. A local source reloads when the directory's fingerprint moves;
+    a GitHub source refreshes its cache when the TTL lapses, then reloads the same way."""
 
-    def __init__(self, root=None):
-        self.root = Path(root or os.environ.get("RESERVOIR_INDEX") or DEFAULT_ROOT)
+    def __init__(self, root=None, remote=None):
+        self.remote = remote
+        if root is None and remote is None:
+            src = source_from_env()
+            if isinstance(src, Path):
+                root = src
+            else:
+                self.remote = src
+        self.root = Path(root) if root is not None else self.remote.current
         self._lock = threading.Lock()
         self._idx: Optional[Index] = None
         self.reloads = 0
 
+    def _describe(self) -> dict:
+        return self.remote.describe() if self.remote else {"kind": "local", "path": str(self.root)}
+
+    def _load(self) -> Index:
+        idx = Index.load(self.root)
+        idx.source = self._describe()
+        self.reloads += 1
+        return idx
+
+    def _refresh_remote(self, force: bool = False) -> None:
+        """Refresh the cache if due. A failure keeps a stale cache serving (and says so); with no
+        cache at all it is a refusal, never an empty index."""
+        if not self.remote or not (force or self.remote.due()):
+            return
+        try:
+            # `force` bypasses the TTL only: refresh still compares the branch head and downloads
+            # nothing when the cached commit is current.
+            self.remote.refresh()
+            self.remote.last_error = None
+        except Exception as exc:
+            self.remote.last_error = f"{type(exc).__name__}: {exc}"
+            if not self.remote.current.is_dir():
+                raise ReservoirError(
+                    f"could not fetch {self.remote.repo} and no cached copy exists: "
+                    f"{self.remote.last_error}",
+                    "check network access to api.github.com (or set GITHUB_TOKEN if rate-"
+                    "limited), then call reload; or set RESERVOIR_SOURCE=local with "
+                    "RESERVOIR_INDEX", error_type="unavailable")
+
     def get(self) -> Index:
         idx = self._idx
-        if idx is not None and fingerprint(self.root) == idx.fingerprint:
+        if (idx is not None and not (self.remote and self.remote.due())
+                and fingerprint(self.root) == idx.fingerprint):
             return idx
         with self._lock:
+            self._refresh_remote()
             if self._idx is None or fingerprint(self.root) != self._idx.fingerprint:
-                self._idx = Index.load(self.root)
-                self.reloads += 1
+                self._idx = self._load()
+            else:
+                self._idx.source = self._describe()
             return self._idx
 
     def reload(self) -> Index:
         with self._lock:
-            self._idx = Index.load(self.root)
-            self.reloads += 1
+            self._refresh_remote(force=True)
+            self._idx = self._load()
             return self._idx
 
     # -- the tools --------------------------------------------------------------------------
@@ -344,7 +440,10 @@ class Store:
 
     def status(self) -> dict:
         idx = self.get()
-        return {"root": str(self.root), **summary(idx), "load_seconds": idx.load_seconds,
+        return {"root": str(self.root), **summary(idx), "source_detail": idx.source,
+                "packages_with_builds": sum(1 for p in idx.packages.values() if p["builds"]),
+                "schema_versions": idx.schema_versions,
+                "schema_warnings": idx.schema_warnings, "load_seconds": idx.load_seconds,
                 "reloads": self.reloads, "skipped_entries": idx.skipped,
                 "unresolved_dependency_entries": idx.unresolved_deps,
                 "freshness": "reloaded automatically when an entry is added, removed or renamed at "

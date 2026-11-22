@@ -64,6 +64,11 @@ class ToolchainsResult(Result, total=False):
 
 class StatusResult(Result, total=False):
     root: str
+    source: str
+    source_detail: dict[str, Any]
+    packages_with_builds: int
+    schema_versions: dict[str, int]
+    schema_warnings: list[str]
     loaded_at: str
     packages: int
     aliases: int

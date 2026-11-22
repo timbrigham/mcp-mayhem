@@ -2,8 +2,11 @@
 
 Run:
     python -m reservoir_server.server
-    # optional: RESERVOIR_INDEX (default C:\\Workspace\\reservoir-index),
-    #           RESERVOIR_HOST (default 127.0.0.1), RESERVOIR_PORT (default 8014)
+    # source: RESERVOIR_SOURCE = local | github. Unset: local if RESERVOIR_INDEX is set, else github.
+    #   local:  RESERVOIR_INDEX (default C:\\Workspace\\reservoir-index)
+    #   github: RESERVOIR_REPO (default leanprover/reservoir-index), RESERVOIR_CACHE,
+    #           RESERVOIR_TTL_HOURS (default 24), GITHUB_TOKEN or GH_TOKEN (optional)
+    # RESERVOIR_HOST (default 127.0.0.1), RESERVOIR_PORT (default 8014)
 
 Built 2026-11-22 at Tim's request, from a spec handed over by the reservoir session. The index is
 loaded once and filtered in memory; the directory is replaced in place when a fuller index lands,
@@ -41,8 +44,9 @@ STORE = Store()
 
 mcp = FastMCP(
     "reservoirSearch",
-    instructions="""Read-only search over a LOCAL copy of the Lean Reservoir package index
-(reservoir.lean-lang.org's data). Loaded once, answered from memory.
+    instructions="""Read-only search over the Lean Reservoir package index
+(reservoir.lean-lang.org's data): either a local directory or the official GitHub repo, cached.
+Loaded once, answered from memory. status() says which source is in use.
 
 START HERE: search(query) - words must all match name, description or keywords; ranked by
 stars. get_package('owner/name') for one package (case-insensitive, follows renames).
@@ -59,7 +63,10 @@ All matching is on each package's LATEST version.""",
 _install_is_error(mcp)
 install_resource_classification(mcp)
 
-_READ = dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+# ⚠ openWorldHint TRUE on every tool: with the GitHub source, ANY call can be the one that finds
+# the TTL lapsed and fetches from api.github.com. Annotations are static, so they describe what a
+# tool can do under any configuration, not under today's.
+_READ = dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
 
 async def _guard(tool: str, *args, **kwargs) -> dict:
@@ -127,12 +134,12 @@ async def status() -> StatusResult:
 
 
 @mcp.tool(title='Reload the index',
-          annotations=ToolAnnotations(title='Reload the index', readOnlyHint=True,
-                                      destructiveHint=False, idempotentHint=True,
-                                      openWorldHint=False))
+          annotations=ToolAnnotations(title='Reload the index', **_READ))
 async def reload() -> StatusResult:
-    """Re-read the index directory now. Changes that add, remove or rename package entries are
-    picked up automatically; use this after a file was rewritten in place."""
+    """Re-read the index now. Local source: re-reads the directory (changes that add, remove or
+    rename package entries are picked up automatically anyway; use this after a file was
+    rewritten in place). GitHub source: checks the branch head now instead of waiting for the
+    TTL, downloads only if it moved, then re-reads."""
     try:
         await anyio.to_thread.run_sync(STORE.reload)
     except ReservoirError as exc:
