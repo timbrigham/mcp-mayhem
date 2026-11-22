@@ -83,10 +83,12 @@ async def _guard(tool: str, *args, **kwargs) -> dict:
 @mcp.tool(title='Search packages', annotations=ToolAnnotations(title='Search packages', **_READ))
 async def search(query: str = "", toolchain: Optional[str] = None, license: Optional[str] = None,
                  owner: Optional[str] = None, limit: int = 20) -> SearchResult:
-    """Packages whose name, description or keywords contain EVERY word of `query`
+    """Needs a `query` OR at least one filter; an empty query with no filter is refused.
+
+    Packages whose name, description or keywords contain EVERY word of `query`
     (case-insensitive substring), ranked by stars. Optional exact filters: `toolchain` of the
-    latest version ('v4.35.0'), SPDX `license`, `owner`. A filter alone with no query is fine.
-    `truncated` counts results beyond `limit`."""
+    latest version ('v4.35.0'), SPDX `license`, `owner`. `truncated` counts results beyond
+    `limit`."""
     return await _guard("search", query, toolchain=toolchain, license=license, owner=owner,
                         limit=limit)
 
@@ -105,8 +107,15 @@ async def get_package(name: str, versions_limit: int = 20) -> PackageResult:
 async def dependents(name: str, include_transitive: bool = False,
                      limit: int = 100) -> DependentsResult:
     """Packages whose LATEST version lists `name` as a dependency, ranked by stars. Direct only
-    by default; `include_transitive` adds packages that reach it indirectly. Matched by repo url
-    first, then scope/name (`matched_by`). Counts of both kinds are always returned."""
+    by default; `include_transitive` adds packages that reach it indirectly. `direct_total` and
+    `transitive_total` are always returned; `total` counts what this call selected.
+
+    Each edge says how it was matched (`matched_by`): `url` (the repo), `scope/name`,
+    `repo_name` (a transferred repo: same repo name, unique in the index, same Lake package
+    name), or `name` (no url or scope; the Lake package name is unique in the index). A name
+    shared by two packages resolves to nothing rather than a guess. `key` is the index's key
+    for the package, which can differ from the repo name (ProofWidgets4 -> proofwidgets);
+    `requested` echoes the input."""
     return await _guard("dependents", name, include_transitive=include_transitive, limit=limit)
 
 

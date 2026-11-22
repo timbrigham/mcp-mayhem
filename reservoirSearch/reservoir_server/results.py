@@ -37,11 +37,14 @@ class PackageResult(Result, total=False):
 
 
 class DependentsResult(Result, total=False):
+    requested: str
     package: str
     key: str
-    direct: int
-    transitive: int
+    direct_total: int
+    transitive_total: int
     total: int
+    total_counts: str
+    matched_by_counts: dict[str, int]
     truncated: int
     results: list[dict[str, Any]]
     scope: str

@@ -23,10 +23,21 @@ so absence here is not absence from Reservoir.**
 
 ## Matching rules
 
-- **Dependencies resolve by repository URL first**, then by `scope/name`. A dependency names its
-  Lake package (`mathlib`) but the repository is what identifies it (`mathlib4`), and about a third
-  of dependency entries carry no scope at all. URLs are normalised: case, scheme, a trailing `/` or
-  `.git`, and the `git@host:owner/repo` form all collapse to `host/owner/repo`.
+- **Dependencies resolve in four steps, and every edge says which (`matched_by`):**
+  1. `url`: the dependency's repository, normalised (case, scheme, a trailing `/` or `.git`, and
+     `git@host:owner/repo` all collapse to `host/owner/repo`).
+  2. `scope/name`: `<scope>/<lake name>` as an index key.
+  3. `repo_name`: a repo under a DIFFERENT owner whose repo name is unique in the index and whose
+     Lake package name agrees. Catches transfers (`EdAyers/ProofWidgets4` became
+     `leanprover-community/ProofWidgets4`; lurk-lab and yatima-inc became argumentcomputer) and
+     personal forks of a package (`riccardobrasca/mathlib4`). Filter on `matched_by` if a fork
+     should not count.
+  4. `name`: no url and no scope, and exactly one package in the index has that Lake name.
+  
+  A name or repo name shared by two packages resolves to nothing rather than a guess. Added
+  2026-11-22 after a blind test found `dependents(ProofWidgets4)` reporting 8 direct where 15 were
+  real. On the local index the fallbacks cut unresolved dependency entries from 567 to 372 (163
+  `repo_name` edges, 32 `name`).
 - **Toolchains match exactly.** `v4.36.0-rc2` is not `v4.36.0`. It is the toolchain a package
   declares, not proof that it built; builds are in `get_package`.
 - **Only the latest version** (first entry of `versions.json`) is consulted for toolchain and

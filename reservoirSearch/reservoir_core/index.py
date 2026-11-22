@@ -203,6 +203,22 @@ class Index:
             self.by_repo.setdefault(r, key)
 
     def _link(self) -> None:
+        # Fallback tables for dependencies that name a repo the index knows under ANOTHER owner.
+        # ⚠ Found by a blind test 2026-11-22 (relayed by the reservoir session): ProofWidgets4
+        # moved EdAyers -> leanprover-community, and 18 latest-version manifests still name
+        # https://github.com/EdAyers/ProofWidgets4 with NO scope, so neither the url nor
+        # scope/name could resolve them. dependents() reported 8 direct where 15 were real.
+        # Repository transfers are routine in Lean, so this is a class, not one package.
+        # ⛔ BOTH FALLBACKS DEMAND UNIQUENESS: a name or repo name shared by two packages in the
+        # index resolves to nothing rather than to a guess, and every edge says `matched_by`.
+        self._by_name: dict = {}
+        self._by_base: dict = {}
+        for key, p in self.packages.items():
+            n = str(p["meta"].get("name") or "").lower()
+            if n:
+                self._by_name.setdefault(n, set()).add(key)
+            for r in p["repos"]:
+                self._by_base.setdefault(r.rsplit("/", 1)[-1], set()).add(key)
         for key, p in self.packages.items():
             for dep in p["latest"].get("dependencies") or []:
                 target, how = self._resolve_dep(dep)
@@ -222,6 +238,19 @@ class Index:
             k = self.resolve_key(f"{dep['scope']}/{dep['name']}")
             if k:
                 return k, "scope/name"
+        name = str(dep.get("name") or "").lower()
+        # A transferred repo: same repo name, unique in the index, AND the Lake package name agrees,
+        # so a fork or an unrelated repo that happens to share a name is not taken for it.
+        if u:
+            cands = self._by_base.get(u.rsplit("/", 1)[-1], set())
+            if len(cands) == 1:
+                k = next(iter(cands))
+                if name and str(self.packages[k]["meta"].get("name") or "").lower() == name:
+                    return k, "repo_name"
+        # No usable url or scope: the Lake package name alone, only when exactly one package has it.
+        cands = self._by_name.get(name, set()) if name else set()
+        if len(cands) == 1 and not dep.get("scope"):
+            return next(iter(cands)), "name"
         return None, None
 
     # -- lookups ----------------------------------------------------------------------------
@@ -407,9 +436,18 @@ class Store:
             card = idx.card(idx.packages[e["dependent"]])
             out.append({**card, "transitive": e["transitive"], "matched_by": e["matched_by"],
                         "rev": e["rev"], "inputRev": e["inputRev"]})
-        return {"package": idx.packages[key]["meta"].get("fullName") or key, "key": key,
-                "direct": direct, "transitive": len(edges) - direct,
-                "total": len(chosen), "truncated": max(0, len(chosen) - limit),
+        by_how: dict = {}
+        for e in edges:
+            by_how[e["matched_by"]] = by_how.get(e["matched_by"], 0) + 1
+        return {"requested": name, "package": idx.packages[key]["meta"].get("fullName") or key,
+                "key": key,
+                # Named for what they count, after a tester read `total: 8` beside
+                # `transitive: 606` and could not tell which set `total` priced.
+                "direct_total": direct, "transitive_total": len(edges) - direct,
+                "total": len(chosen),
+                "total_counts": "direct + transitive" if include_transitive else "direct only",
+                "matched_by_counts": by_how,
+                "truncated": max(0, len(chosen) - limit),
                 "results": out,
                 "scope": "packages whose LATEST version lists this one as a dependency",
                 "index": {**summary(idx), "unresolved_dependency_entries": idx.unresolved_deps}}

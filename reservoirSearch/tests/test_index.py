@@ -138,7 +138,8 @@ def test_dependents_by_url_by_scope_and_transitive(root):
     assert sorted(r["fullName"] for r in m["results"]) == ["Alice/Topo", "bob/noscope"]
     assert {r["matched_by"] for r in m["results"]} == {"url"}
     b = st.dependents("leanprover-community/batteries")
-    assert (b["direct"], b["transitive"]) == (2, 1)
+    assert (b["direct_total"], b["transitive_total"]) == (2, 1)
+    assert b["total_counts"] == "direct only" and b["requested"] == "leanprover-community/batteries"
     assert sorted(r["fullName"] for r in b["results"]) == ["carol/byname",
                                                            "leanprover-community/mathlib"]
     assert {r["fullName"]: r["matched_by"] for r in b["results"]}["carol/byname"] == "scope/name"
