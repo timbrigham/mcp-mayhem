@@ -73,6 +73,36 @@ def structural(record: dict) -> list[str]:
                 f"{basis.get('value')!r} is not '<tree sha>/<run id>'. SATISFIED WHEN: value "
                 f"is the 40- or 64-hex tree that was read, a '/', then the run id naming the "
                 f"subset (letters, digits, . _ : -), e.g. 'c824c3c3…/bd-B05-2026-11-16'.")
+        # ⭐⭐ `subjects` = A HUMAN SIGNATURE KEYED TO EXACTLY THE BYTES SIGNED (Tim, 2026-11-22;
+        # see `schema.subjects_tree`). The slot IS the byte set, so a signature never competes
+        # with an agent record for a tree's revision chain, re-signing the same bytes lands in the
+        # same slot (dedupe, or a regrade at revision+1), and V11 is unchanged.
+        # ⛔ TIER H `signature` ONLY, Tim's scope ("the signatures on my part in particular").
+        # Agent and mechanical records keep tree/ref bases, where V11 is what stops an agent
+        # branching its own claim. `override` is excluded because V12 keys to the basis, so
+        # on a fresh byte-set slot it would find no prior decision and the self-override guard
+        # would never fire.
+        if basis.get("kind") == "subjects":
+            want = schema.subjects_tree(record.get("subjects"))
+            how_ = (record.get("decided") or {}).get("how")
+            if record.get("tier") != "H" or how_ != "signature":
+                out.append(
+                    f"basis kind 'subjects' is for a human signature only; got tier "
+                    f"{record.get('tier')!r}, how {how_!r}. SATISFIED WHEN: tier 'H' and "
+                    f"decided.how 'signature' with a `who`. Any other record uses a tree or ref "
+                    f"basis.")
+            if want is None:
+                out.append(
+                    "basis kind 'subjects' needs subjects that name a git tree: at least one, "
+                    "each with a 40-hex git_blob_id, no repeated path, no path that is also a "
+                    "directory. SATISFIED WHEN: subjects list the signed files once each, each "
+                    "with its blob id.")
+            elif basis.get("value") != want:
+                out.append(
+                    f"basis kind 'subjects': value {basis.get('value')!r} is not the tree of "
+                    f"these subjects. SATISFIED WHEN: value is {want!r}, the id `git write-tree` "
+                    f"gives for an index holding exactly these blobs at these paths, mode 100644 "
+                    f"(core.schema.subjects_tree computes it).")
 
     # ⚠⚠ `failing` IS ONLY MEANINGFUL ON A BLOCKING VERDICT, AND A MISPLACED ONE IS THE
     # WORST SHAPE AVAILABLE: the resolver reads it only where it blocks, so a `failing` list

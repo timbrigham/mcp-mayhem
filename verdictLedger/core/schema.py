@@ -32,7 +32,64 @@ SCHEMA_ID = "zp.record.v1"
 
 TIERS = ("M", "A", "H")
 VERDICTS = ("PASS", "FAIL", "UNDECIDED")
-BASIS_KINDS = ("range", "ref", "scope", "tree")
+BASIS_KINDS = ("range", "ref", "scope", "subjects", "tree")
+
+
+def subjects_tree(subjects) -> "str | None":
+    """⭐ The `subjects` basis value: the GIT TREE ID of exactly the bytes a record names.
+
+    Tim, 2026-11-22: *"we need to be able to do overrides on a specific set of bytes without having
+    to iterate to a new blob ID as well.. Maybe not four every function but the signatures on my
+    part in particular"*. What forced it: a signature over 145 unchanged files was refused by V11,
+    because rev 0 at the index tree's basis was already held by an unrelated two-file agent review.
+    Revision 1 would have superseded that review, and only re-keying to the commit id got through,
+    which worked by accident. He chose (AskUserQuestion, same day) a basis whose value IS the byte
+    set, for tier-H signatures only, with V11 left exactly as it is.
+
+    ⚠⚠ IT IS GIT'S HASH, NOT A NEW ONE, ON PURPOSE. This module's first paragraph is Tim's
+    2026-08-23 rule that there is exactly one hash in this system and it is git's. A sha256 over
+    the pairs would have been the second hash that rule retired. This is the tree `git write-tree`
+    produces for an index holding these blobs at these paths, every entry mode 100644, so anyone
+    can recompute it with git and nothing else. (Mode is fixed because subjects carry no mode: the
+    claim is about the bytes, not the executable bit.)
+
+    None when the set cannot name a tree: empty, a subject without a 40-hex blob, a repeated path,
+    or a path that is both a file and a directory. A None never matches a value, so it refuses.
+    """
+    import hashlib
+    import re
+    root: dict = {}
+    if not isinstance(subjects, list) or not subjects:
+        return None
+    for s in subjects:
+        path, blob = (s or {}).get("path"), (s or {}).get("git_blob_id")
+        if not (isinstance(path, str) and path and isinstance(blob, str)
+                and re.fullmatch(r"[0-9a-f]{40}", blob)):
+            return None
+        parts = path.split("/")
+        if any(p in ("", ".", "..") for p in parts):
+            return None
+        node = root
+        for p in parts[:-1]:
+            node = node.setdefault(p, {})
+            if not isinstance(node, dict):
+                return None
+        if parts[-1] in node:
+            return None
+        node[parts[-1]] = blob
+
+    def _tree(node: dict) -> bytes:
+        # git sorts tree entries by name, with a directory compared as if it ended in '/'.
+        body = b""
+        for name in sorted(node, key=lambda n: n + "/" if isinstance(node[n], dict) else n):
+            val = node[name]
+            if isinstance(val, dict):
+                body += b"40000 " + name.encode() + b"\0" + _tree(val)
+            else:
+                body += b"100644 " + name.encode() + b"\0" + bytes.fromhex(val)
+        return hashlib.sha1(b"tree %d\0" % len(body) + body).digest()
+
+    return _tree(root).hex()
 RESOLVED_FROM = ("explicit", "upstream", "FALLBACK")
 # ⚠⚠ HOW A VERDICT WAS REACHED — and for a REVIEW-family step this field is the whole
 # difference between a record that means a review happened and one that means nothing.

@@ -78,6 +78,7 @@ phases:
 | commit | the staged tree sha (`git write-tree`) | ⚠ the commit sha does **not** exist yet — checks run before the object does |
 | push / tag | the commit sha, or the range | the range is real by then |
 | a declared subset of one tree (`kind: scope`) | `<tree sha>/<run id>` | for MANY disjoint rounds over ONE tree (a burn-down): each round needs its own revision slot, and `revision` is for regrades. The files are the record's subjects. Defined 2026-11-16; any other value shape is refused. |
+| a human signature over exact bytes (`kind: subjects`) | the git tree id of exactly the signed `{path: blob}` set, mode 100644 (`git write-tree` reproduces it; `core.schema.subjects_tree` computes it) | tier `H`, `how: signature` ONLY (Tim, 2026-11-22). The slot is the bytes, so a signature never competes with an agent record for a tree's revision chain, and re-signing the same bytes lands in the same slot. Agent, mechanical and `override` records cannot use it. |
 
 Verified: `write-tree` before any commit == `rev-parse HEAD^{tree}` after it,
 deterministic, and content-addressed — revert to content that previously passed and
