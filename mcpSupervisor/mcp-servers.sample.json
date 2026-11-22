@@ -160,6 +160,34 @@
         "processName": "python*.exe",
         "cmdlineMatch": "publishapprove_server.server"
       }
+    },
+    {
+      "_comment": "reservoirSearch: read-only search over a local copy of the Lean Reservoir package index. RESERVOIR_INDEX names the directory (reservoir-index format); it is reloaded when it changes.",
+      "name": "reservoirSearch",
+      "host": "127.0.0.1",
+      "port": 8014,
+      "healthPath": "/mcp",
+      "kind": "process",
+      "start": {
+        "exe": "python",
+        "args": [
+          "-m",
+          "reservoir_server.server"
+        ],
+        "workingDir": "${McpRoot}\\..\\reservoirSearch",
+        "env": {
+          "PYTHONPATH": "${McpRoot}\\..\\reservoirSearch",
+          "RESERVOIR_INDEX": "<path to a reservoir-index checkout>",
+          "RESERVOIR_HOST": "127.0.0.1",
+          "RESERVOIR_PORT": "8014"
+        }
+      },
+      "requiredEnv": [],
+      "identity": {
+        "_comment": "cmdlineMatch MUST be unique across servers: 'reservoir_server.server' neither contains nor is contained in any other entry's match.",
+        "processName": "python*.exe",
+        "cmdlineMatch": "reservoir_server.server"
+      }
     }
   ]
 }
