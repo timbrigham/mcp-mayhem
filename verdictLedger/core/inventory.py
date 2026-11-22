@@ -738,12 +738,9 @@ def build(*, config, records, action: str, files: dict,
         # accepted, and silently ignored, a record that looks like it narrows and does not.
         # Refused but honest is better than accepted but inert.
         def _severity_at(path, rec):
-            v = rec.get("verdict")
-            if v in ("FAIL", "UNDECIDED"):
-                failing = rec.get("failing")
-                if failing is not None and path not in set(failing):
-                    return _SEVERITY["PASS"]
-            return _SEVERITY.get(v, 3)
+            if _narrowed_away(rec, path):
+                return _SEVERITY["PASS"]
+            return _SEVERITY.get(rec.get("verdict"), 3)
 
         covered_rec = None
         if covered_recs:
@@ -1624,6 +1621,25 @@ def build(*, config, records, action: str, files: dict,
     }
 
 
+def _narrowed_away(rec: dict, path: str) -> bool:
+    """True when `rec` blocks (FAIL / UNDECIDED) but its `failing` list does NOT name `path`.
+
+    For that path the record is ordinary passing coverage — "examined is not indicted", the rule
+    `build` has applied since 2026-09-02 (see `_severity_at`). ONE copy of the test, because the
+    second reader that needed it wrote its own and left the narrowing out: see `coverage_gap`.
+    Absent `failing` still indicts every subject, so no pre-`failing` record is weakened.
+    """
+    if rec.get("verdict") not in ("FAIL", "UNDECIDED"):
+        return False
+    failing = rec.get("failing")
+    return failing is not None and path not in set(failing)
+
+
+def _passes_at(rec: Optional[dict], path: str) -> bool:
+    """Does the deciding record discharge `path`? PASS, or a blocking verdict narrowed away."""
+    return rec is not None and (rec.get("verdict") == "PASS" or _narrowed_away(rec, path))
+
+
 def _gap_remedy(name: str, applies: int, missing: list, records, files: dict) -> str:
     """What to do about this step's gap, and never advice that would waste the attempt.
 
@@ -1657,7 +1673,10 @@ def _gap_remedy(name: str, applies: int, missing: list, records, files: dict) ->
                 continue
             for sub in (r.get("subjects") or []):
                 path, blob = sub.get("path"), sub.get("git_blob_id")
-                if blob and path and files.get(path) == blob:
+                # ⚠ ...AND INDICTS IT. A narrowed FAIL examined this path without condemning it,
+                # so it is no reason to say "fix the findings" about it (2026-11-22, same report as
+                # the `coverage_gap` change below).
+                if blob and path and files.get(path) == blob and not _narrowed_away(r, path):
                     return ("fix the findings — this step covers its scope and passes "
                             "none of it, so re-running changes nothing")
     return "run the step over the listed paths and record"
@@ -1684,15 +1703,25 @@ def coverage_gap(*, config, records, action: str, files: dict,
     and listing it as covered would report work as done that must still be fixed.
     Measured 2026-08-25: `editorial`, `adversary` and `rely` cover their whole scope
     and pass none of it: 0 have, and the remedy is to fix findings, not to re-run.
+
+    ⛔⛔ "PASSING" IS DECIDED BY THE SAME RECORD AND THE SAME RULE AS `build`, AND FOR ELEVEN
+    WEEKS IT WAS NOT. This used to collect every record whose verdict field read PASS, so a FAIL
+    narrowed by `failing` (LED-10's remedy: ordinary passing coverage for every subject it does not
+    name) discharged nothing here while `build` counted it covered. Reported by the consumer
+    2026-11-22: `adversary` read 165 of 424 missing, 145 of them subjects of ONE union FAIL
+    (258 subjects, `failing` = 40) whose bytes had not moved, and Tim was nearly asked to re-review
+    files his 2026-11-13 sweep had cleared. Measured here at their HEAD the same day, after a
+    signature had covered the 145: `coverage_gap` adversary 20 missing against the inventory row's
+    422/424, copy_editor 71 against 147/149. Both gaps closed exactly to the row's 2. The FIXED
+    ONE OF TWO ROUTES shape: `_severity_at` got the rule on 2026-09-02, and this sibling reader
+    never did.
+    ⚠ It also stops counting a PASS that a LATER record superseded at the same bytes, because
+    `by_content` holds only the deciding record. That direction tightened nothing at that HEAD
+    (0 newly missing over all 22 admitted push steps), and it is the direction that matters: a
+    work order calling a path done while the gate reads it FAIL is the fail-open one.
     """
     reqs = config.requirements(action)
-    passing = {}
-    for r in records:
-        if r.get("verdict") != "PASS":
-            continue
-        for sub in r.get("subjects") or []:
-            if sub.get("git_blob_id"):
-                passing[(r.get("step"), sub.get("path"), sub["git_blob_id"])] = r
+    by_content = _subject_index(records)[0]
 
     out = []
     for name in sorted(admission):
@@ -1728,7 +1757,7 @@ def coverage_gap(*, config, records, action: str, files: dict,
             if any(fnmatch.fnmatch(path, g) for g in drop):
                 continue
             applies += 1
-            if (name, path, blob) not in passing:
+            if not _passes_at(by_content.get((name, path, blob)), path):
                 missing.append(path)
         out.append({
             "step": name, "applies_to": applies, "missing": len(missing),
